@@ -1,0 +1,16 @@
+{
+  "name": "fwd-sales",
+  "version": "1.0.0",
+  "description": "Freight forwarding sales management system",
+  "scripts": {
+    "install:all": "cd backend && npm install && cd ../frontend && npm install",
+    "dev:backend": "cd backend && npm run dev",
+    "dev:frontend": "cd frontend && npm run dev",
+    "build": "cd frontend && npm run build",
+    "start": "cd backend && npm start",
+    "db:setup": "cd backend && npm run db:migrate && npm run db:seed"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
