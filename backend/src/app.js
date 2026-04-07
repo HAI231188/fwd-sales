@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const fs = require('fs');
 
 const authRoutes = require('./routes/auth');
 const reportRoutes = require('./routes/reports');
@@ -10,8 +11,11 @@ const statsRoutes = require('./routes/stats');
 
 const app = express();
 
+const frontendPath = path.join(__dirname, '../../frontend/dist');
+const hasFrontend = fs.existsSync(frontendPath);
+
 app.use(cors({
-  origin: process.env.NODE_ENV === 'production'
+  origin: hasFrontend
     ? false
     : ['http://localhost:5173', 'http://localhost:3000'],
   credentials: true,
@@ -32,13 +36,15 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// Serve frontend in production
-if (process.env.NODE_ENV === 'production') {
-  const frontendPath = path.join(__dirname, '../../frontend/dist');
+// Serve frontend — always, whenever the dist folder exists
+if (hasFrontend) {
   app.use(express.static(frontendPath));
   app.get('*', (req, res) => {
     res.sendFile(path.join(frontendPath, 'index.html'));
   });
+  console.log('📁 Serving frontend from', frontendPath);
+} else {
+  console.log('⚠️  No frontend/dist found — running API-only mode');
 }
 
 // Error handler

@@ -40,22 +40,25 @@ export default function Login() {
       minHeight: '100vh', display: 'flex', flexDirection: 'column',
       alignItems: 'center', justifyContent: 'center',
       background: 'var(--bg)', padding: 24,
-      backgroundImage: 'radial-gradient(ellipse 80% 50% at 50% -20%, rgba(0,212,170,0.12), transparent)',
+      backgroundImage: 'radial-gradient(ellipse 80% 50% at 50% -20%, rgba(34,197,94,0.1), transparent)',
     }}>
       {/* Logo */}
       <div style={{ textAlign: 'center', marginBottom: 40 }}>
         <div style={{
           width: 72, height: 72,
-          background: 'linear-gradient(135deg, #00d4aa, #0099cc)',
+          background: 'linear-gradient(135deg, #22c55e, #16a34a)',
           borderRadius: 20, display: 'flex', alignItems: 'center', justifyContent: 'center',
           fontSize: 36, margin: '0 auto 20px',
-          boxShadow: '0 8px 32px rgba(0,212,170,0.3)',
-        }}>🚢</div>
-        <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 32, color: 'var(--text)', marginBottom: 8 }}>
-          FWD Sales
+          boxShadow: '0 8px 32px rgba(34,197,94,0.35)',
+        }}>🌐</div>
+        <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 32, color: 'var(--text)', marginBottom: 4 }}>
+          SLB Global Logistics
         </h1>
-        <p style={{ color: 'var(--text-2)', fontSize: 15 }}>
-          Hệ thống Quản lý Kinh doanh · Freight Forwarding
+        <p style={{ color: 'var(--primary)', fontSize: 13, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 4 }}>
+          Sales Management System
+        </p>
+        <p style={{ color: 'var(--text-2)', fontSize: 13 }}>
+          Hệ thống Quản lý Kinh doanh Nội bộ
         </p>
       </div>
 
@@ -133,7 +136,7 @@ export default function Login() {
       </div>
 
       <p style={{ marginTop: 24, fontSize: 12, color: 'var(--text-3)' }}>
-        © 2026 FWD Sales Management System
+        © 2026 SLB Global Logistics · Hệ thống nội bộ
       </p>
     </div>
   );

@@ -22,16 +22,16 @@ export default function Navbar() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}
              onClick={() => navigate(user?.role === 'lead' ? '/dashboard' : '/my-dashboard')}>
           <div style={{
-            width: 36, height: 36, background: 'linear-gradient(135deg, #00d4aa, #0099cc)',
+            width: 36, height: 36, background: 'linear-gradient(135deg, #22c55e, #16a34a)',
             borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center',
             fontSize: 18,
-          }}>🚢</div>
+          }}>🌐</div>
           <div>
             <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 16, color: 'var(--text)', lineHeight: 1 }}>
-              FWD Sales
+              SLB Global Logistics
             </div>
-            <div style={{ fontSize: 11, color: 'var(--text-2)', lineHeight: 1.2 }}>
-              Quản lý Kinh doanh
+            <div style={{ fontSize: 11, color: 'var(--primary)', lineHeight: 1.2, letterSpacing: '0.04em' }}>
+              Sales Management
             </div>
           </div>
         </div>
