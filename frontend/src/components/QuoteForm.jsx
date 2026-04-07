@@ -1,31 +1,43 @@
-import { useState } from 'react';
+const EMPTY_OPTION = { carrier: '', price: '', cost: '' };
 
 const EMPTY_QUOTE = {
   cargo_name: '', monthly_volume_cbm: '', monthly_volume_kg: '',
   monthly_volume_containers: '', route: '', cargo_ready_date: '',
-  mode: 'sea', carrier: '', transit_time: '', price: '',
+  mode: 'sea', transit_time: '',
+  options: [
+    { ...EMPTY_OPTION },
+    { ...EMPTY_OPTION },
+    { ...EMPTY_OPTION },
+    { ...EMPTY_OPTION },
+    { ...EMPTY_OPTION },
+  ],
   status: 'quoting', follow_up_notes: '', lost_reason: '', closing_soon: false,
 };
 
 export default function QuoteForm({ quote, onChange, onRemove, index }) {
   const q = quote;
-
   const set = (field, value) => onChange({ ...q, [field]: value });
+
+  const options = q.options || EMPTY_QUOTE.options;
+  const setOption = (i, field, value) => {
+    const next = options.map((opt, idx) => idx === i ? { ...opt, [field]: value } : opt);
+    onChange({ ...q, options: next });
+  };
 
   return (
     <div style={{
-      background: 'var(--bg)',
+      background: '#f8f9fa',
       border: '1px solid var(--border)',
       borderRadius: 12,
       padding: 20,
       marginBottom: 12,
-      position: 'relative',
     }}>
+      {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span style={{ fontWeight: 600, fontSize: 14 }}>Báo giá #{index + 1}</span>
-          {q.closing_soon && <span className="badge badge-warning">⚡ Sắp chốt</span>}
-        </div>
+        <span style={{ fontWeight: 600, fontSize: 14, fontFamily: 'var(--font-display)' }}>
+          Báo giá #{index + 1}
+          {q.closing_soon && <span className="badge badge-warning" style={{ marginLeft: 8 }}>⚡ Sắp chốt</span>}
+        </span>
         {onRemove && (
           <button type="button" className="btn btn-danger btn-sm btn-icon" onClick={onRemove}>✕</button>
         )}
@@ -37,7 +49,7 @@ export default function QuoteForm({ quote, onChange, onRemove, index }) {
         <div style={{ display: 'flex', gap: 8 }}>
           {[
             { key: 'sea', label: '🚢 Đường biển' },
-            { key: 'air', label: '✈️ Đường hàng không' },
+            { key: 'air', label: '✈️ Hàng không' },
             { key: 'road', label: '🚛 Đường bộ' },
           ].map(m => (
             <button
@@ -47,7 +59,7 @@ export default function QuoteForm({ quote, onChange, onRemove, index }) {
               className="btn btn-sm"
               style={{
                 background: q.mode === m.key ? 'var(--primary)' : 'transparent',
-                color: q.mode === m.key ? '#0a0f1e' : 'var(--text-2)',
+                color: q.mode === m.key ? '#fff' : 'var(--text-2)',
                 border: `1px solid ${q.mode === m.key ? 'var(--primary)' : 'var(--border)'}`,
               }}
             >{m.label}</button>
@@ -55,6 +67,7 @@ export default function QuoteForm({ quote, onChange, onRemove, index }) {
         </div>
       </div>
 
+      {/* Cargo & route */}
       <div className="grid-2" style={{ gap: 12, marginBottom: 12 }}>
         <div className="form-group">
           <label className="form-label">Tên hàng</label>
@@ -81,20 +94,74 @@ export default function QuoteForm({ quote, onChange, onRemove, index }) {
           <input type="date" className="form-input" value={q.cargo_ready_date} onChange={e => set('cargo_ready_date', e.target.value)} />
         </div>
         <div className="form-group">
-          <label className="form-label">Hãng tàu / Hãng bay</label>
-          <input className="form-input" placeholder="VD: MSC, Vietnam Airlines..." value={q.carrier} onChange={e => set('carrier', e.target.value)} />
-        </div>
-        <div className="form-group">
           <label className="form-label">Transit time</label>
           <input className="form-input" placeholder="VD: 28-30 ngày" value={q.transit_time} onChange={e => set('transit_time', e.target.value)} />
         </div>
       </div>
 
-      <div className="form-group" style={{ marginBottom: 12 }}>
-        <label className="form-label">Giá báo</label>
-        <input className="form-input" placeholder="VD: USD 2,200/40HC (all-in)" value={q.price} onChange={e => set('price', e.target.value)} />
+      {/* ── 5 Phương án rows ── */}
+      <div style={{ marginBottom: 16 }}>
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: '80px 1fr 1fr 1fr',
+          gap: 8,
+          marginBottom: 6,
+          padding: '0 4px',
+        }}>
+          <div />
+          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+            Hãng tàu / Hãng bay
+          </div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+            Giá báo
+          </div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+            Cost giá
+          </div>
+        </div>
+
+        {options.map((opt, i) => (
+          <div key={i} style={{
+            display: 'grid',
+            gridTemplateColumns: '80px 1fr 1fr 1fr',
+            gap: 8,
+            marginBottom: 6,
+            alignItems: 'center',
+          }}>
+            <div style={{
+              fontSize: 12, fontWeight: 600, color: 'var(--primary)',
+              background: 'var(--primary-dim)',
+              borderRadius: 6, padding: '4px 8px', textAlign: 'center',
+              whiteSpace: 'nowrap',
+            }}>
+              PA {i + 1}
+            </div>
+            <input
+              className="form-input"
+              placeholder="VD: MSC, Vietnam Airlines..."
+              value={opt.carrier}
+              onChange={e => setOption(i, 'carrier', e.target.value)}
+              style={{ fontSize: 13 }}
+            />
+            <input
+              className="form-input"
+              placeholder="VD: USD 2,200/40HC"
+              value={opt.price}
+              onChange={e => setOption(i, 'price', e.target.value)}
+              style={{ fontSize: 13 }}
+            />
+            <input
+              className="form-input"
+              placeholder="VD: USD 1,900/40HC"
+              value={opt.cost}
+              onChange={e => setOption(i, 'cost', e.target.value)}
+              style={{ fontSize: 13 }}
+            />
+          </div>
+        ))}
       </div>
 
+      {/* Status & closing soon */}
       <div className="grid-2" style={{ gap: 12, marginBottom: 12 }}>
         <div className="form-group">
           <label className="form-label">Trạng thái *</label>

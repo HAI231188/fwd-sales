@@ -30,11 +30,25 @@ function QuoteRow({ q }) {
             {q.carrier && <span>🏢 {q.carrier}</span>}
             {q.transit_time && <span>⏱ {q.transit_time}</span>}
           </div>
-          {q.price && (
-            <div style={{ marginTop: 6, fontSize: 13, color: 'var(--primary)', fontWeight: 600 }}>
-              💰 {q.price}
-            </div>
-          )}
+          {q.price && (() => {
+            let options = null;
+            try { const p = JSON.parse(q.price); if (Array.isArray(p)) options = p.filter(o => o.carrier || o.price); } catch {}
+            if (options && options.length > 0) {
+              return (
+                <div style={{ marginTop: 6 }}>
+                  {options.map((o, i) => (
+                    <div key={i} style={{ fontSize: 12, color: 'var(--text-2)', marginTop: 2 }}>
+                      <span style={{ color: '#16a34a', fontWeight: 700 }}>PA{i+1}</span>
+                      {o.carrier && <span> · {o.carrier}</span>}
+                      {o.price && <span style={{ color: 'var(--primary)', fontWeight: 600 }}> · {o.price}</span>}
+                      {o.cost && <span> (cost: {o.cost})</span>}
+                    </div>
+                  ))}
+                </div>
+              );
+            }
+            return <div style={{ marginTop: 6, fontSize: 13, color: 'var(--primary)', fontWeight: 600 }}>💰 {q.price}</div>;
+          })()}
           {q.follow_up_notes && (
             <div style={{ marginTop: 6, fontSize: 12, color: 'var(--text-2)', fontStyle: 'italic' }}>
               📝 {q.follow_up_notes}

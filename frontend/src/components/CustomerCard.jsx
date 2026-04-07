@@ -63,15 +63,54 @@ function QuoteCard({ q }) {
         )}
       </div>
 
-      {q.price && (
-        <div style={{
-          background: 'var(--primary-dim)', border: '1px solid var(--border)',
-          borderRadius: 8, padding: '8px 12px', marginBottom: 8,
-          fontSize: 14, fontWeight: 600, color: 'var(--primary)',
-        }}>
-          💰 {q.price}
-        </div>
-      )}
+      {q.price && (() => {
+        let options = null;
+        try { const p = JSON.parse(q.price); if (Array.isArray(p)) options = p; } catch {}
+        if (options) {
+          const filled = options.filter(o => o.carrier || o.price || o.cost);
+          if (filled.length === 0) return null;
+          return (
+            <div style={{ marginBottom: 8 }}>
+              <div style={{
+                display: 'grid', gridTemplateColumns: '64px 1fr 1fr 1fr',
+                gap: 4, marginBottom: 4, padding: '0 2px',
+              }}>
+                {['', 'Hãng tàu/Hãng bay', 'Giá báo', 'Cost giá'].map((h, i) => (
+                  <div key={i} style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{h}</div>
+                ))}
+              </div>
+              {options.map((opt, i) => {
+                if (!opt.carrier && !opt.price && !opt.cost) return null;
+                return (
+                  <div key={i} style={{
+                    display: 'grid', gridTemplateColumns: '64px 1fr 1fr 1fr',
+                    gap: 4, marginBottom: 3, alignItems: 'center',
+                  }}>
+                    <div style={{
+                      fontSize: 10, fontWeight: 700, color: '#16a34a',
+                      background: 'rgba(34,197,94,0.1)', borderRadius: 4,
+                      padding: '2px 6px', textAlign: 'center',
+                    }}>PA {i + 1}</div>
+                    <div style={{ fontSize: 12, color: 'var(--text)' }}>{opt.carrier || '—'}</div>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--primary)' }}>{opt.price || '—'}</div>
+                    <div style={{ fontSize: 12, color: 'var(--text-2)' }}>{opt.cost || '—'}</div>
+                  </div>
+                );
+              })}
+            </div>
+          );
+        }
+        // Legacy plain-text price
+        return (
+          <div style={{
+            background: 'var(--primary-dim)', border: '1px solid var(--border)',
+            borderRadius: 8, padding: '8px 12px', marginBottom: 8,
+            fontSize: 14, fontWeight: 600, color: 'var(--primary)',
+          }}>
+            💰 {q.price}
+          </div>
+        );
+      })()}
 
       {q.follow_up_notes && (
         <div style={{ fontSize: 12, color: 'var(--text-2)', marginTop: 4, fontStyle: 'italic' }}>

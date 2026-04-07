@@ -52,7 +52,14 @@ export default function ReportForm({ onSuccess, existingReport }) {
       new_customers: parseInt(form.new_customers) || 0,
       customers: form.customers.map(c => ({
         ...c,
-        quotes: c.interaction_type === 'quoted' ? (c.quotes || []) : [],
+        quotes: c.interaction_type === 'quoted'
+          ? (c.quotes || []).map(q => ({
+              ...q,
+              // serialize 5-option rows into carrier + price fields for DB storage
+              carrier: (q.options || []).find(o => o.carrier)?.carrier || q.carrier || '',
+              price: q.options ? JSON.stringify(q.options) : q.price,
+            }))
+          : [],
       })),
     });
   };
