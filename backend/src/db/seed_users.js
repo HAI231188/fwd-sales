@@ -21,9 +21,12 @@ async function seedUsers() {
 
     const hash = await bcrypt.hash(DEFAULT_PASSWORD, 10);
 
-    // Remove old test users that have no username (legacy seeded data)
+    // Remove all legacy demo users (with or without username)
     // ON DELETE CASCADE will clean up their reports/customers/quotes
     await client.query(`DELETE FROM users WHERE username IS NULL`);
+    // Also remove any users whose code doesn't match the real team
+    const realCodes = USERS.map(u => u.code);
+    await client.query(`DELETE FROM users WHERE code != ALL($1::text[])`, [realCodes]);
 
     for (const user of USERS) {
       await client.query(`
