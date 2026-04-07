@@ -1,20 +1,165 @@
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getDrilldown } from '../api';
 import { format } from 'date-fns';
-import { vi } from 'date-fns/locale';
 
 const MODE_ICON = { sea: '🚢', air: '✈️', road: '🚛' };
+const MODE_CLASS = { sea: 'mode-sea', air: 'mode-air', road: 'mode-road' };
 const STATUS_LABEL = { quoting: 'Đang báo giá', follow_up: 'Follow Up', booked: 'Đã booking', lost: 'Lost' };
 const STATUS_CLASS = { quoting: 'status-quoting', follow_up: 'status-follow_up', booked: 'status-booked', lost: 'status-lost' };
 const TYPE_LABEL = { saved: 'Lưu liên hệ', contacted: 'Đã liên hệ', quoted: 'Đã báo giá' };
 const TYPE_CLASS = { saved: 'type-saved', contacted: 'type-contacted', quoted: 'type-quoted' };
 
-function QuoteRow({ q }) {
+function parseOptions(price, carrier) {
+  try {
+    const p = JSON.parse(price);
+    if (Array.isArray(p)) return p;
+  } catch {}
+  return carrier || price
+    ? [{ carrier: carrier || '', price: price || '', cost: '' }]
+    : [];
+}
+
+// Full quote detail modal shown when lead clicks a quote row
+function QuoteDetailModal({ q, onClose }) {
+  const options = parseOptions(q.price, q.carrier).filter(o => o.carrier || o.price || o.cost);
+
   return (
-    <div style={{
-      background: '#f8f9fa', border: '1px solid var(--border)',
-      borderRadius: 10, padding: '14px 16px', marginBottom: 10,
-    }}>
+    <div className="modal-overlay" style={{ zIndex: 200 }} onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="modal modal-lg">
+        <div className="modal-header">
+          <div>
+            <h3 style={{ marginBottom: 4 }}>{q.company_name}</h3>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {q.mode && <span className={`badge ${MODE_CLASS[q.mode]}`}>{MODE_ICON[q.mode]} {q.mode?.toUpperCase()}</span>}
+              {q.status && <span className={`badge ${STATUS_CLASS[q.status]}`}>{STATUS_LABEL[q.status]}</span>}
+              {q.closing_soon && <span className="badge badge-warning">⚡ Sắp chốt</span>}
+            </div>
+          </div>
+          <button className="btn btn-ghost btn-sm btn-icon" onClick={onClose}>✕</button>
+        </div>
+
+        <div className="modal-body">
+          {/* Sales person */}
+          {q.user_name && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 20, padding: '10px 14px', background: '#f8f9fa', borderRadius: 8 }}>
+              <div className="avatar avatar-sm" style={{ background: q.avatar_color }}>{q.user_code}</div>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 600 }}>{q.user_name}</div>
+                {q.report_date && <div style={{ fontSize: 11, color: 'var(--text-2)' }}>Báo cáo ngày {format(new Date(q.report_date), 'dd/MM/yyyy')}</div>}
+              </div>
+            </div>
+          )}
+
+          {/* Cargo & route info */}
+          <div className="grid-2" style={{ gap: 12, marginBottom: 16 }}>
+            {q.cargo_name && (
+              <div>
+                <div className="section-title">Tên hàng</div>
+                <div style={{ fontSize: 14, fontWeight: 500 }}>{q.cargo_name}</div>
+              </div>
+            )}
+            {q.route && (
+              <div>
+                <div className="section-title">Luồng tuyến</div>
+                <div style={{ fontSize: 14, fontWeight: 500 }}>{q.route}</div>
+              </div>
+            )}
+            {(q.monthly_volume_cbm || q.monthly_volume_kg || q.monthly_volume_containers) && (
+              <div>
+                <div className="section-title">Sản lượng / tháng</div>
+                <div style={{ fontSize: 13 }}>
+                  {q.monthly_volume_cbm && `${q.monthly_volume_cbm} CBM `}
+                  {q.monthly_volume_kg && `${q.monthly_volume_kg} KG `}
+                  {q.monthly_volume_containers}
+                </div>
+              </div>
+            )}
+            {q.transit_time && (
+              <div>
+                <div className="section-title">Transit time</div>
+                <div style={{ fontSize: 13 }}>{q.transit_time}</div>
+              </div>
+            )}
+            {q.cargo_ready_date && (
+              <div>
+                <div className="section-title">Ngày xong hàng</div>
+                <div style={{ fontSize: 13 }}>{format(new Date(q.cargo_ready_date), 'dd/MM/yyyy')}</div>
+              </div>
+            )}
+          </div>
+
+          {/* PA options table */}
+          {options.length > 0 && (
+            <div style={{ marginBottom: 16 }}>
+              <div className="section-title" style={{ marginBottom: 8 }}>Phương án báo giá</div>
+              <div style={{ border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
+                <div style={{
+                  display: 'grid', gridTemplateColumns: '72px 1fr 1fr 1fr',
+                  gap: 0, background: '#f8f9fa',
+                  borderBottom: '1px solid var(--border)',
+                  padding: '8px 12px',
+                }}>
+                  {['', 'Hãng tàu / Hãng bay', 'Giá báo', 'Cost giá'].map((h, i) => (
+                    <div key={i} style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-2)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{h}</div>
+                  ))}
+                </div>
+                {options.map((opt, i) => (
+                  <div key={i} style={{
+                    display: 'grid', gridTemplateColumns: '72px 1fr 1fr 1fr',
+                    padding: '10px 12px', alignItems: 'center',
+                    borderBottom: i < options.length - 1 ? '1px solid var(--border)' : 'none',
+                    background: '#fff',
+                  }}>
+                    <div style={{
+                      fontSize: 11, fontWeight: 700, color: '#16a34a',
+                      background: 'rgba(34,197,94,0.1)', borderRadius: 4,
+                      padding: '3px 8px', textAlign: 'center', width: 'fit-content',
+                    }}>PA {i + 1}</div>
+                    <div style={{ fontSize: 13, color: 'var(--text)' }}>{opt.carrier || '—'}</div>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--primary)' }}>{opt.price || '—'}</div>
+                    <div style={{ fontSize: 13, color: 'var(--text-2)' }}>{opt.cost || '—'}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Notes */}
+          {q.follow_up_notes && (
+            <div style={{ marginBottom: 12 }}>
+              <div className="section-title">Ghi chú follow up</div>
+              <div style={{ fontSize: 13, color: 'var(--text-2)', fontStyle: 'italic' }}>📝 {q.follow_up_notes}</div>
+            </div>
+          )}
+          {q.lost_reason && (
+            <div>
+              <div className="section-title" style={{ color: 'var(--danger)' }}>Lý do lost</div>
+              <div style={{ fontSize: 13, color: 'var(--danger)' }}>❌ {q.lost_reason}</div>
+            </div>
+          )}
+        </div>
+
+        <div className="modal-footer">
+          <button className="btn btn-ghost" onClick={onClose}>Đóng</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function QuoteRow({ q, onClick }) {
+  return (
+    <div
+      onClick={() => onClick(q)}
+      style={{
+        background: '#f8f9fa', border: '1px solid var(--border)',
+        borderRadius: 10, padding: '14px 16px', marginBottom: 10,
+        cursor: 'pointer', transition: 'all 0.15s',
+      }}
+      onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--primary)'; e.currentTarget.style.background = 'rgba(34,197,94,0.04)'; }}
+      onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.background = '#f8f9fa'; }}
+    >
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
         <div style={{ flex: 1 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
@@ -24,35 +169,27 @@ function QuoteRow({ q }) {
           </div>
           <div style={{ fontSize: 13, color: 'var(--text-2)', marginBottom: 4 }}>
             <strong style={{ color: 'var(--text)' }}>{q.cargo_name}</strong>
+            {q.route && <span> · 📍 {q.route}</span>}
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', fontSize: 12, color: 'var(--text-2)' }}>
-            <span>📍 {q.route}</span>
-            {q.carrier && <span>🏢 {q.carrier}</span>}
-            {q.transit_time && <span>⏱ {q.transit_time}</span>}
-          </div>
-          {q.price && (() => {
-            let options = null;
-            try { const p = JSON.parse(q.price); if (Array.isArray(p)) options = p.filter(o => o.carrier || o.price); } catch {}
-            if (options && options.length > 0) {
-              return (
-                <div style={{ marginTop: 6 }}>
-                  {options.map((o, i) => (
-                    <div key={i} style={{ fontSize: 12, color: 'var(--text-2)', marginTop: 2 }}>
-                      <span style={{ color: '#16a34a', fontWeight: 700 }}>PA{i+1}</span>
-                      {o.carrier && <span> · {o.carrier}</span>}
-                      {o.price && <span style={{ color: 'var(--primary)', fontWeight: 600 }}> · {o.price}</span>}
-                      {o.cost && <span> (cost: {o.cost})</span>}
-                    </div>
-                  ))}
-                </div>
-              );
-            }
-            return <div style={{ marginTop: 6, fontSize: 13, color: 'var(--primary)', fontWeight: 600 }}>💰 {q.price}</div>;
+          {/* Show first filled option inline */}
+          {(() => {
+            const opts = parseOptions(q.price, q.carrier).filter(o => o.carrier || o.price);
+            if (!opts.length) return null;
+            return (
+              <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: 12, color: 'var(--text-2)', marginTop: 4 }}>
+                {opts.slice(0, 2).map((o, i) => (
+                  <span key={i}>
+                    <span style={{ color: '#16a34a', fontWeight: 700 }}>PA{i+1}</span>
+                    {o.carrier && <span> {o.carrier}</span>}
+                    {o.price && <span style={{ color: 'var(--primary)', fontWeight: 600 }}> · {o.price}</span>}
+                  </span>
+                ))}
+                {opts.length > 2 && <span style={{ color: 'var(--text-3)' }}>+{opts.length - 2} PA nữa...</span>}
+              </div>
+            );
           })()}
           {q.follow_up_notes && (
-            <div style={{ marginTop: 6, fontSize: 12, color: 'var(--text-2)', fontStyle: 'italic' }}>
-              📝 {q.follow_up_notes}
-            </div>
+            <div style={{ marginTop: 4, fontSize: 12, color: 'var(--text-2)', fontStyle: 'italic' }}>📝 {q.follow_up_notes}</div>
           )}
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6, flexShrink: 0 }}>
@@ -64,10 +201,9 @@ function QuoteRow({ q }) {
             </div>
           )}
           {q.report_date && (
-            <span style={{ fontSize: 11, color: 'var(--text-3)' }}>
-              {format(new Date(q.report_date), 'dd/MM/yyyy')}
-            </span>
+            <span style={{ fontSize: 11, color: 'var(--text-3)' }}>{format(new Date(q.report_date), 'dd/MM/yyyy')}</span>
           )}
+          <span style={{ fontSize: 11, color: 'var(--primary)' }}>Xem chi tiết →</span>
         </div>
       </div>
     </div>
@@ -98,9 +234,7 @@ function CustomerRow({ c }) {
           {c.needs && <div style={{ fontSize: 12, color: 'var(--text-2)', marginTop: 4, fontStyle: 'italic' }}>{c.needs}</div>}
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6, flexShrink: 0 }}>
-          {c.quote_count > 0 && (
-            <span className="badge badge-primary">📋 {c.quote_count} báo giá</span>
-          )}
+          {c.quote_count > 0 && <span className="badge badge-primary">📋 {c.quote_count} báo giá</span>}
           {c.user_name && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               <div className="avatar avatar-sm" style={{ background: c.avatar_color }}>{c.user_code}</div>
@@ -108,9 +242,7 @@ function CustomerRow({ c }) {
             </div>
           )}
           {c.report_date && (
-            <span style={{ fontSize: 11, color: 'var(--text-3)' }}>
-              {format(new Date(c.report_date), 'dd/MM/yyyy')}
-            </span>
+            <span style={{ fontSize: 11, color: 'var(--text-3)' }}>{format(new Date(c.report_date), 'dd/MM/yyyy')}</span>
           )}
         </div>
       </div>
@@ -119,16 +251,18 @@ function CustomerRow({ c }) {
 }
 
 const DRILL_CONFIG = {
-  booked:          { title: '✅ Đã Booking', isQuote: true },
-  follow_up:       { title: '🔄 Follow Up', isQuote: true },
-  closing_soon:    { title: '⚡ Sắp Chốt', isQuote: true },
-  contacts:        { title: '👥 Lượt Tiếp Cận', isQuote: false },
-  total_quotes:    { title: '📋 Tổng Báo Giá', isQuote: true },
+  booked:            { title: '✅ Đã Booking', isQuote: true },
+  follow_up:         { title: '🔄 Follow Up', isQuote: true },
+  closing_soon:      { title: '⚡ Sắp Chốt', isQuote: true },
+  contacts:          { title: '👥 Lượt Tiếp Cận', isQuote: false },
+  total_quotes:      { title: '📋 Tổng Báo Giá', isQuote: true },
   waiting_follow_up: { title: '⏰ KH Chờ Follow Up', isQuote: false },
 };
 
 export default function DrilldownModal({ type, dateParams, userId, onClose }) {
   const config = DRILL_CONFIG[type] || {};
+  const [selectedQuote, setSelectedQuote] = useState(null);
+
   const { data = [], isLoading } = useQuery({
     queryKey: ['drilldown', type, dateParams, userId],
     queryFn: () => getDrilldown(type, { ...dateParams, userId }),
@@ -136,39 +270,50 @@ export default function DrilldownModal({ type, dateParams, userId, onClose }) {
   });
 
   return (
-    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="modal modal-lg">
-        <div className="modal-header">
-          <h3>{config.title}</h3>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <span className="badge badge-primary">{data.length} mục</span>
-            <button className="btn btn-ghost btn-sm btn-icon" onClick={onClose}>✕</button>
+    <>
+      <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+        <div className="modal modal-lg">
+          <div className="modal-header">
+            <h3>{config.title}</h3>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <span className="badge badge-primary">{data.length} mục</span>
+              <button className="btn btn-ghost btn-sm btn-icon" onClick={onClose}>✕</button>
+            </div>
+          </div>
+          <div className="modal-body">
+            {isLoading ? (
+              <div style={{ textAlign: 'center', padding: 40 }}>
+                <div className="spinner" style={{ margin: '0 auto' }} />
+              </div>
+            ) : data.length === 0 ? (
+              <div className="empty-state">
+                <div className="icon">📭</div>
+                <p>Không có dữ liệu trong khoảng thời gian này</p>
+              </div>
+            ) : (
+              <div>
+                {config.isQuote && (
+                  <p style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 12 }}>
+                    💡 Nhấn vào một báo giá để xem chi tiết đầy đủ
+                  </p>
+                )}
+                {data.map((item, i) =>
+                  config.isQuote
+                    ? <QuoteRow key={item.id || i} q={item} onClick={setSelectedQuote} />
+                    : <CustomerRow key={item.id || i} c={item} />
+                )}
+              </div>
+            )}
+          </div>
+          <div className="modal-footer">
+            <button className="btn btn-ghost" onClick={onClose}>Đóng</button>
           </div>
         </div>
-        <div className="modal-body">
-          {isLoading ? (
-            <div style={{ textAlign: 'center', padding: 40 }}>
-              <div className="spinner" style={{ margin: '0 auto' }} />
-            </div>
-          ) : data.length === 0 ? (
-            <div className="empty-state">
-              <div className="icon">📭</div>
-              <p>Không có dữ liệu trong khoảng thời gian này</p>
-            </div>
-          ) : (
-            <div>
-              {data.map((item, i) =>
-                config.isQuote
-                  ? <QuoteRow key={item.id || i} q={item} />
-                  : <CustomerRow key={item.id || i} c={item} />
-              )}
-            </div>
-          )}
-        </div>
-        <div className="modal-footer">
-          <button className="btn btn-ghost" onClick={onClose}>Đóng</button>
-        </div>
       </div>
-    </div>
+
+      {selectedQuote && (
+        <QuoteDetailModal q={selectedQuote} onClose={() => setSelectedQuote(null)} />
+      )}
+    </>
   );
 }

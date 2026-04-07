@@ -177,7 +177,12 @@ export default function ReportDetail() {
               </div>
             ) : (
               customers.map((c, i) => (
-                <CustomerCard key={c.id || i} customer={c} readOnly />
+                <CustomerCard
+                  key={c.id || i}
+                  customer={c}
+                  canEdit={user?.id === report.user_id}
+                  onRefresh={() => qc.invalidateQueries({ queryKey: ['report', id] })}
+                />
               ))
             )}
           </div>
