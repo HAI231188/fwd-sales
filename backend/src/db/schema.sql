@@ -71,3 +71,8 @@ CREATE INDEX IF NOT EXISTS idx_customers_follow_up ON customers(follow_up_date);
 CREATE INDEX IF NOT EXISTS idx_quotes_customer_id ON quotes(customer_id);
 CREATE INDEX IF NOT EXISTS idx_quotes_status ON quotes(status);
 CREATE INDEX IF NOT EXISTS idx_quotes_closing_soon ON quotes(closing_soon);
+
+-- Auth columns (added via migration)
+ALTER TABLE users ADD COLUMN IF NOT EXISTS username VARCHAR(50);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON users(username);

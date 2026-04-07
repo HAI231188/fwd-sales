@@ -24,9 +24,10 @@ api.interceptors.response.use(
 );
 
 // Auth
-export const getUsers = () => api.get('/auth/users');
-export const login = (userId) => api.post('/auth/login', { userId });
+export const login = (username, password) => api.post('/auth/login', { username, password });
 export const getMe = () => api.get('/auth/me');
+export const changePassword = (currentPassword, newPassword) =>
+  api.post('/auth/change-password', { currentPassword, newPassword });
 
 // Reports
 export const getReports = (params) => api.get('/reports', { params });

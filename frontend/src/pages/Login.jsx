@@ -1,34 +1,39 @@
-import { useEffect, useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useQuery, useMutation } from '@tanstack/react-query';
+import { useMutation } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
-import { getUsers, login as apiLogin } from '../api';
+import { login as apiLogin } from '../api';
 import { useAuth } from '../App';
 
 export default function Login() {
   const { user, login } = useAuth();
   const navigate = useNavigate();
 
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+
   useEffect(() => {
     if (user) navigate(user.role === 'lead' ? '/dashboard' : '/my-dashboard');
   }, [user, navigate]);
 
-  const { data: users = [], isLoading } = useQuery({
-    queryKey: ['users'],
-    queryFn: getUsers,
-  });
-
   const mutation = useMutation({
-    mutationFn: (userId) => apiLogin(userId),
+    mutationFn: () => apiLogin(username.trim(), password),
     onSuccess: ({ user: u, token }) => {
       login(u, token);
       navigate(u.role === 'lead' ? '/dashboard' : '/my-dashboard');
     },
-    onError: () => toast.error('Đăng nhập thất bại'),
+    onError: (err) => {
+      toast.error(err?.error || 'Đăng nhập thất bại');
+    },
   });
 
-  const leads = users.filter(u => u.role === 'lead');
-  const sales = users.filter(u => u.role === 'sales');
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (!username.trim()) { toast.error('Vui lòng nhập tên đăng nhập'); return; }
+    if (!password) { toast.error('Vui lòng nhập mật khẩu'); return; }
+    mutation.mutate();
+  };
 
   return (
     <div style={{
@@ -38,7 +43,7 @@ export default function Login() {
       backgroundImage: 'radial-gradient(ellipse 80% 50% at 50% -20%, rgba(0,212,170,0.12), transparent)',
     }}>
       {/* Logo */}
-      <div style={{ textAlign: 'center', marginBottom: 48 }}>
+      <div style={{ textAlign: 'center', marginBottom: 40 }}>
         <div style={{
           width: 72, height: 72,
           background: 'linear-gradient(135deg, #00d4aa, #0099cc)',
@@ -57,99 +62,79 @@ export default function Login() {
       {/* Login card */}
       <div style={{
         background: 'var(--bg-card)', border: '1px solid var(--border)',
-        borderRadius: 20, padding: 36, width: '100%', maxWidth: 520,
+        borderRadius: 20, padding: '36px 40px', width: '100%', maxWidth: 420,
         boxShadow: 'var(--shadow)',
       }}>
-        <h2 style={{ fontSize: 18, fontFamily: 'var(--font-display)', marginBottom: 8, color: 'var(--text)' }}>
-          Chọn người dùng để đăng nhập
+        <h2 style={{ fontSize: 20, fontFamily: 'var(--font-display)', marginBottom: 6, color: 'var(--text)' }}>
+          Đăng nhập
         </h2>
         <p style={{ fontSize: 13, color: 'var(--text-2)', marginBottom: 28 }}>
-          Phiên bản demo — không cần mật khẩu
+          Nhập thông tin tài khoản để tiếp tục
         </p>
 
-        {isLoading ? (
-          <div style={{ textAlign: 'center', padding: 40 }}>
-            <div className="spinner" style={{ margin: '0 auto' }} />
+        <form onSubmit={handleSubmit}>
+          {/* Username */}
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: 'var(--text-2)', marginBottom: 6 }}>
+              Tên đăng nhập
+            </label>
+            <input
+              type="text"
+              className="input"
+              placeholder="Nhập tên đăng nhập"
+              value={username}
+              onChange={e => setUsername(e.target.value)}
+              autoComplete="username"
+              autoFocus
+              style={{ width: '100%', boxSizing: 'border-box' }}
+            />
           </div>
-        ) : (
-          <>
-            {/* Lead */}
-            {leads.length > 0 && (
-              <div style={{ marginBottom: 24 }}>
-                <div style={{
-                  fontSize: 11, fontWeight: 600, color: '#ff6b35',
-                  textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 10,
-                  display: 'flex', alignItems: 'center', gap: 6,
-                }}>
-                  👑 Trưởng phòng
-                </div>
-                {leads.map(u => (
-                  <UserButton key={u.id} user={u} loading={mutation.isPending && mutation.variables === u.id} onClick={() => mutation.mutate(u.id)} />
-                ))}
-              </div>
-            )}
 
-            {/* Sales */}
-            {sales.length > 0 && (
-              <div>
-                <div style={{
-                  fontSize: 11, fontWeight: 600, color: 'var(--primary)',
-                  textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 10,
-                  display: 'flex', alignItems: 'center', gap: 6,
-                }}>
-                  💼 Nhân viên Kinh doanh
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                  {sales.map(u => (
-                    <UserButton key={u.id} user={u} loading={mutation.isPending && mutation.variables === u.id} onClick={() => mutation.mutate(u.id)} />
-                  ))}
-                </div>
-              </div>
-            )}
-          </>
-        )}
+          {/* Password */}
+          <div style={{ marginBottom: 24 }}>
+            <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: 'var(--text-2)', marginBottom: 6 }}>
+              Mật khẩu
+            </label>
+            <div style={{ position: 'relative' }}>
+              <input
+                type={showPassword ? 'text' : 'password'}
+                className="input"
+                placeholder="Nhập mật khẩu"
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                autoComplete="current-password"
+                style={{ width: '100%', boxSizing: 'border-box', paddingRight: 44 }}
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(v => !v)}
+                style={{
+                  position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)',
+                  background: 'none', border: 'none', cursor: 'pointer',
+                  color: 'var(--text-3)', fontSize: 16, padding: 0, lineHeight: 1,
+                }}
+              >
+                {showPassword ? '🙈' : '👁'}
+              </button>
+            </div>
+          </div>
+
+          <button
+            type="submit"
+            className="btn btn-primary"
+            disabled={mutation.isPending}
+            style={{ width: '100%', height: 44, fontSize: 15, fontWeight: 600 }}
+          >
+            {mutation.isPending
+              ? <span className="spinner" style={{ width: 18, height: 18, borderWidth: 2, margin: '0 auto' }} />
+              : 'Đăng nhập'}
+          </button>
+        </form>
       </div>
 
       <p style={{ marginTop: 24, fontSize: 12, color: 'var(--text-3)' }}>
         © 2026 FWD Sales Management System
       </p>
     </div>
-  );
-}
-
-function UserButton({ user, onClick, loading }) {
-  return (
-    <button
-      onClick={onClick}
-      disabled={loading}
-      style={{
-        display: 'flex', alignItems: 'center', gap: 12,
-        background: 'var(--bg)', border: '1px solid var(--border)',
-        borderRadius: 12, padding: '12px 16px', cursor: 'pointer',
-        transition: 'all 0.2s', width: '100%', textAlign: 'left',
-        marginBottom: 4,
-      }}
-      onMouseEnter={e => {
-        e.currentTarget.style.borderColor = user.avatar_color;
-        e.currentTarget.style.background = `${user.avatar_color}12`;
-        e.currentTarget.style.transform = 'translateY(-1px)';
-      }}
-      onMouseLeave={e => {
-        e.currentTarget.style.borderColor = 'var(--border)';
-        e.currentTarget.style.background = 'var(--bg)';
-        e.currentTarget.style.transform = '';
-      }}
-    >
-      <div className="avatar" style={{ background: user.avatar_color }}>
-        {loading ? <span className="spinner" style={{ width: 14, height: 14, borderWidth: 2 }} /> : user.code}
-      </div>
-      <div>
-        <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--text)' }}>{user.name}</div>
-        <div style={{ fontSize: 11, color: 'var(--text-2)' }}>
-          {user.role === 'lead' ? 'Trưởng Phòng' : 'Nhân viên KD'}
-        </div>
-      </div>
-      <div style={{ marginLeft: 'auto', fontSize: 14, color: 'var(--text-3)' }}>→</div>
-    </button>
   );
 }

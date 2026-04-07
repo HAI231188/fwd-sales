@@ -1,4 +1,7 @@
+const jwt = require('jsonwebtoken');
 const db = require('../db');
+
+const JWT_SECRET = process.env.JWT_SECRET || 'fwd-sales-secret-change-in-production';
 
 async function requireAuth(req, res, next) {
   const authHeader = req.headers['authorization'];
@@ -8,13 +11,16 @@ async function requireAuth(req, res, next) {
 
   const token = authHeader.split(' ')[1];
   try {
-    const decoded = JSON.parse(Buffer.from(token, 'base64').toString('utf8'));
-    const { rows } = await db.query('SELECT * FROM users WHERE id = $1', [decoded.userId]);
+    const decoded = jwt.verify(token, JWT_SECRET);
+    const { rows } = await db.query(
+      'SELECT id, name, username, code, role, avatar_color FROM users WHERE id = $1',
+      [decoded.userId]
+    );
     if (!rows[0]) return res.status(401).json({ error: 'Token không hợp lệ' });
     req.user = rows[0];
     next();
   } catch {
-    return res.status(401).json({ error: 'Token không hợp lệ' });
+    return res.status(401).json({ error: 'Token không hợp lệ hoặc đã hết hạn' });
   }
 }
 
@@ -25,4 +31,4 @@ function requireLead(req, res, next) {
   next();
 }
 
-module.exports = { requireAuth, requireLead };
+module.exports = { requireAuth, requireLead, JWT_SECRET };

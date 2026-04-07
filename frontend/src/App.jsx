@@ -1,9 +1,10 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { createContext, useContext, useState, useEffect } from 'react';
+import { createContext, useContext, useState } from 'react';
 import Login from './pages/Login';
 import LeadDashboard from './pages/LeadDashboard';
 import SalesDashboard from './pages/SalesDashboard';
 import ReportDetail from './pages/ReportDetail';
+import ChangePassword from './pages/ChangePassword';
 
 export const AuthContext = createContext(null);
 
@@ -60,6 +61,11 @@ export default function App() {
           <Route path="/reports/:id" element={
             <ProtectedRoute>
               <ReportDetail />
+            </ProtectedRoute>
+          } />
+          <Route path="/change-password" element={
+            <ProtectedRoute>
+              <ChangePassword />
             </ProtectedRoute>
           } />
           <Route path="*" element={<Navigate to="/" replace />} />

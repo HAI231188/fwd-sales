@@ -1,37 +1,45 @@
 const router = require('express').Router();
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 const db = require('../db');
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, JWT_SECRET } = require('../middleware/auth');
 
-// List all users (for login screen)
-router.get('/users', async (req, res) => {
-  try {
-    const { rows } = await db.query(
-      'SELECT id, name, code, role, avatar_color FROM users ORDER BY role DESC, name ASC'
-    );
-    res.json(rows);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Login (select user - no password for prototype)
+// Login with username + password
 router.post('/login', async (req, res) => {
-  const { userId } = req.body;
-  if (!userId) return res.status(400).json({ error: 'Vui lòng chọn người dùng' });
+  const { username, password } = req.body;
+  if (!username || !password) {
+    return res.status(400).json({ error: 'Vui lòng nhập tên đăng nhập và mật khẩu' });
+  }
 
   try {
     const { rows } = await db.query(
-      'SELECT id, name, code, role, avatar_color FROM users WHERE id = $1',
-      [userId]
+      'SELECT id, name, username, code, role, avatar_color, password_hash FROM users WHERE username = $1',
+      [username.trim().toLowerCase()]
     );
-    if (!rows[0]) return res.status(404).json({ error: 'Người dùng không tồn tại' });
+
+    if (!rows[0]) {
+      return res.status(401).json({ error: 'Tên đăng nhập hoặc mật khẩu không đúng' });
+    }
 
     const user = rows[0];
-    const token = Buffer.from(
-      JSON.stringify({ userId: user.id, timestamp: Date.now() })
-    ).toString('base64');
 
-    res.json({ user, token });
+    if (!user.password_hash) {
+      return res.status(401).json({ error: 'Tài khoản chưa được thiết lập mật khẩu' });
+    }
+
+    const valid = await bcrypt.compare(password, user.password_hash);
+    if (!valid) {
+      return res.status(401).json({ error: 'Tên đăng nhập hoặc mật khẩu không đúng' });
+    }
+
+    const token = jwt.sign(
+      { userId: user.id, role: user.role },
+      JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
+    const { password_hash, ...safeUser } = user;
+    res.json({ user: safeUser, token });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -39,8 +47,40 @@ router.post('/login', async (req, res) => {
 
 // Get current user
 router.get('/me', requireAuth, (req, res) => {
-  const { id, name, code, role, avatar_color } = req.user;
-  res.json({ id, name, code, role, avatar_color });
+  const { id, name, username, code, role, avatar_color } = req.user;
+  res.json({ id, name, username, code, role, avatar_color });
+});
+
+// Change password
+router.post('/change-password', requireAuth, async (req, res) => {
+  const { currentPassword, newPassword } = req.body;
+
+  if (!currentPassword || !newPassword) {
+    return res.status(400).json({ error: 'Vui lòng nhập đầy đủ thông tin' });
+  }
+
+  if (newPassword.length < 6) {
+    return res.status(400).json({ error: 'Mật khẩu mới phải có ít nhất 6 ký tự' });
+  }
+
+  try {
+    const { rows } = await db.query(
+      'SELECT password_hash FROM users WHERE id = $1',
+      [req.user.id]
+    );
+
+    const valid = await bcrypt.compare(currentPassword, rows[0].password_hash);
+    if (!valid) {
+      return res.status(401).json({ error: 'Mật khẩu hiện tại không đúng' });
+    }
+
+    const hash = await bcrypt.hash(newPassword, 10);
+    await db.query('UPDATE users SET password_hash = $1 WHERE id = $2', [hash, req.user.id]);
+
+    res.json({ message: 'Đổi mật khẩu thành công' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 module.exports = router;

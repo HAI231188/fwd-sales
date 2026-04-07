@@ -36,31 +36,35 @@ export default function Navbar() {
           </div>
         </div>
 
-        {/* Role badge */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          {user && (
-            <>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <div
-                  className="avatar"
-                  style={{ background: user.avatar_color }}
-                >
-                  {user.code}
-                </div>
-                <div style={{ lineHeight: 1.3, display: 'flex', flexDirection: 'column' }}>
-                  <span style={{ fontSize: 14, fontWeight: 500, color: 'var(--text)' }}>{user.name}</span>
-                  <span style={{ fontSize: 11, color: user.role === 'lead' ? '#ff6b35' : 'var(--primary)' }}>
-                    {user.role === 'lead' ? '👑 Trưởng Phòng' : '💼 Sales'}
-                  </span>
-                </div>
+        {/* User info + actions */}
+        {user && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div className="avatar" style={{ background: user.avatar_color }}>
+                {user.code}
               </div>
+              <div style={{ lineHeight: 1.3, display: 'flex', flexDirection: 'column' }}>
+                <span style={{ fontSize: 14, fontWeight: 500, color: 'var(--text)' }}>{user.name}</span>
+                <span style={{ fontSize: 11, color: user.role === 'lead' ? '#ff6b35' : 'var(--primary)' }}>
+                  {user.role === 'lead' ? '👑 Trưởng Phòng' : '💼 Sales'}
+                </span>
+              </div>
+            </div>
 
-              <button className="btn btn-ghost btn-sm" onClick={handleLogout}>
-                Đăng xuất
-              </button>
-            </>
-          )}
-        </div>
+            <button
+              className="btn btn-ghost btn-sm"
+              onClick={() => navigate('/change-password')}
+              title="Đổi mật khẩu"
+              style={{ marginLeft: 4 }}
+            >
+              🔑
+            </button>
+
+            <button className="btn btn-ghost btn-sm" onClick={handleLogout}>
+              Đăng xuất
+            </button>
+          </div>
+        )}
       </div>
     </nav>
   );
