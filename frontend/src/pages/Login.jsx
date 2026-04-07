@@ -37,84 +37,141 @@ export default function Login() {
 
   return (
     <div style={{
-      minHeight: '100vh', display: 'flex', flexDirection: 'column',
-      alignItems: 'center', justifyContent: 'center',
-      background: 'var(--bg)', padding: 24,
-      backgroundImage: 'radial-gradient(ellipse 80% 50% at 50% -20%, rgba(34,197,94,0.1), transparent)',
+      minHeight: '100vh',
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      justifyContent: 'center',
+      background: '#f8f9fa',
+      padding: 24,
     }}>
       {/* Logo */}
-      <div style={{ textAlign: 'center', marginBottom: 40 }}>
+      <div style={{ textAlign: 'center', marginBottom: 36 }}>
         <div style={{
           width: 72, height: 72,
           background: 'linear-gradient(135deg, #22c55e, #16a34a)',
-          borderRadius: 20, display: 'flex', alignItems: 'center', justifyContent: 'center',
+          borderRadius: 20,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
           fontSize: 36, margin: '0 auto 20px',
-          boxShadow: '0 8px 32px rgba(34,197,94,0.35)',
+          boxShadow: '0 8px 24px rgba(34,197,94,0.25)',
         }}>🌐</div>
-        <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 32, color: 'var(--text)', marginBottom: 4 }}>
+        <h1 style={{
+          fontFamily: 'var(--font-display)', fontSize: 28,
+          color: '#111827', marginBottom: 4, fontWeight: 700,
+        }}>
           SLB Global Logistics
         </h1>
-        <p style={{ color: 'var(--primary)', fontSize: 13, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 4 }}>
+        <p style={{
+          color: '#22c55e', fontSize: 12, fontWeight: 600,
+          letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 4,
+        }}>
           Sales Management System
         </p>
-        <p style={{ color: 'var(--text-2)', fontSize: 13 }}>
+        <p style={{ color: '#6b7280', fontSize: 13 }}>
           Hệ thống Quản lý Kinh doanh Nội bộ
         </p>
       </div>
 
       {/* Login card */}
       <div style={{
-        background: 'var(--bg-card)', border: '1px solid var(--border)',
-        borderRadius: 20, padding: '36px 40px', width: '100%', maxWidth: 420,
-        boxShadow: 'var(--shadow)',
+        background: '#ffffff',
+        border: '1px solid #e5e7eb',
+        borderRadius: 20,
+        padding: '36px 40px',
+        width: '100%', maxWidth: 420,
+        boxShadow: '0 4px 24px rgba(0,0,0,0.07)',
       }}>
-        <h2 style={{ fontSize: 20, fontFamily: 'var(--font-display)', marginBottom: 6, color: 'var(--text)' }}>
+        <h2 style={{
+          fontSize: 20, fontFamily: 'var(--font-display)',
+          marginBottom: 6, color: '#111827', fontWeight: 600,
+        }}>
           Đăng nhập
         </h2>
-        <p style={{ fontSize: 13, color: 'var(--text-2)', marginBottom: 28 }}>
+        <p style={{ fontSize: 13, color: '#6b7280', marginBottom: 28 }}>
           Nhập thông tin tài khoản để tiếp tục
         </p>
 
         <form onSubmit={handleSubmit}>
           {/* Username */}
           <div style={{ marginBottom: 16 }}>
-            <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: 'var(--text-2)', marginBottom: 6 }}>
+            <label style={{
+              display: 'block', fontSize: 13, fontWeight: 500,
+              color: '#374151', marginBottom: 6,
+            }}>
               Tên đăng nhập
             </label>
             <input
               type="text"
-              className="input"
               placeholder="Nhập tên đăng nhập"
               value={username}
               onChange={e => setUsername(e.target.value)}
               autoComplete="username"
               autoFocus
-              style={{ width: '100%', boxSizing: 'border-box' }}
+              style={{
+                width: '100%', boxSizing: 'border-box',
+                padding: '10px 14px',
+                border: '1px solid #d1d5db',
+                borderRadius: 8,
+                fontSize: 14, color: '#111827',
+                background: '#fff',
+                outline: 'none',
+                transition: 'border-color 0.2s, box-shadow 0.2s',
+                fontFamily: 'var(--font)',
+              }}
+              onFocus={e => {
+                e.target.style.borderColor = '#22c55e';
+                e.target.style.boxShadow = '0 0 0 3px rgba(34,197,94,0.12)';
+              }}
+              onBlur={e => {
+                e.target.style.borderColor = '#d1d5db';
+                e.target.style.boxShadow = 'none';
+              }}
             />
           </div>
 
           {/* Password */}
-          <div style={{ marginBottom: 24 }}>
-            <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: 'var(--text-2)', marginBottom: 6 }}>
+          <div style={{ marginBottom: 28 }}>
+            <label style={{
+              display: 'block', fontSize: 13, fontWeight: 500,
+              color: '#374151', marginBottom: 6,
+            }}>
               Mật khẩu
             </label>
             <div style={{ position: 'relative' }}>
               <input
                 type={showPassword ? 'text' : 'password'}
-                className="input"
                 placeholder="Nhập mật khẩu"
                 value={password}
                 onChange={e => setPassword(e.target.value)}
                 autoComplete="current-password"
-                style={{ width: '100%', boxSizing: 'border-box', paddingRight: 44 }}
+                style={{
+                  width: '100%', boxSizing: 'border-box',
+                  padding: '10px 44px 10px 14px',
+                  border: '1px solid #d1d5db',
+                  borderRadius: 8,
+                  fontSize: 14, color: '#111827',
+                  background: '#fff',
+                  outline: 'none',
+                  transition: 'border-color 0.2s, box-shadow 0.2s',
+                  fontFamily: 'var(--font)',
+                }}
+                onFocus={e => {
+                  e.target.style.borderColor = '#22c55e';
+                  e.target.style.boxShadow = '0 0 0 3px rgba(34,197,94,0.12)';
+                }}
+                onBlur={e => {
+                  e.target.style.borderColor = '#d1d5db';
+                  e.target.style.boxShadow = 'none';
+                }}
               />
               <button
                 type="button"
                 onClick={() => setShowPassword(v => !v)}
                 style={{
-                  position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)',
+                  position: 'absolute', right: 12, top: '50%',
+                  transform: 'translateY(-50%)',
                   background: 'none', border: 'none', cursor: 'pointer',
-                  color: 'var(--text-3)', fontSize: 16, padding: 0, lineHeight: 1,
+                  color: '#9ca3af', fontSize: 16, padding: 0, lineHeight: 1,
                 }}
               >
                 {showPassword ? '🙈' : '👁'}
@@ -124,18 +181,33 @@ export default function Login() {
 
           <button
             type="submit"
-            className="btn btn-primary"
             disabled={mutation.isPending}
-            style={{ width: '100%', height: 44, fontSize: 15, fontWeight: 600 }}
+            style={{
+              width: '100%', height: 44, fontSize: 15, fontWeight: 600,
+              background: 'linear-gradient(135deg, #22c55e, #16a34a)',
+              color: '#fff', border: 'none', borderRadius: 8,
+              cursor: mutation.isPending ? 'not-allowed' : 'pointer',
+              opacity: mutation.isPending ? 0.7 : 1,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontFamily: 'var(--font)',
+              boxShadow: '0 2px 12px rgba(34,197,94,0.3)',
+              transition: 'opacity 0.2s, transform 0.2s',
+            }}
           >
             {mutation.isPending
-              ? <span className="spinner" style={{ width: 18, height: 18, borderWidth: 2, margin: '0 auto' }} />
+              ? <span style={{
+                  width: 18, height: 18, borderRadius: '50%',
+                  border: '2px solid rgba(255,255,255,0.3)',
+                  borderTopColor: '#fff',
+                  display: 'inline-block',
+                  animation: 'spin 0.7s linear infinite',
+                }} />
               : 'Đăng nhập'}
           </button>
         </form>
       </div>
 
-      <p style={{ marginTop: 24, fontSize: 12, color: 'var(--text-3)' }}>
+      <p style={{ marginTop: 24, fontSize: 12, color: '#9ca3af' }}>
         © 2026 SLB Global Logistics · Hệ thống nội bộ
       </p>
     </div>
