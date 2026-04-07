@@ -3,9 +3,6 @@ builder = "NIXPACKS"
 buildCommand = "cd frontend && rm -rf dist node_modules && npm install && npm run build && cd ../backend && rm -rf node_modules && npm install"
 
 [deploy]
-startCommand = "cd backend && npm run db:migrate && npm run db:seed:users && npm start"
+startCommand = "cd backend && npm run db:migrate && npm run db:seed && npm start"
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 3
-
-[[services]]
-name = "fwd-sales"

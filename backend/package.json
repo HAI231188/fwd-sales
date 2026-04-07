@@ -4,10 +4,11 @@
   "description": "Freight forwarding sales management backend",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js",
+    "start": "node start.js",
     "dev": "nodemon server.js",
     "db:migrate": "node src/db/migrate.js",
-    "db:seed": "node src/db/seed.js",
+    "db:seed": "node src/db/seed_users.js",
+    "db:seed:demo": "node src/db/seed.js",
     "db:seed:users": "node src/db/seed_users.js"
   },
   "dependencies": {
