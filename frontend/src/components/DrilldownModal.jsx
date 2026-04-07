@@ -12,7 +12,7 @@ const TYPE_CLASS = { saved: 'type-saved', contacted: 'type-contacted', quoted: '
 function QuoteRow({ q }) {
   return (
     <div style={{
-      background: 'var(--bg)', border: '1px solid var(--border)',
+      background: '#f8f9fa', border: '1px solid var(--border)',
       borderRadius: 10, padding: '14px 16px', marginBottom: 10,
     }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
@@ -63,7 +63,7 @@ function QuoteRow({ q }) {
 function CustomerRow({ c }) {
   return (
     <div style={{
-      background: 'var(--bg)', border: '1px solid var(--border)',
+      background: '#f8f9fa', border: '1px solid var(--border)',
       borderRadius: 10, padding: '14px 16px', marginBottom: 10,
     }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>

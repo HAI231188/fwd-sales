@@ -18,7 +18,7 @@ function QuoteCard({ q }) {
     <div
       className={closingSoon ? 'closing-soon-glow' : ''}
       style={{
-        background: 'var(--bg)', border: `1px solid ${closingSoon ? 'rgba(255,215,0,0.3)' : 'var(--border)'}`,
+        background: '#f8f9fa', border: `1px solid ${closingSoon ? 'rgba(217,119,6,0.35)' : 'var(--border)'}`,
         borderRadius: 10, padding: '14px 16px', marginBottom: 10,
       }}
     >

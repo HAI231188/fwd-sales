@@ -12,25 +12,26 @@ export default function Navbar() {
 
   return (
     <nav style={{
-      background: 'rgba(13,21,38,0.95)',
-      borderBottom: '1px solid var(--border)',
-      backdropFilter: 'blur(12px)',
+      background: '#ffffff',
+      borderBottom: '1px solid #e5e7eb',
       position: 'sticky', top: 0, zIndex: 50,
+      boxShadow: '0 1px 4px rgba(0,0,0,0.06)',
     }}>
       <div className="container" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: 60 }}>
         {/* Logo */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}
              onClick={() => navigate(user?.role === 'lead' ? '/dashboard' : '/my-dashboard')}>
           <div style={{
-            width: 36, height: 36, background: 'linear-gradient(135deg, #22c55e, #16a34a)',
+            width: 36, height: 36,
+            background: 'linear-gradient(135deg, #22c55e, #16a34a)',
             borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center',
             fontSize: 18,
           }}>🌐</div>
           <div>
-            <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 16, color: 'var(--text)', lineHeight: 1 }}>
+            <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 15, color: '#1f2937', lineHeight: 1 }}>
               SLB Global Logistics
             </div>
-            <div style={{ fontSize: 11, color: 'var(--primary)', lineHeight: 1.2, letterSpacing: '0.04em' }}>
+            <div style={{ fontSize: 11, color: '#22c55e', lineHeight: 1.3, fontWeight: 600, letterSpacing: '0.03em' }}>
               Sales Management
             </div>
           </div>
@@ -44,8 +45,8 @@ export default function Navbar() {
                 {user.code}
               </div>
               <div style={{ lineHeight: 1.3, display: 'flex', flexDirection: 'column' }}>
-                <span style={{ fontSize: 14, fontWeight: 500, color: 'var(--text)' }}>{user.name}</span>
-                <span style={{ fontSize: 11, color: user.role === 'lead' ? '#ff6b35' : 'var(--primary)' }}>
+                <span style={{ fontSize: 14, fontWeight: 600, color: '#1f2937' }}>{user.name}</span>
+                <span style={{ fontSize: 11, color: user.role === 'lead' ? '#d97706' : '#22c55e', fontWeight: 500 }}>
                   {user.role === 'lead' ? '👑 Trưởng Phòng' : '💼 Sales'}
                 </span>
               </div>
@@ -55,12 +56,16 @@ export default function Navbar() {
               className="btn btn-ghost btn-sm"
               onClick={() => navigate('/change-password')}
               title="Đổi mật khẩu"
-              style={{ marginLeft: 4 }}
+              style={{ marginLeft: 4, color: '#6b7280' }}
             >
               🔑
             </button>
 
-            <button className="btn btn-ghost btn-sm" onClick={handleLogout}>
+            <button
+              className="btn btn-ghost btn-sm"
+              onClick={handleLogout}
+              style={{ color: '#6b7280' }}
+            >
               Đăng xuất
             </button>
           </div>

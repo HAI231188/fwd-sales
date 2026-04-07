@@ -146,7 +146,7 @@ export default function LeadDashboard() {
                   </thead>
                   <tbody>
                     {stats.per_sales.map(s => (
-                      <tr key={s.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}
+                      <tr key={s.id} style={{ borderBottom: '1px solid var(--border)' }}
                           onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-card-hover)'}
                           onMouseLeave={e => e.currentTarget.style.background = ''}
                       >

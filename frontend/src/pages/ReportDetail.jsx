@@ -151,7 +151,7 @@ export default function ReportDetail() {
             {report.issues && (
               <div style={{
                 marginTop: 20, padding: '14px 18px',
-                background: 'rgba(255,215,0,0.08)', border: '1px solid rgba(255,215,0,0.2)',
+                background: 'rgba(217,119,6,0.06)', border: '1px solid rgba(217,119,6,0.2)',
                 borderRadius: 10, borderLeft: '3px solid var(--warning)',
               }}>
                 <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--warning)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
