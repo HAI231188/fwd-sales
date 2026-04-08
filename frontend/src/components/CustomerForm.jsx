@@ -36,6 +36,8 @@ export default function CustomerForm({ customer, onChange, onRemove, index }) {
   // Search state (for existing customer type)
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
+  const [defaultCustomers, setDefaultCustomers] = useState([]);
+  const [defaultsLoaded, setDefaultsLoaded] = useState(false);
   const [searching, setSearching] = useState(false);
   const [showDropdown, setShowDropdown] = useState(false);
   const searchTimer = useRef(null);
@@ -51,12 +53,26 @@ export default function CustomerForm({ customer, onChange, onRemove, index }) {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  const loadDefaults = async () => {
+    if (defaultsLoaded) return;
+    try {
+      const results = await getCustomers({ excludeSaved: 'true', limit: 10 });
+      setDefaultCustomers(results);
+      setDefaultsLoaded(true);
+    } catch {}
+  };
+
+  const handleFocus = async () => {
+    await loadDefaults();
+    if (searchQuery.length < 2) setShowDropdown(true);
+  };
+
   const handleSearchInput = (query) => {
     setSearchQuery(query);
     clearTimeout(searchTimer.current);
     if (query.length < 2) {
       setSearchResults([]);
-      setShowDropdown(false);
+      setShowDropdown(true); // show defaults
       return;
     }
     searchTimer.current = setTimeout(async () => {
@@ -72,6 +88,8 @@ export default function CustomerForm({ customer, onChange, onRemove, index }) {
       }
     }, 300);
   };
+
+  const displayResults = searchQuery.length >= 2 ? searchResults : defaultCustomers;
 
   const selectExisting = (existing) => {
     onChange({
@@ -142,6 +160,7 @@ export default function CustomerForm({ customer, onChange, onRemove, index }) {
                 placeholder="Nhập tên công ty để tìm kiếm..."
                 value={searchQuery}
                 onChange={e => handleSearchInput(e.target.value)}
+                onFocus={handleFocus}
                 autoFocus
               />
               {searching && (
@@ -152,14 +171,22 @@ export default function CustomerForm({ customer, onChange, onRemove, index }) {
             </div>
           </div>
 
-          {showDropdown && searchResults.length > 0 && (
+          {showDropdown && displayResults.length > 0 && (
             <div style={{
               position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 200,
               background: 'var(--bg-card)', border: '1px solid var(--border)',
               borderRadius: 'var(--radius)', boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
-              maxHeight: 280, overflowY: 'auto', marginTop: 4,
+              maxHeight: 320, overflowY: 'auto', marginTop: 4,
             }}>
-              {searchResults.map(r => (
+              {searchQuery.length < 2 && (
+                <div style={{
+                  padding: '8px 14px 4px', fontSize: 11, fontWeight: 600,
+                  color: 'var(--text-2)', textTransform: 'uppercase', letterSpacing: '0.5px',
+                }}>
+                  Khách hàng gần đây
+                </div>
+              )}
+              {displayResults.map(r => (
                 <button
                   key={r.id}
                   type="button"
@@ -189,7 +216,7 @@ export default function CustomerForm({ customer, onChange, onRemove, index }) {
             </div>
           )}
 
-          {showDropdown && searchResults.length === 0 && !searching && searchQuery.length >= 2 && (
+          {showDropdown && displayResults.length === 0 && !searching && searchQuery.length >= 2 && (
             <div style={{
               position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 200,
               background: 'var(--bg-card)', border: '1px solid var(--border)',

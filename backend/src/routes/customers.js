@@ -4,7 +4,7 @@ const { requireAuth } = require('../middleware/auth');
 
 // List customers
 router.get('/', requireAuth, async (req, res) => {
-  const { userId, interactionType, startDate, endDate, search } = req.query;
+  const { userId, interactionType, startDate, endDate, search, excludeSaved, limit } = req.query;
 
   let conditions = [];
   let params = [];
@@ -34,8 +34,13 @@ router.get('/', requireAuth, async (req, res) => {
     conditions.push(`(c.company_name ILIKE $${idx++} OR c.contact_person ILIKE $${idx - 1})`);
     params.push(`%${search}%`);
   }
+  // Exclude 'saved' customers when searching or explicitly requested
+  if (search || excludeSaved === 'true') {
+    conditions.push(`c.interaction_type IN ('contacted', 'quoted')`);
+  }
 
   const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
+  const limitClause = limit ? `LIMIT ${Math.min(parseInt(limit) || 10, 50)}` : '';
 
   try {
     const { rows } = await db.query(`
@@ -53,6 +58,7 @@ router.get('/', requireAuth, async (req, res) => {
       ${where}
       GROUP BY c.id, u.name, u.code, u.avatar_color, r.report_date
       ORDER BY r.report_date DESC, c.created_at DESC
+      ${limitClause}
     `, params);
 
     res.json(rows);
