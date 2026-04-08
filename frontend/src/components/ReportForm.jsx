@@ -17,6 +17,8 @@ export default function ReportForm({ onSuccess, existingReport }) {
     ...existingReport,
   });
 
+  const [showTypeChoice, setShowTypeChoice] = useState(false);
+
   const mutation = useMutation({
     mutationFn: createReport,
     onSuccess: (res) => {
@@ -32,7 +34,13 @@ export default function ReportForm({ onSuccess, existingReport }) {
 
   const set = (field, value) => setForm(f => ({ ...f, [field]: value }));
 
-  const addCustomer = () => set('customers', [...form.customers, { ...EMPTY_CUSTOMER, quotes: [] }]);
+  const addCustomer = (type) => {
+    const base = { ...EMPTY_CUSTOMER, quotes: [], _type: type };
+    if (type === 'existing') base._existingId = null;
+    set('customers', [...form.customers, base]);
+    setShowTypeChoice(false);
+  };
+
   const updateCustomer = (i, c) => {
     const customers = [...form.customers];
     customers[i] = c;
@@ -43,19 +51,25 @@ export default function ReportForm({ onSuccess, existingReport }) {
   const handleSubmit = (e) => {
     e.preventDefault();
     if (!form.report_date) return toast.error('Vui lòng chọn ngày báo cáo');
-    if (form.customers.some(c => !c.company_name.trim())) {
-      return toast.error('Vui lòng nhập tên công ty cho tất cả khách hàng');
+
+    for (const c of form.customers) {
+      if (c._type === 'existing' && !c._existingId) {
+        return toast.error('Vui lòng chọn khách hàng cũ hoặc xóa mục chưa hoàn thành');
+      }
+      if (c._type !== 'existing' && !c.company_name.trim()) {
+        return toast.error('Vui lòng nhập tên công ty cho tất cả khách hàng');
+      }
     }
+
     mutation.mutate({
       ...form,
       total_contacts: parseInt(form.total_contacts) || form.customers.length,
       new_customers: parseInt(form.new_customers) || 0,
-      customers: form.customers.map(c => ({
+      customers: form.customers.map(({ _type, _existingId, ...c }) => ({
         ...c,
         quotes: c.interaction_type === 'quoted'
           ? (c.quotes || []).map(q => ({
               ...q,
-              // serialize 5-option rows into carrier + price fields for DB storage
               carrier: (q.options || []).find(o => o.carrier)?.carrier || q.carrier || '',
               price: q.options ? JSON.stringify(q.options) : q.price,
             }))
@@ -108,9 +122,45 @@ export default function ReportForm({ onSuccess, existingReport }) {
           <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 16 }}>
             👥 Danh sách khách hàng ({form.customers.length})
           </h3>
-          <button type="button" className="btn btn-ghost" onClick={addCustomer}>
-            + Thêm khách hàng
-          </button>
+
+          {/* Add customer button / type chooser */}
+          <div style={{ position: 'relative' }}>
+            {!showTypeChoice ? (
+              <button type="button" className="btn btn-ghost" onClick={() => setShowTypeChoice(true)}>
+                + Thêm khách hàng
+              </button>
+            ) : (
+              <div style={{
+                display: 'flex', gap: 8, alignItems: 'center',
+                background: 'var(--bg-card)', border: '1px solid var(--border)',
+                borderRadius: 10, padding: '8px 12px', boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
+              }}>
+                <span style={{ fontSize: 12, color: 'var(--text-2)', marginRight: 4 }}>Loại khách:</span>
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  onClick={() => addCustomer('new')}
+                >
+                  ✨ Khách hàng mới
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => addCustomer('existing')}
+                  style={{ border: '1px solid var(--primary)', color: 'var(--primary)' }}
+                >
+                  🔍 Khách hàng cũ
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowTypeChoice(false)}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-2)', fontSize: 18, lineHeight: 1, padding: '0 4px' }}
+                >
+                  ×
+                </button>
+              </div>
+            )}
+          </div>
         </div>
 
         {form.customers.length === 0 ? (
@@ -119,10 +169,20 @@ export default function ReportForm({ onSuccess, existingReport }) {
             padding: '40px 20px', textAlign: 'center', color: 'var(--text-2)',
           }}>
             <div style={{ fontSize: 36, marginBottom: 12 }}>👥</div>
-            <p style={{ marginBottom: 12 }}>Chưa có khách hàng nào trong báo cáo này</p>
-            <button type="button" className="btn btn-ghost" onClick={addCustomer}>
-              + Thêm khách hàng đầu tiên
-            </button>
+            <p style={{ marginBottom: 16 }}>Chưa có khách hàng nào trong báo cáo này</p>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
+              <button type="button" className="btn btn-primary" onClick={() => addCustomer('new')}>
+                ✨ Thêm khách hàng mới
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={() => addCustomer('existing')}
+                style={{ border: '1px solid var(--primary)', color: 'var(--primary)' }}
+              >
+                🔍 Thêm khách hàng cũ
+              </button>
+            </div>
           </div>
         ) : (
           form.customers.map((c, i) => (
