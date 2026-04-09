@@ -17,6 +17,14 @@ try {
   console.warn('⚠️  Migration warning (server will still start):', e.message);
 }
 
+// Backfill pipeline from existing report data (idempotent — safe every deploy)
+console.log('🔄 Backfilling pipeline from existing customers...');
+try {
+  execSync('node src/db/backfill_pipeline.js', { cwd: __dirname, stdio: 'inherit' });
+} catch (e) {
+  console.warn('⚠️  Backfill warning (server will still start):', e.message);
+}
+
 if (!fs.existsSync(frontendDist)) {
   console.log('🔨 frontend/dist not found — building frontend...');
   execSync('npm install && npm run build', {
