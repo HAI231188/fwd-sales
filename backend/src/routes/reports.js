@@ -136,39 +136,54 @@ router.post('/', requireAuth, async (req, res) => {
 
       // ── Pipeline: upsert entry for this company+salesperson ──
       const { rows: existingPipeline } = await client.query(`
-        SELECT id FROM customer_pipeline
+        SELECT id, stage FROM customer_pipeline
         WHERE sales_id = $1 AND LOWER(company_name) = LOWER($2)
       `, [req.user.id, cust.company_name]);
 
       let pipelineId;
       if (existingPipeline.length === 0) {
-        // Brand new company — create pipeline entry at stage 'new'
+        // Brand new company — stage depends on interaction_type
+        const initStage = ['contacted', 'quoted'].includes(cust.interaction_type) ? 'following' : 'new';
         const { rows: pRows } = await client.query(`
           INSERT INTO customer_pipeline
             (customer_id, sales_id, company_name, contact_person, phone, industry, source, stage, last_activity_date)
-          VALUES ($1,$2,$3,$4,$5,$6,$7,'new',$8)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
           RETURNING id
         `, [
           customer.id, req.user.id,
           cust.company_name, cust.contact_person || null, cust.phone || null,
-          cust.industry || null, cust.source || null, report_date,
+          cust.industry || null, cust.source || null, initStage, report_date,
         ]);
         pipelineId = pRows[0].id;
         await client.query(
-          `INSERT INTO pipeline_history (pipeline_id, from_stage, to_stage, changed_by) VALUES ($1, NULL, 'new', $2)`,
-          [pipelineId, req.user.id]
+          `INSERT INTO pipeline_history (pipeline_id, from_stage, to_stage, changed_by) VALUES ($1, NULL, $2, $3)`,
+          [pipelineId, initStage, req.user.id]
         );
       } else {
         // Known company — refresh last activity and contact info
         pipelineId = existingPipeline[0].id;
+        const currentStage = existingPipeline[0].stage;
+
+        // Promote to 'following' if now being contacted/quoted and was new/dormant
+        const shouldPromote = ['contacted', 'quoted'].includes(cust.interaction_type)
+          && ['new', 'dormant'].includes(currentStage);
+
         await client.query(`
           UPDATE customer_pipeline
           SET last_activity_date = $1,
               contact_person = COALESCE($2, contact_person),
               phone = COALESCE($3, phone),
+              ${shouldPromote ? "stage = 'following'," : ''}
               updated_at = NOW()
           WHERE id = $4
         `, [report_date, cust.contact_person || null, cust.phone || null, pipelineId]);
+
+        if (shouldPromote) {
+          await client.query(
+            `INSERT INTO pipeline_history (pipeline_id, from_stage, to_stage, changed_by) VALUES ($1, $2, 'following', $3)`,
+            [pipelineId, currentStage, req.user.id]
+          );
+        }
       }
 
       // Back-link this customer row to its pipeline entry

@@ -26,13 +26,17 @@ async function applyAutoTransitions(client, salesId) {
     }
   }
 
-  // 2. new → following: added before today (1-6 days ago), not already dormant
+  // 2. new → following: only if the latest interaction was contacted/quoted
+  //    (saved customers stay 'new' until actually contacted)
   const { rows: followCands } = await client.query(`
-    SELECT id FROM customer_pipeline
-    WHERE sales_id = $1
-      AND stage = 'new'
-      AND last_activity_date IS NOT NULL
-      AND last_activity_date < CURRENT_DATE
+    SELECT cp.id FROM customer_pipeline cp
+    WHERE cp.sales_id = $1
+      AND cp.stage = 'new'
+      AND EXISTS (
+        SELECT 1 FROM customers c
+        WHERE c.pipeline_id = cp.id
+          AND c.interaction_type IN ('contacted', 'quoted')
+      )
   `, [salesId]);
 
   if (followCands.length > 0) {
