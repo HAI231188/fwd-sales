@@ -259,15 +259,27 @@ const DRILL_CONFIG = {
   waiting_follow_up: { title: '⏰ KH Chờ Follow Up', isQuote: false },
 };
 
+const TYPE_TABS = [
+  { key: '', label: 'Tất cả' },
+  { key: 'saved', label: 'Lưu liên hệ' },
+  { key: 'contacted', label: 'Đã liên hệ' },
+  { key: 'quoted', label: 'Đã báo giá' },
+];
+
 export default function DrilldownModal({ type, dateParams, userId, onClose }) {
   const config = DRILL_CONFIG[type] || {};
   const [selectedQuote, setSelectedQuote] = useState(null);
+  const [filterType, setFilterType] = useState('');
 
   const { data = [], isLoading } = useQuery({
     queryKey: ['drilldown', type, dateParams, userId],
     queryFn: () => getDrilldown(type, { ...dateParams, userId }),
     enabled: !!type,
   });
+
+  const filteredData = !config.isQuote && filterType
+    ? data.filter(c => c.interaction_type === filterType)
+    : data;
 
   return (
     <>
@@ -276,7 +288,7 @@ export default function DrilldownModal({ type, dateParams, userId, onClose }) {
           <div className="modal-header">
             <h3>{config.title}</h3>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-              <span className="badge badge-primary">{data.length} mục</span>
+              <span className="badge badge-primary">{filteredData.length} mục</span>
               <button className="btn btn-ghost btn-sm btn-icon" onClick={onClose}>✕</button>
             </div>
           </div>
@@ -292,12 +304,43 @@ export default function DrilldownModal({ type, dateParams, userId, onClose }) {
               </div>
             ) : (
               <div>
+                {/* Filter tabs for customer lists */}
+                {!config.isQuote && (
+                  <div style={{ display: 'flex', gap: 6, marginBottom: 16, flexWrap: 'wrap' }}>
+                    {TYPE_TABS.map(({ key, label }) => {
+                      const count = key === '' ? data.length : data.filter(c => c.interaction_type === key).length;
+                      return (
+                        <button
+                          key={key}
+                          className={`btn btn-sm ${filterType === key ? 'btn-primary' : 'btn-ghost'}`}
+                          onClick={() => setFilterType(key)}
+                        >
+                          {label}
+                          <span style={{
+                            marginLeft: 6,
+                            background: filterType === key ? 'rgba(255,255,255,0.25)' : 'var(--border)',
+                            borderRadius: 10, padding: '1px 7px', fontSize: 11, fontWeight: 700,
+                          }}>
+                            {count}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+
                 {config.isQuote && (
                   <p style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 12 }}>
                     💡 Nhấn vào một báo giá để xem chi tiết đầy đủ
                   </p>
                 )}
-                {data.map((item, i) =>
+
+                {filteredData.length === 0 ? (
+                  <div className="empty-state">
+                    <div className="icon">📭</div>
+                    <p>Không có khách hàng nào trong mục này</p>
+                  </div>
+                ) : filteredData.map((item, i) =>
                   config.isQuote
                     ? <QuoteRow key={item.id || i} q={item} onClick={setSelectedQuote} />
                     : <CustomerRow key={item.id || i} c={item} />

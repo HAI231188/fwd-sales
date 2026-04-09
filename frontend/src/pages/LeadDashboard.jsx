@@ -36,14 +36,15 @@ export default function LeadDashboard() {
   });
 
   const customersQ = useQuery({
-    queryKey: ['customers', dateRange, filterUser, filterType],
-    queryFn: () => getCustomers({ ...dateRange, userId: filterUser || undefined, interactionType: filterType || undefined }),
+    queryKey: ['customers', dateRange, filterUser],
+    queryFn: () => getCustomers({ ...dateRange, userId: filterUser || undefined }),
     enabled: activeTab === 'customers',
   });
 
   const stats = statsQ.data || {};
   const reports = reportsQ.data?.reports || [];
-  const customers = customersQ.data || [];
+  const allCustomers = customersQ.data || [];
+  const customers = filterType ? allCustomers.filter(c => c.interaction_type === filterType) : allCustomers;
 
   return (
     <div className="page">
@@ -205,32 +206,38 @@ export default function LeadDashboard() {
 
           {activeTab === 'customers' && (
             <div>
-              {/* Filter row */}
-              <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
-                <span style={{ fontSize: 12, color: 'var(--text-2)', alignSelf: 'center' }}>Loại:</span>
-                {['', 'saved', 'contacted', 'quoted'].map(t => (
-                  <button key={t} className={`btn btn-sm ${filterType === t ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setFilterType(t)}>
-                    {t === '' ? 'Tất cả' : TYPE_LABEL[t]}
-                  </button>
-                ))}
-              </div>
-
-              {/* Summary pills */}
-              {customers.length > 0 && (
-                <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
-                  {['saved', 'contacted', 'quoted'].map(t => {
-                    const count = customers.filter(c => c.interaction_type === t).length;
-                    return count > 0 && (
-                      <span key={t} className={`pill badge ${TYPE_CLASS[t]}`}>
-                        {TYPE_LABEL[t]}: {count}
+              {/* Filter tabs with count badges */}
+              <div style={{ display: 'flex', gap: 6, marginBottom: 16, flexWrap: 'wrap' }}>
+                {[
+                  { key: '', label: 'Tất cả' },
+                  { key: 'saved', label: 'Lưu liên hệ' },
+                  { key: 'contacted', label: 'Đã liên hệ' },
+                  { key: 'quoted', label: 'Đã báo giá' },
+                ].map(({ key, label }) => {
+                  const count = key === '' ? allCustomers.length : allCustomers.filter(c => c.interaction_type === key).length;
+                  return (
+                    <button
+                      key={key}
+                      className={`btn btn-sm ${filterType === key ? 'btn-primary' : 'btn-ghost'}`}
+                      onClick={() => setFilterType(key)}
+                    >
+                      {label}
+                      <span style={{
+                        marginLeft: 6,
+                        background: filterType === key ? 'rgba(255,255,255,0.25)' : 'var(--border)',
+                        borderRadius: 10, padding: '1px 7px', fontSize: 11, fontWeight: 700,
+                      }}>
+                        {count}
                       </span>
-                    );
-                  })}
-                  <span className="pill badge badge-warning">
-                    ⚡ Sắp chốt: {customers.filter(c => c.has_closing_soon).length}
+                    </button>
+                  );
+                })}
+                {allCustomers.filter(c => c.has_closing_soon).length > 0 && (
+                  <span className="badge badge-warning" style={{ alignSelf: 'center', marginLeft: 4 }}>
+                    ⚡ Sắp chốt: {allCustomers.filter(c => c.has_closing_soon).length}
                   </span>
-                </div>
-              )}
+                )}
+              </div>
 
               {customersQ.isLoading ? (
                 <div style={{ textAlign: 'center', padding: 40 }}><div className="spinner" style={{ margin: '0 auto' }} /></div>
