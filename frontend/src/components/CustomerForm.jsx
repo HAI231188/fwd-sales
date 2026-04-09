@@ -37,7 +37,6 @@ export default function CustomerForm({ customer, onChange, onRemove, index }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const [defaultCustomers, setDefaultCustomers] = useState([]);
-  const [defaultsLoaded, setDefaultsLoaded] = useState(false);
   const [searching, setSearching] = useState(false);
   const [showDropdown, setShowDropdown] = useState(false);
   const searchTimer = useRef(null);
@@ -53,17 +52,11 @@ export default function CustomerForm({ customer, onChange, onRemove, index }) {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const loadDefaults = async () => {
-    if (defaultsLoaded) return;
+  const handleFocus = async () => {
     try {
       const results = await searchPipeline('');
       setDefaultCustomers(results);
-      setDefaultsLoaded(true);
     } catch {}
-  };
-
-  const handleFocus = async () => {
-    await loadDefaults();
     if (searchQuery.length < 2) setShowDropdown(true);
   };
 
