@@ -76,3 +76,45 @@ CREATE INDEX IF NOT EXISTS idx_quotes_closing_soon ON quotes(closing_soon);
 ALTER TABLE users ADD COLUMN IF NOT EXISTS username VARCHAR(50);
 ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON users(username);
+
+-- ============================================================
+-- Pipeline feature
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS customer_pipeline (
+  id SERIAL PRIMARY KEY,
+  customer_id INTEGER REFERENCES customers(id) ON DELETE SET NULL,
+  sales_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  company_name VARCHAR(200) NOT NULL,
+  contact_person VARCHAR(100),
+  phone VARCHAR(50),
+  industry VARCHAR(100),
+  source VARCHAR(30),
+  stage VARCHAR(20) NOT NULL DEFAULT 'new'
+    CHECK (stage IN ('new', 'dormant', 'following', 'booked')),
+  last_activity_date DATE,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS pipeline_history (
+  id SERIAL PRIMARY KEY,
+  pipeline_id INTEGER NOT NULL REFERENCES customer_pipeline(id) ON DELETE CASCADE,
+  from_stage VARCHAR(20),
+  to_stage VARCHAR(20) NOT NULL,
+  changed_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  changed_by INTEGER REFERENCES users(id) ON DELETE SET NULL
+);
+
+-- Link customers back to their pipeline entry
+ALTER TABLE customers ADD COLUMN IF NOT EXISTS pipeline_id INTEGER REFERENCES customer_pipeline(id) ON DELETE SET NULL;
+
+-- One pipeline entry per salesperson per company (case-insensitive)
+CREATE UNIQUE INDEX IF NOT EXISTS idx_pipeline_sales_company
+  ON customer_pipeline(sales_id, LOWER(company_name));
+
+CREATE INDEX IF NOT EXISTS idx_pipeline_sales_id ON customer_pipeline(sales_id);
+CREATE INDEX IF NOT EXISTS idx_pipeline_stage ON customer_pipeline(stage);
+CREATE INDEX IF NOT EXISTS idx_pipeline_last_activity ON customer_pipeline(last_activity_date);
+CREATE INDEX IF NOT EXISTS idx_pipeline_history_pipeline ON pipeline_history(pipeline_id);
+CREATE INDEX IF NOT EXISTS idx_customers_pipeline_id ON customers(pipeline_id);

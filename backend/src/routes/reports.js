@@ -133,13 +133,58 @@ router.post('/', requireAuth, async (req, res) => {
       ]);
 
       const customer = custRows[0];
-      for (const q of (cust.quotes || [])) {
+
+      // ── Pipeline: upsert entry for this company+salesperson ──
+      const { rows: existingPipeline } = await client.query(`
+        SELECT id FROM customer_pipeline
+        WHERE sales_id = $1 AND LOWER(company_name) = LOWER($2)
+      `, [req.user.id, cust.company_name]);
+
+      let pipelineId;
+      if (existingPipeline.length === 0) {
+        // Brand new company — create pipeline entry at stage 'new'
+        const { rows: pRows } = await client.query(`
+          INSERT INTO customer_pipeline
+            (customer_id, sales_id, company_name, contact_person, phone, industry, source, stage, last_activity_date)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,'new',$8)
+          RETURNING id
+        `, [
+          customer.id, req.user.id,
+          cust.company_name, cust.contact_person || null, cust.phone || null,
+          cust.industry || null, cust.source || null, report_date,
+        ]);
+        pipelineId = pRows[0].id;
+        await client.query(
+          `INSERT INTO pipeline_history (pipeline_id, from_stage, to_stage, changed_by) VALUES ($1, NULL, 'new', $2)`,
+          [pipelineId, req.user.id]
+        );
+      } else {
+        // Known company — refresh last activity and contact info
+        pipelineId = existingPipeline[0].id;
         await client.query(`
+          UPDATE customer_pipeline
+          SET last_activity_date = $1,
+              contact_person = COALESCE($2, contact_person),
+              phone = COALESCE($3, phone),
+              updated_at = NOW()
+          WHERE id = $4
+        `, [report_date, cust.contact_person || null, cust.phone || null, pipelineId]);
+      }
+
+      // Back-link this customer row to its pipeline entry
+      await client.query(
+        `UPDATE customers SET pipeline_id = $1 WHERE id = $2`,
+        [pipelineId, customer.id]
+      );
+
+      for (const q of (cust.quotes || [])) {
+        const { rows: qRows } = await client.query(`
           INSERT INTO quotes
             (customer_id, cargo_name, monthly_volume_cbm, monthly_volume_kg,
              monthly_volume_containers, route, cargo_ready_date, mode, carrier,
              transit_time, price, status, follow_up_notes, lost_reason, closing_soon)
           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+          RETURNING id, status
         `, [
           customer.id, q.cargo_name,
           q.monthly_volume_cbm || null, q.monthly_volume_kg || null,
@@ -149,6 +194,24 @@ router.post('/', requireAuth, async (req, res) => {
           q.status || 'quoting', q.follow_up_notes,
           q.lost_reason, q.closing_soon || false,
         ]);
+
+        // Auto-promote pipeline to 'booked' when quote is booked
+        if (qRows[0]?.status === 'booked') {
+          const { rows: prevStage } = await client.query(
+            `SELECT stage FROM customer_pipeline WHERE id = $1`,
+            [pipelineId]
+          );
+          if (prevStage[0] && prevStage[0].stage !== 'booked') {
+            await client.query(
+              `UPDATE customer_pipeline SET stage = 'booked', updated_at = NOW() WHERE id = $1`,
+              [pipelineId]
+            );
+            await client.query(
+              `INSERT INTO pipeline_history (pipeline_id, from_stage, to_stage, changed_by) VALUES ($1, $2, 'booked', $3)`,
+              [pipelineId, prevStage[0].stage, req.user.id]
+            );
+          }
+        }
       }
     }
 

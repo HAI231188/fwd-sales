@@ -67,6 +67,28 @@ router.put('/:id', requireAuth, async (req, res) => {
     ]);
 
     if (!rows[0]) return res.status(404).json({ error: 'Không tìm thấy' });
+
+    // Auto-promote pipeline to 'booked' when quote status is set to booked
+    if (status === 'booked') {
+      const { rows: link } = await db.query(`
+        SELECT c.pipeline_id, cp.stage
+        FROM customers c
+        LEFT JOIN customer_pipeline cp ON cp.id = c.pipeline_id
+        WHERE c.id = $1
+      `, [rows[0].customer_id]);
+
+      if (link[0]?.pipeline_id && link[0].stage !== 'booked') {
+        await db.query(
+          `UPDATE customer_pipeline SET stage = 'booked', updated_at = NOW() WHERE id = $1`,
+          [link[0].pipeline_id]
+        );
+        await db.query(
+          `INSERT INTO pipeline_history (pipeline_id, from_stage, to_stage, changed_by) VALUES ($1, $2, 'booked', $3)`,
+          [link[0].pipeline_id, link[0].stage, req.user.id]
+        );
+      }
+    }
+
     res.json(rows[0]);
   } catch (err) {
     res.status(500).json({ error: err.message });

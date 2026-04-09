@@ -7,6 +7,7 @@ import StatCard from '../components/StatCard';
 import DateFilter, { useDateFilter } from '../components/DateFilter';
 import DrilldownModal from '../components/DrilldownModal';
 import ReportForm from '../components/ReportForm';
+import PipelineView from '../components/PipelineView';
 import { getStats, getReports } from '../api';
 import { useAuth } from '../App';
 
@@ -67,8 +68,9 @@ export default function SalesDashboard() {
           {/* Tabs */}
           <div className="tabs">
             {[
-              { key: 'overview', label: '📋 Báo cáo của tôi' },
-              { key: 'create', label: '✏️ Tạo báo cáo' },
+              { key: 'overview',  label: '📋 Báo cáo của tôi' },
+              { key: 'pipeline',  label: '📊 Danh sách hoạt động' },
+              { key: 'create',    label: '✏️ Tạo báo cáo' },
             ].map(t => (
               <button key={t.key} className={`tab ${activeTab === t.key ? 'active' : ''}`} onClick={() => setActiveTab(t.key)}>
                 {t.label}
@@ -140,6 +142,9 @@ export default function SalesDashboard() {
               )}
             </div>
           )}
+
+          {/* Pipeline */}
+          {activeTab === 'pipeline' && <PipelineView />}
 
           {/* Create report */}
           {activeTab === 'create' && (

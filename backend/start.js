@@ -9,6 +9,14 @@ const fs = require('fs');
 const frontendDir = path.join(__dirname, '../frontend');
 const frontendDist = path.join(frontendDir, 'dist');
 
+// Run DB migrations (schema uses IF NOT EXISTS — safe to run every deploy)
+console.log('🗄️  Running database migrations...');
+try {
+  execSync('node src/db/migrate.js', { cwd: __dirname, stdio: 'inherit' });
+} catch (e) {
+  console.warn('⚠️  Migration warning (server will still start):', e.message);
+}
+
 if (!fs.existsSync(frontendDist)) {
   console.log('🔨 frontend/dist not found — building frontend...');
   execSync('npm install && npm run build', {

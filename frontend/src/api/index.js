@@ -52,4 +52,9 @@ export const deleteQuote = (id) => api.delete(`/quotes/${id}`);
 export const getStats = (params) => api.get('/stats', { params });
 export const getDrilldown = (type, params) => api.get(`/stats/drilldown/${type}`, { params });
 
+// Pipeline
+export const getPipeline = () => api.get('/pipeline');
+export const updatePipelineStage = (id, stage) => api.put(`/pipeline/${id}`, { stage });
+export const getPipelineHistory = (id) => api.get(`/pipeline/${id}/history`);
+
 export default api;

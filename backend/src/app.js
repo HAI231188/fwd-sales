@@ -8,6 +8,7 @@ const reportRoutes = require('./routes/reports');
 const customerRoutes = require('./routes/customers');
 const quoteRoutes = require('./routes/quotes');
 const statsRoutes = require('./routes/stats');
+const pipelineRoutes = require('./routes/pipeline');
 
 const app = express();
 
@@ -30,6 +31,7 @@ app.use('/api/reports', reportRoutes);
 app.use('/api/customers', customerRoutes);
 app.use('/api/quotes', quoteRoutes);
 app.use('/api/stats', statsRoutes);
+app.use('/api/pipeline', pipelineRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {
