@@ -54,6 +54,35 @@ async function applyAutoTransitions(client, salesId) {
   }
 }
 
+// GET /api/pipeline/search — lightweight search for "Khách hàng cũ" dropdown
+// Returns all pipeline customers for the current salesperson (any stage),
+// optionally filtered by company name. No auto-transitions applied.
+router.get('/search', requireAuth, async (req, res) => {
+  const { q } = req.query;
+  try {
+    const params = [req.user.id];
+    const searchClause = q && q.trim()
+      ? `AND (LOWER(cp.company_name) LIKE LOWER($2) OR LOWER(cp.contact_person) LIKE LOWER($2))`
+      : '';
+    if (q && q.trim()) params.push(`%${q.trim()}%`);
+
+    const { rows } = await db.query(`
+      SELECT
+        cp.id, cp.company_name, cp.contact_person, cp.phone,
+        cp.industry, cp.source, cp.stage, cp.last_activity_date
+      FROM customer_pipeline cp
+      WHERE cp.sales_id = $1
+        ${searchClause}
+      ORDER BY cp.last_activity_date DESC NULLS LAST, cp.company_name
+      LIMIT 10
+    `, params);
+
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/pipeline — return current user's pipeline (with auto-transitions applied)
 router.get('/', requireAuth, async (req, res) => {
   const client = await db.pool.connect();

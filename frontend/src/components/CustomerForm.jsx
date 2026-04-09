@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import QuoteForm, { EMPTY_QUOTE } from './QuoteForm';
-import { getCustomers } from '../api';
+import { searchPipeline } from '../api';
 
 const EMPTY_CUSTOMER = {
   company_name: '', contact_person: '', phone: '',
@@ -56,7 +56,7 @@ export default function CustomerForm({ customer, onChange, onRemove, index }) {
   const loadDefaults = async () => {
     if (defaultsLoaded) return;
     try {
-      const results = await getCustomers({ excludeSaved: 'true', limit: 10 });
+      const results = await searchPipeline('');
       setDefaultCustomers(results);
       setDefaultsLoaded(true);
     } catch {}
@@ -78,8 +78,8 @@ export default function CustomerForm({ customer, onChange, onRemove, index }) {
     searchTimer.current = setTimeout(async () => {
       setSearching(true);
       try {
-        const results = await getCustomers({ search: query });
-        setSearchResults(results.slice(0, 10));
+        const results = await searchPipeline(query);
+        setSearchResults(results);
         setShowDropdown(true);
       } catch {
         setSearchResults([]);
@@ -200,14 +200,22 @@ export default function CustomerForm({ customer, onChange, onRemove, index }) {
                   onMouseEnter={e => e.currentTarget.style.background = '#f0f7ff'}
                   onMouseLeave={e => e.currentTarget.style.background = 'none'}
                 >
-                  <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--text)' }}>{r.company_name}</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontWeight: 600, fontSize: 13, color: 'var(--text)' }}>{r.company_name}</span>
+                    {r.stage && (() => {
+                      const stageInfo = { new: ['🆕','#3b82f6'], dormant: ['😴','#6b7280'], following: ['🔄','#f59e0b'], booked: ['✅','#10b981'] }[r.stage];
+                      return stageInfo ? (
+                        <span style={{ fontSize: 11, color: stageInfo[1], fontWeight: 600 }}>{stageInfo[0]}</span>
+                      ) : null;
+                    })()}
+                  </div>
                   <div style={{ fontSize: 12, color: 'var(--text-2)', marginTop: 3 }}>
                     {r.contact_person && <span style={{ marginRight: 10 }}>👤 {r.contact_person}</span>}
                     {r.phone && <span style={{ marginRight: 10 }}>📞 {r.phone}</span>}
                     {r.industry && <span style={{ marginRight: 10 }}>🏭 {r.industry}</span>}
-                    {r.report_date && (
+                    {r.last_activity_date && (
                       <span style={{ color: 'var(--primary)', fontWeight: 500 }}>
-                        Lần cuối: {new Date(r.report_date).toLocaleDateString('vi-VN')}
+                        Lần cuối: {new Date(r.last_activity_date).toLocaleDateString('vi-VN')}
                       </span>
                     )}
                   </div>
