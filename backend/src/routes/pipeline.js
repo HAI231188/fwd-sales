@@ -59,12 +59,17 @@ async function applyAutoTransitions(client, salesId) {
 // optionally filtered by company name. No auto-transitions applied.
 router.get('/search', requireAuth, async (req, res) => {
   const { q } = req.query;
+  const trimmed = (q || '').trim();
   try {
     const params = [req.user.id];
-    const searchClause = q && q.trim()
+    const searchClause = trimmed
       ? `AND (LOWER(cp.company_name) LIKE LOWER($2) OR LOWER(cp.contact_person) LIKE LOWER($2))`
       : '';
-    if (q && q.trim()) params.push(`%${q.trim()}%`);
+    if (trimmed) params.push(`%${trimmed}%`);
+
+    // No LIMIT when searching — return every matching pipeline customer.
+    // For the empty/default list, cap at 10 most recent to keep the dropdown tidy.
+    const limitClause = trimmed ? '' : 'LIMIT 10';
 
     const { rows } = await db.query(`
       SELECT
@@ -74,7 +79,7 @@ router.get('/search', requireAuth, async (req, res) => {
       WHERE cp.sales_id = $1
         ${searchClause}
       ORDER BY cp.last_activity_date DESC NULLS LAST, cp.company_name
-      LIMIT 10
+      ${limitClause}
     `, params);
 
     res.json(rows);
