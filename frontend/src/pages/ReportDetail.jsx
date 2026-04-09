@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
@@ -18,6 +19,7 @@ export default function ReportDetail() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const [filterType, setFilterType] = useState('');
 
   const { data: report, isLoading, error } = useQuery({
     queryKey: ['report', id],
@@ -140,11 +142,30 @@ export default function ReportDetail() {
               ))}
             </div>
 
-            {/* Interaction type summary pills */}
-            <div style={{ display: 'flex', gap: 8, marginTop: 16, flexWrap: 'wrap' }}>
-              {stats.saved > 0 && <span className="pill type-saved">📌 Lưu: {stats.saved}</span>}
-              {stats.contacted > 0 && <span className="pill type-contacted">📞 Liên hệ: {stats.contacted}</span>}
-              {stats.quoted > 0 && <span className="pill type-quoted">📋 Báo giá: {stats.quoted}</span>}
+            {/* Interaction type filter tabs */}
+            <div style={{ display: 'flex', gap: 6, marginTop: 16, flexWrap: 'wrap' }}>
+              {[
+                { key: '', label: 'Tất cả', count: stats.total },
+                { key: 'saved', label: 'Lưu liên hệ', count: stats.saved },
+                { key: 'contacted', label: 'Đã liên hệ', count: stats.contacted },
+                { key: 'quoted', label: 'Đã báo giá', count: stats.quoted },
+              ].map(({ key, label, count }) => (
+                <button
+                  key={key}
+                  type="button"
+                  className={`btn btn-sm ${filterType === key ? 'btn-primary' : 'btn-ghost'}`}
+                  onClick={() => setFilterType(key)}
+                >
+                  {label}
+                  <span style={{
+                    marginLeft: 6,
+                    background: filterType === key ? 'rgba(255,255,255,0.25)' : 'var(--border)',
+                    borderRadius: 10, padding: '1px 7px', fontSize: 11, fontWeight: 700,
+                  }}>
+                    {count}
+                  </span>
+                </button>
+              ))}
             </div>
 
             {/* Issues */}
@@ -163,29 +184,41 @@ export default function ReportDetail() {
           </div>
 
           {/* Customer list */}
-          <div>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
-              <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 18 }}>
-                👥 Khách hàng ({customers.length})
-              </h2>
-            </div>
+          {(() => {
+            const visibleCustomers = filterType
+              ? customers.filter(c => c.interaction_type === filterType)
+              : customers;
+            return (
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+                  <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 18 }}>
+                    👥 Khách hàng ({visibleCustomers.length}{filterType ? `/${customers.length}` : ''})
+                  </h2>
+                </div>
 
-            {customers.length === 0 ? (
-              <div className="empty-state">
-                <div className="icon">👥</div>
-                <p>Báo cáo này chưa có khách hàng nào</p>
+                {customers.length === 0 ? (
+                  <div className="empty-state">
+                    <div className="icon">👥</div>
+                    <p>Báo cáo này chưa có khách hàng nào</p>
+                  </div>
+                ) : visibleCustomers.length === 0 ? (
+                  <div className="empty-state">
+                    <div className="icon">🔍</div>
+                    <p>Không có khách hàng nào trong mục này</p>
+                  </div>
+                ) : (
+                  visibleCustomers.map((c, i) => (
+                    <CustomerCard
+                      key={c.id || i}
+                      customer={c}
+                      canEdit={user?.id === report.user_id}
+                      onRefresh={() => qc.invalidateQueries({ queryKey: ['report', id] })}
+                    />
+                  ))
+                )}
               </div>
-            ) : (
-              customers.map((c, i) => (
-                <CustomerCard
-                  key={c.id || i}
-                  customer={c}
-                  canEdit={user?.id === report.user_id}
-                  onRefresh={() => qc.invalidateQueries({ queryKey: ['report', id] })}
-                />
-              ))
-            )}
-          </div>
+            );
+          })()}
         </div>
       </main>
     </div>
