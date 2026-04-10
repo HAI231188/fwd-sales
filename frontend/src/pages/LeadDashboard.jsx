@@ -6,6 +6,7 @@ import Navbar from '../components/Navbar';
 import StatCard from '../components/StatCard';
 import DateFilter, { useDateFilter } from '../components/DateFilter';
 import DrilldownModal from '../components/DrilldownModal';
+import CustomerDetailModal from '../components/CustomerDetailModal';
 import { getStats, getReports, getCustomers } from '../api';
 
 const SOURCE_LABEL = {
@@ -21,6 +22,7 @@ export default function LeadDashboard() {
   const [drilldown, setDrilldown] = useState(null);
   const [filterUser, setFilterUser] = useState('');
   const [filterType, setFilterType] = useState('');
+  const [detailPipelineId, setDetailPipelineId] = useState(null);
   const dateFilter = useDateFilter();
   const dateRange = dateFilter.getRange();
 
@@ -245,7 +247,7 @@ export default function LeadDashboard() {
                 <div className="empty-state"><div className="icon">👥</div><p>Không có khách hàng nào</p></div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {customers.map(c => <CustomerRow key={c.id} customer={c} />)}
+                  {customers.map(c => <CustomerRow key={c.id} customer={c} onCompanyClick={setDetailPipelineId} />)}
                 </div>
               )}
             </div>
@@ -261,6 +263,9 @@ export default function LeadDashboard() {
           userId={filterUser || undefined}
           onClose={() => setDrilldown(null)}
         />
+      )}
+      {detailPipelineId && (
+        <CustomerDetailModal pipelineId={detailPipelineId} onClose={() => setDetailPipelineId(null)} />
       )}
     </div>
   );
@@ -291,14 +296,17 @@ function ReportRow({ report: r }) {
   );
 }
 
-function CustomerRow({ customer: c }) {
+function CustomerRow({ customer: c, onCompanyClick }) {
   const statuses = (c.quote_statuses || '').split(',').filter(Boolean);
   return (
     <div className="card" style={{ padding: '14px 20px' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
         <div style={{ flex: 1 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
-            <span style={{ fontWeight: 600, fontSize: 14 }}>{c.company_name}</span>
+            <span
+              style={{ fontWeight: 600, fontSize: 14, cursor: c.pipeline_id ? 'pointer' : 'default', color: c.pipeline_id ? 'var(--primary)' : 'inherit', textDecoration: c.pipeline_id ? 'underline' : 'none', textDecorationStyle: 'dotted' }}
+              onClick={() => c.pipeline_id && onCompanyClick(c.pipeline_id)}
+            >{c.company_name}</span>
             <span className={`badge ${TYPE_CLASS[c.interaction_type]}`}>{TYPE_LABEL[c.interaction_type]}</span>
             {c.has_closing_soon && <span className="badge badge-warning">⚡ Sắp chốt</span>}
           </div>

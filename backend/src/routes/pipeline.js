@@ -186,6 +186,60 @@ router.put('/:id', requireAuth, async (req, res) => {
   }
 });
 
+// GET /api/pipeline/:id/detail — full detail: pipeline entry + all interactions + quotes
+router.get('/:id/detail', requireAuth, async (req, res) => {
+  try {
+    // Sales users can only view own pipeline; leads can view any
+    const ownerCheck = req.user.role === 'sales'
+      ? 'AND sales_id = $2'
+      : '';
+    const ownerParams = req.user.role === 'sales'
+      ? [req.params.id, req.user.id]
+      : [req.params.id];
+
+    const { rows: pipeRows } = await db.query(`
+      SELECT cp.*,
+        COUNT(DISTINCT c.id)::int                                     AS total_interactions,
+        COUNT(DISTINCT q.id) FILTER (WHERE q.status = 'booked')::int  AS booked_count,
+        COUNT(DISTINCT q.id)::int                                      AS quote_count
+      FROM customer_pipeline cp
+      LEFT JOIN customers c ON c.pipeline_id = cp.id
+      LEFT JOIN quotes q    ON q.customer_id = c.id
+      WHERE cp.id = $1 ${ownerCheck}
+      GROUP BY cp.id
+    `, ownerParams);
+
+    if (!pipeRows[0]) return res.status(404).json({ error: 'Không tìm thấy' });
+
+    const { rows: interactions } = await db.query(`
+      SELECT c.*, r.report_date
+      FROM customers c
+      JOIN reports r ON r.id = c.report_id
+      WHERE c.pipeline_id = $1
+      ORDER BY r.report_date DESC, c.created_at DESC
+    `, [req.params.id]);
+
+    const customerIds = interactions.map(c => c.id);
+    let quotes = [];
+    if (customerIds.length > 0) {
+      const { rows } = await db.query(
+        `SELECT * FROM quotes WHERE customer_id = ANY($1) ORDER BY created_at ASC`,
+        [customerIds]
+      );
+      quotes = rows;
+    }
+
+    const interactionsWithQuotes = interactions.map(c => ({
+      ...c,
+      quotes: quotes.filter(q => q.customer_id === c.id),
+    }));
+
+    res.json({ pipeline: pipeRows[0], interactions: interactionsWithQuotes });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/pipeline/:id/history — stage change history for a customer
 router.get('/:id/history', requireAuth, async (req, res) => {
   try {

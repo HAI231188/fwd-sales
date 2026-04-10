@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import { updateQuote, deleteQuote } from '../api';
 import QuoteForm, { EMPTY_QUOTE } from './QuoteForm';
+import CustomerDetailModal from './CustomerDetailModal';
 
 const MODE_ICON = { sea: '🚢', air: '✈️', road: '🚛' };
 const MODE_CLASS = { sea: 'mode-sea', air: 'mode-air', road: 'mode-road' };
@@ -199,6 +200,7 @@ function EditQuoteModal({ quote, onClose, onSaved }) {
 export default function CustomerCard({ customer, canEdit = false, onRefresh }) {
   const [expanded, setExpanded] = useState(true);
   const [editingQuote, setEditingQuote] = useState(null);
+  const [showDetail, setShowDetail] = useState(false);
   const quotes = customer.quotes || [];
   const hasClosingSoon = quotes.some(q => q.closing_soon);
 
@@ -236,7 +238,10 @@ export default function CustomerCard({ customer, canEdit = false, onRefresh }) {
         >
           <div style={{ flex: 1 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
-              <span style={{ fontWeight: 600, fontSize: 15 }}>{customer.company_name}</span>
+              <span
+                style={{ fontWeight: 600, fontSize: 15, cursor: customer.pipeline_id ? 'pointer' : 'default', color: customer.pipeline_id ? 'var(--primary)' : 'inherit', textDecoration: customer.pipeline_id ? 'underline' : 'none', textDecorationStyle: 'dotted' }}
+                onClick={e => { if (customer.pipeline_id) { e.stopPropagation(); setShowDetail(true); } }}
+              >{customer.company_name}</span>
               <span className={`badge ${TYPE_CLASS[customer.interaction_type]}`}>{TYPE_LABEL[customer.interaction_type]}</span>
               {hasClosingSoon && <span className="badge badge-warning">⚡ Sắp chốt</span>}
             </div>
@@ -315,6 +320,9 @@ export default function CustomerCard({ customer, canEdit = false, onRefresh }) {
           onClose={() => setEditingQuote(null)}
           onSaved={() => { if (onRefresh) onRefresh(); }}
         />
+      )}
+      {showDetail && customer.pipeline_id && (
+        <CustomerDetailModal pipelineId={customer.pipeline_id} onClose={() => setShowDetail(false)} />
       )}
     </>
   );

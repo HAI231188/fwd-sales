@@ -130,6 +130,7 @@ router.get('/drilldown/:type', requireAuth, async (req, res) => {
 
   const quoteSelect = `
     q.*, c.company_name, c.contact_person, c.industry,
+    c.pipeline_id, c.user_id AS sales_id,
     u.name AS user_name, u.code AS user_code, u.avatar_color, r.report_date
     FROM quotes q
     JOIN customers c ON c.id = q.customer_id

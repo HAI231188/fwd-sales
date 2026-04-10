@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import { getPipeline, updatePipelineStage } from '../api';
+import CustomerDetailModal from './CustomerDetailModal';
 
 const STAGES = [
   { key: 'new',       label: 'Khách mới',   icon: '🆕', color: '#3b82f6', bg: '#eff6ff', border: '#bfdbfe' },
@@ -81,7 +82,7 @@ function StageSelect({ currentStage, pipelineId, onUpdate, disabled }) {
   );
 }
 
-function PipelineCard({ entry, onUpdate, disabled }) {
+function PipelineCard({ entry, onUpdate, disabled, onCompanyClick }) {
   const lastDate = entry.last_activity_date || entry.last_report_date;
   const statuses = (entry.quote_statuses || '').split(',').filter(Boolean);
 
@@ -92,7 +93,12 @@ function PipelineCard({ entry, onUpdate, disabled }) {
       display: 'flex', alignItems: 'flex-start', gap: 14, flexWrap: 'wrap',
     }}>
       <div style={{ flex: 1, minWidth: 180 }}>
-        <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4 }}>{entry.company_name}</div>
+        <div
+          style={{ fontWeight: 700, fontSize: 14, marginBottom: 4, cursor: 'pointer', color: 'var(--primary)', textDecoration: 'underline', textDecorationStyle: 'dotted' }}
+          onClick={() => onCompanyClick(entry.id)}
+        >
+          {entry.company_name}
+        </div>
         <div style={{ fontSize: 12, color: 'var(--text-2)', display: 'flex', flexWrap: 'wrap', gap: '2px 14px' }}>
           {entry.contact_person && <span>👤 {entry.contact_person}</span>}
           {entry.phone && <span>📞 {entry.phone}</span>}
@@ -158,6 +164,7 @@ function PipelineCard({ entry, onUpdate, disabled }) {
 export default function PipelineView() {
   const qc = useQueryClient();
   const [selectedStage, setSelectedStage] = useState(null);
+  const [detailId, setDetailId] = useState(null);
 
   const { data: pipeline = [], isLoading } = useQuery({
     queryKey: ['pipeline'],
@@ -255,9 +262,14 @@ export default function PipelineView() {
               entry={entry}
               onUpdate={(id, stage) => stageMutation.mutate({ id, stage })}
               disabled={stageMutation.isPending}
+              onCompanyClick={setDetailId}
             />
           ))}
         </div>
+      )}
+
+      {detailId && (
+        <CustomerDetailModal pipelineId={detailId} onClose={() => setDetailId(null)} />
       )}
     </div>
   );

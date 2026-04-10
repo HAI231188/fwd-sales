@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getDrilldown } from '../api';
 import { format } from 'date-fns';
+import CustomerDetailModal from './CustomerDetailModal';
 
 const MODE_ICON = { sea: '🚢', air: '✈️', road: '🚛' };
 const MODE_CLASS = { sea: 'mode-sea', air: 'mode-air', road: 'mode-road' };
@@ -148,7 +149,7 @@ function QuoteDetailModal({ q, onClose }) {
   );
 }
 
-function QuoteRow({ q, onClick }) {
+function QuoteRow({ q, onClick, onCompanyClick }) {
   return (
     <div
       onClick={() => onClick(q)}
@@ -164,7 +165,10 @@ function QuoteRow({ q, onClick }) {
         <div style={{ flex: 1 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
             <span style={{ fontSize: 18 }}>{MODE_ICON[q.mode] || '📦'}</span>
-            <span style={{ fontWeight: 600, fontSize: 14 }}>{q.company_name}</span>
+            <span
+              style={{ fontWeight: 600, fontSize: 14, cursor: q.pipeline_id ? 'pointer' : 'default', color: q.pipeline_id ? 'var(--primary)' : 'inherit', textDecoration: q.pipeline_id ? 'underline' : 'none', textDecorationStyle: 'dotted' }}
+              onClick={e => { if (q.pipeline_id) { e.stopPropagation(); onCompanyClick(q.pipeline_id); } }}
+            >{q.company_name}</span>
             {q.closing_soon && <span className="badge badge-warning">⚡ Sắp chốt</span>}
           </div>
           <div style={{ fontSize: 13, color: 'var(--text-2)', marginBottom: 4 }}>
@@ -210,7 +214,7 @@ function QuoteRow({ q, onClick }) {
   );
 }
 
-function CustomerRow({ c }) {
+function CustomerRow({ c, onCompanyClick }) {
   return (
     <div style={{
       background: '#f8f9fa', border: '1px solid var(--border)',
@@ -219,7 +223,10 @@ function CustomerRow({ c }) {
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
         <div style={{ flex: 1 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-            <span style={{ fontWeight: 600, fontSize: 14 }}>{c.company_name}</span>
+            <span
+              style={{ fontWeight: 600, fontSize: 14, cursor: c.pipeline_id ? 'pointer' : 'default', color: c.pipeline_id ? 'var(--primary)' : 'inherit', textDecoration: c.pipeline_id ? 'underline' : 'none', textDecorationStyle: 'dotted' }}
+              onClick={() => c.pipeline_id && onCompanyClick(c.pipeline_id)}
+            >{c.company_name}</span>
             <span className={`badge ${TYPE_CLASS[c.interaction_type]}`}>{TYPE_LABEL[c.interaction_type]}</span>
           </div>
           <div style={{ fontSize: 12, color: 'var(--text-2)' }}>
@@ -270,6 +277,7 @@ export default function DrilldownModal({ type, dateParams, userId, onClose }) {
   const config = DRILL_CONFIG[type] || {};
   const [selectedQuote, setSelectedQuote] = useState(null);
   const [filterType, setFilterType] = useState('');
+  const [detailPipelineId, setDetailPipelineId] = useState(null);
 
   const { data = [], isLoading } = useQuery({
     queryKey: ['drilldown', type, dateParams, userId],
@@ -342,8 +350,8 @@ export default function DrilldownModal({ type, dateParams, userId, onClose }) {
                   </div>
                 ) : filteredData.map((item, i) =>
                   config.isQuote
-                    ? <QuoteRow key={item.id || i} q={item} onClick={setSelectedQuote} />
-                    : <CustomerRow key={item.id || i} c={item} />
+                    ? <QuoteRow key={item.id || i} q={item} onClick={setSelectedQuote} onCompanyClick={setDetailPipelineId} />
+                    : <CustomerRow key={item.id || i} c={item} onCompanyClick={setDetailPipelineId} />
                 )}
               </div>
             )}
@@ -356,6 +364,9 @@ export default function DrilldownModal({ type, dateParams, userId, onClose }) {
 
       {selectedQuote && (
         <QuoteDetailModal q={selectedQuote} onClose={() => setSelectedQuote(null)} />
+      )}
+      {detailPipelineId && (
+        <CustomerDetailModal pipelineId={detailPipelineId} onClose={() => setDetailPipelineId(null)} />
       )}
     </>
   );
