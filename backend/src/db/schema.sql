@@ -118,3 +118,11 @@ CREATE INDEX IF NOT EXISTS idx_pipeline_stage ON customer_pipeline(stage);
 CREATE INDEX IF NOT EXISTS idx_pipeline_last_activity ON customer_pipeline(last_activity_date);
 CREATE INDEX IF NOT EXISTS idx_pipeline_history_pipeline ON pipeline_history(pipeline_id);
 CREATE INDEX IF NOT EXISTS idx_customers_pipeline_id ON customers(pipeline_id);
+
+-- Optional customer qualification fields
+ALTER TABLE customers ADD COLUMN IF NOT EXISTS potential_level   VARCHAR(10)   CHECK (potential_level IN ('high', 'medium', 'low'));
+ALTER TABLE customers ADD COLUMN IF NOT EXISTS decision_maker   BOOLEAN       DEFAULT FALSE;
+ALTER TABLE customers ADD COLUMN IF NOT EXISTS preferred_contact VARCHAR(50);
+ALTER TABLE customers ADD COLUMN IF NOT EXISTS reason_not_closed TEXT;
+ALTER TABLE customers ADD COLUMN IF NOT EXISTS estimated_value  NUMERIC(15,2);
+ALTER TABLE customers ADD COLUMN IF NOT EXISTS competitor       TEXT;
