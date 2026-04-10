@@ -163,6 +163,11 @@ export default function CustomerForm({ customer, onChange, onRemove, index }) {
               )}
             </div>
           </div>
+          {defaultCustomers.length > 0 && (
+            <div style={{ fontSize: 12, color: 'var(--text-2)', marginTop: 4, paddingLeft: 2 }}>
+              Đang hiển thị {displayResults.length} / {defaultCustomers.length} khách hàng
+            </div>
+          )}
 
           {showDropdown && displayResults.length > 0 && (
             <div style={{
