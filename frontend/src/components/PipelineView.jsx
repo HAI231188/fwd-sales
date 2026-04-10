@@ -101,12 +101,24 @@ function PipelineCard({ entry, onUpdate, disabled }) {
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6, flexShrink: 0 }}>
-        <StageSelect
-          currentStage={entry.stage}
-          pipelineId={entry.id}
-          onUpdate={onUpdate}
-          disabled={disabled}
-        />
+        {entry.stage === 'new' ? (
+          <span style={{
+            display: 'flex', alignItems: 'center', gap: 5,
+            background: STAGE_MAP.new.bg, border: `1px solid ${STAGE_MAP.new.border}`,
+            borderRadius: 20, padding: '4px 10px',
+            fontSize: 12, fontWeight: 600, color: STAGE_MAP.new.color,
+            whiteSpace: 'nowrap',
+          }}>
+            {STAGE_MAP.new.icon} {STAGE_MAP.new.label}
+          </span>
+        ) : (
+          <StageSelect
+            currentStage={entry.stage}
+            pipelineId={entry.id}
+            onUpdate={onUpdate}
+            disabled={disabled}
+          />
+        )}
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
           {entry.quote_count > 0 && (
             <span style={{
