@@ -39,14 +39,13 @@ const SOURCE_LABEL = {
   direct: '🤝 Gặp trực tiếp', other: '💡 Khác',
 };
 
-function parseOptions(priceJson, carrierJson) {
+function parseOptions(price, carrier) {
   try {
-    const prices = JSON.parse(priceJson || '[]');
-    const carriers = JSON.parse(carrierJson || '[]');
-    return prices.map((p, i) => ({ price: p, carrier: carriers[i] || '' }));
-  } catch {
-    return priceJson ? [{ price: priceJson, carrier: carrierJson || '' }] : [];
-  }
+    const p = JSON.parse(price);
+    if (Array.isArray(p)) return p;
+  } catch {}
+  // Legacy: single carrier/price plain text
+  return carrier || price ? [{ carrier: carrier || '', price: price || '', cost: '' }] : [];
 }
 
 export default function CustomerDetailModal({ pipelineId, onClose }) {
@@ -264,13 +263,14 @@ export default function CustomerDetailModal({ pipelineId, onClose }) {
                               <div style={{ fontSize: 12, color: 'var(--text-2)', marginTop: 2 }}>📍 {q.route}</div>
                             )}
                             {opts.length > 0 && (
-                              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', fontSize: 12, color: 'var(--text-2)', marginTop: 4 }}>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: 3, marginTop: 6 }}>
                                 {opts.map((o, i) => (
-                                  <span key={i}>
-                                    <span style={{ color: '#16a34a', fontWeight: 700 }}>PA{i + 1}</span>
-                                    {o.carrier && <span> {o.carrier}</span>}
-                                    {o.price && <span style={{ color: 'var(--primary)', fontWeight: 600 }}> · {o.price}</span>}
-                                  </span>
+                                  <div key={i} style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
+                                    <span style={{ color: '#16a34a', fontWeight: 700, minWidth: 28 }}>PA{i + 1}:</span>
+                                    {o.carrier && <span style={{ color: 'var(--text-2)' }}>{o.carrier}</span>}
+                                    {o.carrier && o.price && <span style={{ color: 'var(--text-3)' }}>–</span>}
+                                    {o.price && <span style={{ color: 'var(--primary)', fontWeight: 600 }}>{o.price} USD</span>}
+                                  </div>
                                 ))}
                               </div>
                             )}
