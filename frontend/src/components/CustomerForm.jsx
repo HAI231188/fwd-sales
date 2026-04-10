@@ -55,8 +55,11 @@ export default function CustomerForm({ customer, onChange, onRemove, index }) {
   const handleFocus = async () => {
     try {
       const results = await searchPipeline('');
+      console.log('[Pipeline search] focus results:', results?.length, results);
       setDefaultCustomers(results);
-    } catch {}
+    } catch (err) {
+      console.error('[Pipeline search] focus error:', err);
+    }
     if (searchQuery.length < 2) setShowDropdown(true);
   };
 
