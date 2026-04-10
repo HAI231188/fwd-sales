@@ -356,11 +356,19 @@ export default function CustomerDetailModal({ pipelineId, onClose }) {
                                   {opts.length > 0 && (
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                                       {opts.map((o, i) => (
-                                        <div key={i} style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
-                                          <span style={{ color: '#16a34a', fontWeight: 700, minWidth: 28 }}>PA{i + 1}:</span>
-                                          {o.carrier && <span style={{ color: 'var(--text-2)' }}>{o.carrier}</span>}
-                                          {o.carrier && o.price && <span style={{ color: 'var(--text-3)' }}>–</span>}
-                                          {o.price && <span style={{ color: 'var(--primary)', fontWeight: 600 }}>{o.price} USD</span>}
+                                        <div key={i} style={{ fontSize: 12, display: 'flex', alignItems: 'baseline', gap: 6, flexWrap: 'wrap' }}>
+                                          <span style={{ color: '#16a34a', fontWeight: 700, minWidth: 28, flexShrink: 0 }}>PA{i + 1}:</span>
+                                          {o.carrier && <span style={{ color: 'var(--text)' }}>{o.carrier}</span>}
+                                          {o.price && (
+                                            <span style={{ color: 'var(--text-2)' }}>
+                                              — Giá: <span style={{ color: 'var(--primary)', fontWeight: 600 }}>{o.price}</span>
+                                            </span>
+                                          )}
+                                          {o.cost && (
+                                            <span style={{ color: 'var(--text-2)' }}>
+                                              / Cost: <span style={{ color: '#6b7280', fontWeight: 600 }}>{o.cost}</span>
+                                            </span>
+                                          )}
                                         </div>
                                       ))}
                                     </div>
