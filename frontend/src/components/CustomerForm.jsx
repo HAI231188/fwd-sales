@@ -166,12 +166,6 @@ export default function CustomerForm({ customer, onChange, onRemove, index }) {
               )}
             </div>
           </div>
-          {defaultCustomers.length > 0 && (
-            <div style={{ fontSize: 12, color: 'var(--text-2)', marginTop: 4, paddingLeft: 2 }}>
-              Đang hiển thị {displayResults.length} / {defaultCustomers.length} khách hàng
-            </div>
-          )}
-
           {showDropdown && displayResults.length > 0 && (
             <div style={{
               position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 200,
@@ -179,14 +173,19 @@ export default function CustomerForm({ customer, onChange, onRemove, index }) {
               borderRadius: 'var(--radius)', boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
               maxHeight: 320, overflowY: 'auto', marginTop: 4,
             }}>
-              {searchQuery.length < 2 && (
-                <div style={{
-                  padding: '8px 14px 4px', fontSize: 11, fontWeight: 600,
-                  color: 'var(--text-2)', textTransform: 'uppercase', letterSpacing: '0.5px',
-                }}>
-                  Khách hàng gần đây
-                </div>
-              )}
+              <div style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                padding: '8px 14px 4px',
+              }}>
+                <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-2)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                  {searchQuery.length < 2 ? 'Khách hàng gần đây' : 'Kết quả tìm kiếm'}
+                </span>
+                {defaultCustomers.length > 0 && (
+                  <span style={{ fontSize: 11, color: 'var(--text-2)' }}>
+                    {displayResults.length} / {defaultCustomers.length} khách hàng
+                  </span>
+                )}
+              </div>
               {displayResults.map(r => (
                 <button
                   key={r.id}
