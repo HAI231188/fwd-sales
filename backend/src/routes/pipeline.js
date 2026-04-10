@@ -54,6 +54,29 @@ async function applyAutoTransitions(client, salesId) {
   }
 }
 
+// GET /api/pipeline/debug — temporary diagnostic (remove after use)
+router.get('/debug', requireAuth, async (req, res) => {
+  try {
+    const [r1, r2, r3, r4, r5] = await Promise.all([
+      db.query('SELECT COUNT(*) AS total FROM customer_pipeline WHERE sales_id=$1', [req.user.id]),
+      db.query('SELECT COUNT(*) AS total FROM customer_pipeline'),
+      db.query('SELECT COUNT(*) AS total FROM customers WHERE user_id=$1', [req.user.id]),
+      db.query('SELECT COUNT(*) AS no_pipeline FROM customers WHERE user_id=$1 AND pipeline_id IS NULL', [req.user.id]),
+      db.query('SELECT stage, COUNT(*) AS cnt FROM customer_pipeline WHERE sales_id=$1 GROUP BY stage', [req.user.id]),
+    ]);
+    res.json({
+      user_id: req.user.id,
+      pipeline_for_me: r1.rows[0].total,
+      pipeline_total_all_users: r2.rows[0].total,
+      customers_for_me: r3.rows[0].total,
+      customers_no_pipeline_id: r4.rows[0].no_pipeline,
+      stages: r5.rows,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/pipeline/search — lightweight search for "Khách hàng cũ" dropdown
 // Returns all pipeline customers for the current salesperson (any stage),
 // optionally filtered by company name. No auto-transitions applied.
