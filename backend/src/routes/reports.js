@@ -122,14 +122,19 @@ router.post('/', requireAuth, async (req, res) => {
       const { rows: custRows } = await client.query(`
         INSERT INTO customers
           (report_id, user_id, company_name, contact_person, phone, source, industry,
-           interaction_type, needs, notes, next_action, follow_up_date)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+           interaction_type, needs, notes, next_action, follow_up_date,
+           potential_level, decision_maker, preferred_contact,
+           reason_not_closed, estimated_value, competitor)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
         RETURNING *
       `, [
         report.id, req.user.id,
         cust.company_name, cust.contact_person, cust.phone,
         cust.source, cust.industry, cust.interaction_type,
         cust.needs, cust.notes, cust.next_action, cust.follow_up_date || null,
+        cust.potential_level || null, cust.decision_maker || false,
+        cust.preferred_contact || null, cust.reason_not_closed || null,
+        cust.estimated_value || null, cust.competitor || null,
       ]);
 
       const customer = custRows[0];
