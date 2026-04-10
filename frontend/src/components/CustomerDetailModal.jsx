@@ -16,6 +16,16 @@ const TYPE_COLOR = {
   saved: '#6b7280', contacted: '#3b82f6', quoted: '#f59e0b',
 };
 
+const POTENTIAL_INFO = {
+  high:   { label: 'Cao',        color: '#16a34a', bg: '#f0fdf4', border: '#bbf7d0' },
+  medium: { label: 'Trung bình', color: '#d97706', bg: '#fffbeb', border: '#fde68a' },
+  low:    { label: 'Thấp',       color: '#dc2626', bg: '#fef2f2', border: '#fecaca' },
+};
+
+const PREFERRED_CONTACT_LABEL = {
+  zalo: '💬 Zalo', phone: '📞 Điện thoại', email: '📧 Email', direct: '🤝 Gặp trực tiếp',
+};
+
 const STATUS_LABEL = {
   quoting: 'Đang báo giá', follow_up: 'Follow up', booked: 'Đã booking', lost: 'Mất',
 };
@@ -147,7 +157,7 @@ export default function CustomerDetailModal({ pipelineId, onClose }) {
                   borderRadius: 10, padding: '12px 16px',
                 }}>
                   {/* Interaction header */}
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: c.needs || c.notes || c.next_action || c.quotes?.length ? 8 : 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: c.needs || c.notes || c.next_action || c.potential_level || c.decision_maker || c.preferred_contact || c.estimated_value || c.competitor || c.reason_not_closed || c.quotes?.length ? 8 : 0 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <span style={{
                         fontSize: 11, fontWeight: 700, padding: '2px 8px',
@@ -190,6 +200,45 @@ export default function CustomerDetailModal({ pipelineId, onClose }) {
                       </div>
                     )}
                   </div>
+
+                  {/* Qualification fields */}
+                  {(c.potential_level || c.decision_maker || c.preferred_contact || c.estimated_value || c.competitor || c.reason_not_closed) && (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+                      {c.potential_level && (() => {
+                        const p = POTENTIAL_INFO[c.potential_level];
+                        return p ? (
+                          <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 9px', borderRadius: 10, background: p.bg, color: p.color, border: `1px solid ${p.border}` }}>
+                            Tiềm năng: {p.label}
+                          </span>
+                        ) : null;
+                      })()}
+                      {c.decision_maker && (
+                        <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 9px', borderRadius: 10, background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe' }}>
+                          👤 Người quyết định
+                        </span>
+                      )}
+                      {c.preferred_contact && (
+                        <span style={{ fontSize: 11, padding: '2px 9px', borderRadius: 10, background: '#f9fafb', color: '#374151', border: '1px solid #e5e7eb' }}>
+                          {PREFERRED_CONTACT_LABEL[c.preferred_contact] || c.preferred_contact}
+                        </span>
+                      )}
+                      {c.estimated_value && (
+                        <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 9px', borderRadius: 10, background: '#f0fdf4', color: '#15803d', border: '1px solid #bbf7d0' }}>
+                          💰 ${Number(c.estimated_value).toLocaleString()}
+                        </span>
+                      )}
+                      {c.competitor && (
+                        <span style={{ fontSize: 11, padding: '2px 9px', borderRadius: 10, background: '#fef2f2', color: '#b91c1c', border: '1px solid #fecaca' }}>
+                          ⚔️ {c.competitor}
+                        </span>
+                      )}
+                      {c.reason_not_closed && (
+                        <span style={{ fontSize: 11, padding: '2px 9px', borderRadius: 10, background: '#fffbeb', color: '#92400e', border: '1px solid #fde68a', maxWidth: '100%' }}>
+                          ⚠️ {c.reason_not_closed}
+                        </span>
+                      )}
+                    </div>
+                  )}
 
                   {/* Quotes for this interaction */}
                   {c.quotes?.length > 0 && (
