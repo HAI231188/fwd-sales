@@ -92,7 +92,7 @@ router.get('/search', requireAuth, async (req, res) => {
 
     // No LIMIT when searching — return every matching pipeline customer.
     // For the empty/default list, cap at 10 most recent to keep the dropdown tidy.
-    const limitClause = trimmed ? '' : 'LIMIT 10';
+    const limitClause = trimmed ? '' : 'LIMIT 50';
 
     const { rows } = await db.query(`
       SELECT
