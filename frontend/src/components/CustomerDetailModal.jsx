@@ -1,6 +1,8 @@
-import { useQuery } from '@tanstack/react-query';
+import { useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { format, differenceInDays } from 'date-fns';
-import { getPipelineDetail } from '../api';
+import { getPipelineDetail, updateQuote } from '../api';
+import toast from 'react-hot-toast';
 
 const STAGE_INFO = {
   new:       { label: 'Khách mới',   icon: '🆕', color: '#3b82f6', bg: '#eff6ff', border: '#bfdbfe' },
@@ -59,7 +61,118 @@ function InfoRow({ label, value }) {
   );
 }
 
+const EMPTY_OPTION = { carrier: '', price: '', cost: '' };
+
+function QuoteEditForm({ quote, pipelineId, onDone }) {
+  const qc = useQueryClient();
+  const allOpts = parseOptions(quote.price, quote.carrier);
+  // Ensure we always have 5 rows
+  const padded = [...allOpts, ...Array(5).fill(null).map(() => ({ ...EMPTY_OPTION }))].slice(0, 5);
+
+  const [status, setStatus] = useState(quote.status || 'quoting');
+  const [options, setOptions] = useState(padded);
+  const [notes, setNotes] = useState(quote.follow_up_notes || '');
+
+  const setOpt = (i, field, val) =>
+    setOptions(opts => opts.map((o, idx) => idx === i ? { ...o, [field]: val } : o));
+
+  const mutation = useMutation({
+    mutationFn: () => updateQuote(quote.id, {
+      status,
+      price: JSON.stringify(options),
+      carrier: JSON.stringify(options.map(o => o.carrier)),
+      follow_up_notes: notes,
+    }),
+    onSuccess: () => {
+      toast.success('Đã cập nhật báo giá');
+      qc.invalidateQueries({ queryKey: ['pipeline-detail', pipelineId] });
+      onDone();
+    },
+    onError: () => toast.error('Cập nhật thất bại'),
+  });
+
+  return (
+    <div style={{ background: '#f0f7ff', border: '1px solid #bfdbfe', borderRadius: 8, padding: '12px 14px', marginTop: 8 }}>
+      {/* Status */}
+      <div style={{ marginBottom: 10 }}>
+        <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.4px', display: 'block', marginBottom: 4 }}>
+          Trạng thái
+        </label>
+        <select
+          value={status}
+          onChange={e => setStatus(e.target.value)}
+          style={{ fontSize: 13, padding: '6px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text)', width: '100%', fontFamily: 'var(--font)' }}
+        >
+          <option value="quoting">Nhận thông tin check giá</option>
+          <option value="follow_up">Báo giá follow</option>
+          <option value="booked">Đã Booking</option>
+          <option value="lost">Lost</option>
+        </select>
+      </div>
+
+      {/* PA options */}
+      <div style={{ marginBottom: 10 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '36px 1fr 1fr 1fr', gap: 6, marginBottom: 4 }}>
+          <div />
+          {['Hãng tàu/bay', 'Giá báo', 'Cost giá'].map(h => (
+            <div key={h} style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.4px' }}>{h}</div>
+          ))}
+        </div>
+        {options.map((o, i) => (
+          <div key={i} style={{ display: 'grid', gridTemplateColumns: '36px 1fr 1fr 1fr', gap: 6, marginBottom: 5, alignItems: 'center' }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--primary)', background: 'var(--primary-dim)', borderRadius: 4, padding: '3px 0', textAlign: 'center' }}>PA{i + 1}</span>
+            {['carrier', 'price', 'cost'].map(field => (
+              <input
+                key={field}
+                value={o[field]}
+                onChange={e => setOpt(i, field, e.target.value)}
+                placeholder={field === 'carrier' ? 'MSC, CMA...' : 'USD 2,200/40HC'}
+                style={{ fontSize: 12, padding: '5px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text)', fontFamily: 'var(--font)', width: '100%', boxSizing: 'border-box' }}
+              />
+            ))}
+          </div>
+        ))}
+      </div>
+
+      {/* Notes */}
+      <div style={{ marginBottom: 12 }}>
+        <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.4px', display: 'block', marginBottom: 4 }}>
+          Ghi chú follow up
+        </label>
+        <textarea
+          value={notes}
+          onChange={e => setNotes(e.target.value)}
+          rows={2}
+          placeholder="Tình trạng theo dõi..."
+          style={{ fontSize: 13, padding: '6px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text)', width: '100%', fontFamily: 'var(--font)', resize: 'vertical', boxSizing: 'border-box' }}
+        />
+      </div>
+
+      {/* Actions */}
+      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+        <button
+          type="button"
+          onClick={onDone}
+          style={{ fontSize: 12, padding: '6px 14px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-2)', cursor: 'pointer', fontFamily: 'var(--font)' }}
+        >
+          Hủy
+        </button>
+        <button
+          type="button"
+          onClick={() => mutation.mutate()}
+          disabled={mutation.isPending}
+          style={{ fontSize: 12, padding: '6px 14px', borderRadius: 6, border: 'none', background: 'var(--primary)', color: '#fff', cursor: 'pointer', fontFamily: 'var(--font)', fontWeight: 600, opacity: mutation.isPending ? 0.7 : 1 }}
+        >
+          {mutation.isPending ? 'Đang lưu...' : 'Lưu'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function CustomerDetailModal({ pipelineId, onClose }) {
+  const [editingQuoteId, setEditingQuoteId] = useState(null);
+
   const { data, isLoading } = useQuery({
     queryKey: ['pipeline-detail', pipelineId],
     queryFn: () => getPipelineDetail(pipelineId),
@@ -341,43 +454,70 @@ export default function CustomerDetailModal({ pipelineId, onClose }) {
                             {c.quotes.map(q => {
                               const opts = parseOptions(q.price, q.carrier).filter(o => o.carrier || o.price);
                               const sc = STATUS_COLOR[q.status] || '#6b7280';
+                              const isEditing = editingQuoteId === q.id;
                               return (
                                 <div key={q.id} style={{
-                                  background: 'var(--bg-card)', border: '1px solid var(--border)',
+                                  background: 'var(--bg-card)', border: `1px solid ${isEditing ? '#bfdbfe' : 'var(--border)'}`,
                                   borderRadius: 8, padding: '10px 12px',
                                 }}>
                                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap', marginBottom: 4 }}>
                                     <span style={{ fontSize: 13, fontWeight: 600 }}>{q.cargo_name}</span>
-                                    <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 8, background: sc + '18', color: sc }}>
-                                      {STATUS_LABEL[q.status] || q.status}
-                                    </span>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                      <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 8, background: sc + '18', color: sc }}>
+                                        {STATUS_LABEL[q.status] || q.status}
+                                      </span>
+                                      <button
+                                        type="button"
+                                        onClick={() => setEditingQuoteId(isEditing ? null : q.id)}
+                                        style={{
+                                          fontSize: 11, padding: '2px 8px', borderRadius: 6,
+                                          border: '1px solid var(--border)',
+                                          background: isEditing ? '#eff6ff' : 'var(--bg)',
+                                          color: isEditing ? '#1d4ed8' : 'var(--text-2)',
+                                          cursor: 'pointer', fontFamily: 'var(--font)', fontWeight: 600,
+                                        }}
+                                      >
+                                        {isEditing ? '✕ Đóng' : '✏️ Sửa'}
+                                      </button>
+                                    </div>
                                   </div>
                                   {q.route && <div style={{ fontSize: 12, color: 'var(--text-2)', marginBottom: 4 }}>📍 {q.route}</div>}
-                                  {opts.length > 0 && (
-                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                                      {opts.map((o, i) => (
-                                        <div key={i} style={{ fontSize: 12, display: 'flex', alignItems: 'baseline', gap: 6, flexWrap: 'wrap' }}>
-                                          <span style={{ color: '#16a34a', fontWeight: 700, minWidth: 28, flexShrink: 0 }}>PA{i + 1}:</span>
-                                          {o.carrier && <span style={{ color: 'var(--text)' }}>{o.carrier}</span>}
-                                          {o.price && (
-                                            <span style={{ color: 'var(--text-2)' }}>
-                                              — Giá: <span style={{ color: 'var(--primary)', fontWeight: 600 }}>{o.price}</span>
-                                            </span>
-                                          )}
-                                          {o.cost && (
-                                            <span style={{ color: 'var(--text-2)' }}>
-                                              / Cost: <span style={{ color: '#6b7280', fontWeight: 600 }}>{o.cost}</span>
-                                            </span>
-                                          )}
+                                  {!isEditing && (
+                                    <>
+                                      {opts.length > 0 && (
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                                          {opts.map((o, i) => (
+                                            <div key={i} style={{ fontSize: 12, display: 'flex', alignItems: 'baseline', gap: 6, flexWrap: 'wrap' }}>
+                                              <span style={{ color: '#16a34a', fontWeight: 700, minWidth: 28, flexShrink: 0 }}>PA{i + 1}:</span>
+                                              {o.carrier && <span style={{ color: 'var(--text)' }}>{o.carrier}</span>}
+                                              {o.price && (
+                                                <span style={{ color: 'var(--text-2)' }}>
+                                                  — Giá: <span style={{ color: 'var(--primary)', fontWeight: 600 }}>{o.price}</span>
+                                                </span>
+                                              )}
+                                              {o.cost && (
+                                                <span style={{ color: 'var(--text-2)' }}>
+                                                  / Cost: <span style={{ color: '#6b7280', fontWeight: 600 }}>{o.cost}</span>
+                                                </span>
+                                              )}
+                                            </div>
+                                          ))}
                                         </div>
-                                      ))}
-                                    </div>
+                                      )}
+                                      {q.follow_up_notes && (
+                                        <div style={{ fontSize: 12, color: 'var(--text-2)', marginTop: 6, fontStyle: 'italic' }}>📝 {q.follow_up_notes}</div>
+                                      )}
+                                      {q.closing_soon && (
+                                        <div style={{ fontSize: 12, color: '#ea580c', fontWeight: 600, marginTop: 4 }}>⚡ Sắp chốt</div>
+                                      )}
+                                    </>
                                   )}
-                                  {q.follow_up_notes && (
-                                    <div style={{ fontSize: 12, color: 'var(--text-2)', marginTop: 6, fontStyle: 'italic' }}>📝 {q.follow_up_notes}</div>
-                                  )}
-                                  {q.closing_soon && (
-                                    <div style={{ fontSize: 12, color: '#ea580c', fontWeight: 600, marginTop: 4 }}>⚡ Sắp chốt</div>
+                                  {isEditing && (
+                                    <QuoteEditForm
+                                      quote={q}
+                                      pipelineId={pipelineId}
+                                      onDone={() => setEditingQuoteId(null)}
+                                    />
                                   )}
                                 </div>
                               );
