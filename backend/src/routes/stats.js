@@ -167,10 +167,25 @@ router.get('/drilldown/:type', requireAuth, async (req, res) => {
       else if (userId) { wConds.push(`c.user_id = $${wi++}`); wParams.push(userId); }
       wConds.push(`c.follow_up_date <= CURRENT_DATE`);
       wConds.push(`c.interaction_type != $${wi++}`); wParams.push('saved');
-      ({ rows } = await db.query(
-        `SELECT ${custSelect} WHERE ${wConds.join(' AND ')} GROUP BY c.id, u.name, u.code, u.avatar_color, r.report_date ORDER BY c.follow_up_date ASC`,
-        wParams
-      ));
+      // Deduplicate: one row per (user, company) — pick latest follow_up_date row,
+      // count total quotes across ALL entries for that company+user
+      ({ rows } = await db.query(`
+        SELECT DISTINCT ON (c.user_id, LOWER(c.company_name))
+          c.*, u.name AS user_name, u.code AS user_code, u.avatar_color, r.report_date,
+          (
+            SELECT COUNT(q2.id)
+            FROM customers c2
+            LEFT JOIN quotes q2 ON q2.customer_id = c2.id
+            WHERE c2.user_id = c.user_id AND LOWER(c2.company_name) = LOWER(c.company_name)
+          )::int AS quote_count
+        FROM customers c
+        JOIN reports r ON r.id = c.report_id
+        JOIN users u ON u.id = c.user_id
+        WHERE ${wConds.join(' AND ')}
+        ORDER BY c.user_id, LOWER(c.company_name), c.follow_up_date DESC
+      `, wParams));
+      // Re-sort by follow_up_date ASC after deduplication
+      rows.sort((a, b) => new Date(a.follow_up_date) - new Date(b.follow_up_date));
     }
 
     res.json(rows);
