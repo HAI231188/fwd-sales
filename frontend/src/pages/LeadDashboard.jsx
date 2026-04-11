@@ -15,7 +15,7 @@ const SOURCE_LABEL = {
 };
 const TYPE_LABEL = { saved: 'Lưu liên hệ', contacted: 'Đã liên hệ', quoted: 'Đã báo giá' };
 const TYPE_CLASS = { saved: 'type-saved', contacted: 'type-contacted', quoted: 'type-quoted' };
-const STATUS_LABEL = { quoting: 'Báo giá', follow_up: 'Follow Up', booked: 'Booked', lost: 'Lost' };
+const STATUS_LABEL = { quoting: 'Nhận TT check giá', follow_up: 'Báo giá follow', booked: 'Booked', lost: 'Lost' };
 
 export default function LeadDashboard() {
   const [activeTab, setActiveTab] = useState('overview');
@@ -100,7 +100,7 @@ export default function LeadDashboard() {
               onClick={() => setDrilldown('booked')}
             />
             <StatCard
-              label="Follow Up" value={stats.follow_up}
+              label="Báo giá follow" value={stats.follow_up}
               icon="🔄" color="var(--warning)"
               loading={statsQ.isLoading}
               onClick={() => setDrilldown('follow_up')}

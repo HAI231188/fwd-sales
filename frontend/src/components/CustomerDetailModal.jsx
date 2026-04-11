@@ -22,7 +22,7 @@ const PREFERRED_CONTACT_LABEL = {
   zalo: '💬 Zalo', phone: '📞 Điện thoại', email: '📧 Email', direct: '🤝 Gặp trực tiếp',
 };
 
-const STATUS_LABEL = { quoting: 'Đang báo giá', follow_up: 'Follow up', booked: 'Đã booking', lost: 'Mất' };
+const STATUS_LABEL = { quoting: 'Nhận TT check giá', follow_up: 'Báo giá follow', booked: 'Đã booking', lost: 'Mất' };
 const STATUS_COLOR = { quoting: '#3b82f6', follow_up: '#f59e0b', booked: '#10b981', lost: '#ef4444' };
 
 const SOURCE_LABEL = {

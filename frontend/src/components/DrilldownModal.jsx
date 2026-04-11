@@ -6,7 +6,7 @@ import CustomerDetailModal from './CustomerDetailModal';
 
 const MODE_ICON = { sea: '🚢', air: '✈️', road: '🚛' };
 const MODE_CLASS = { sea: 'mode-sea', air: 'mode-air', road: 'mode-road' };
-const STATUS_LABEL = { quoting: 'Đang báo giá', follow_up: 'Follow Up', booked: 'Đã booking', lost: 'Lost' };
+const STATUS_LABEL = { quoting: 'Nhận TT check giá', follow_up: 'Báo giá follow', booked: 'Đã booking', lost: 'Lost' };
 const STATUS_CLASS = { quoting: 'status-quoting', follow_up: 'status-follow_up', booked: 'status-booked', lost: 'status-lost' };
 const TYPE_LABEL = { saved: 'Lưu liên hệ', contacted: 'Đã liên hệ', quoted: 'Đã báo giá' };
 const TYPE_CLASS = { saved: 'type-saved', contacted: 'type-contacted', quoted: 'type-quoted' };
@@ -259,7 +259,7 @@ function CustomerRow({ c, onCompanyClick }) {
 
 const DRILL_CONFIG = {
   booked:            { title: '✅ Đã Booking', isQuote: true },
-  follow_up:         { title: '🔄 Follow Up', isQuote: true },
+  follow_up:         { title: '🔄 Báo giá follow', isQuote: true },
   closing_soon:      { title: '⚡ Sắp Chốt', isQuote: true },
   contacts:          { title: '👥 Lượt Tiếp Cận', isQuote: false },
   total_quotes:      { title: '📋 Tổng Báo Giá', isQuote: true },

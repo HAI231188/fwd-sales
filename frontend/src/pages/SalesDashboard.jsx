@@ -58,7 +58,7 @@ export default function SalesDashboard() {
           {/* Stats */}
           <div className="grid-6" style={{ marginBottom: 32 }}>
             <StatCard label="Đã Booking" value={stats.booked} icon="✅" color="var(--primary)" loading={statsQ.isLoading} onClick={() => setDrilldown('booked')} />
-            <StatCard label="Follow Up" value={stats.follow_up} icon="🔄" color="var(--warning)" loading={statsQ.isLoading} onClick={() => setDrilldown('follow_up')} />
+            <StatCard label="Báo giá follow" value={stats.follow_up} icon="🔄" color="var(--warning)" loading={statsQ.isLoading} onClick={() => setDrilldown('follow_up')} />
             <StatCard label="Sắp Chốt" value={stats.closing_soon} icon="⚡" color="#ff6b35" loading={statsQ.isLoading} onClick={() => setDrilldown('closing_soon')} />
             <StatCard label="Tiếp Cận" value={stats.total_contacts} icon="👥" color="var(--info)" loading={statsQ.isLoading} onClick={() => setDrilldown('contacts')} />
             <StatCard label="Báo Giá" value={stats.total_quotes} icon="📋" color="var(--purple)" loading={statsQ.isLoading} onClick={() => setDrilldown('total_quotes')} />

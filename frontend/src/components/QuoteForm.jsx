@@ -166,8 +166,8 @@ export default function QuoteForm({ quote, onChange, onRemove, index }) {
         <div className="form-group">
           <label className="form-label">Trạng thái *</label>
           <select className="form-select" value={q.status} onChange={e => set('status', e.target.value)}>
-            <option value="quoting">Đang báo giá</option>
-            <option value="follow_up">Follow Up</option>
+            <option value="quoting">Nhận thông tin check giá</option>
+            <option value="follow_up">Báo giá follow</option>
             <option value="booked">Đã Booking</option>
             <option value="lost">Lost</option>
           </select>

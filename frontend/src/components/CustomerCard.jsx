@@ -7,7 +7,7 @@ import CustomerDetailModal from './CustomerDetailModal';
 
 const MODE_ICON = { sea: '🚢', air: '✈️', road: '🚛' };
 const MODE_CLASS = { sea: 'mode-sea', air: 'mode-air', road: 'mode-road' };
-const STATUS_LABEL = { quoting: 'Đang báo giá', follow_up: 'Follow Up', booked: 'Đã booking', lost: 'Lost' };
+const STATUS_LABEL = { quoting: 'Nhận TT check giá', follow_up: 'Báo giá follow', booked: 'Đã booking', lost: 'Lost' };
 const STATUS_CLASS = { quoting: 'status-quoting', follow_up: 'status-follow_up', booked: 'status-booked', lost: 'status-lost' };
 const SOURCE_LABEL = {
   cold_call: '📞 Cold Call', zalo_facebook: '💬 Zalo/Facebook',
