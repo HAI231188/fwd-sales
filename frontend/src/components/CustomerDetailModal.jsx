@@ -470,11 +470,12 @@ export default function CustomerDetailModal({ pipelineId, onClose }) {
                                         type="button"
                                         onClick={() => setEditingQuoteId(isEditing ? null : q.id)}
                                         style={{
-                                          fontSize: 11, padding: '2px 8px', borderRadius: 6,
-                                          border: '1px solid var(--border)',
-                                          background: isEditing ? '#eff6ff' : 'var(--bg)',
-                                          color: isEditing ? '#1d4ed8' : 'var(--text-2)',
+                                          fontSize: 11, padding: '3px 10px', borderRadius: 6,
+                                          border: `1px solid ${isEditing ? '#93c5fd' : '#d1d5db'}`,
+                                          background: isEditing ? '#dbeafe' : '#f3f4f6',
+                                          color: isEditing ? '#1d4ed8' : '#374151',
                                           cursor: 'pointer', fontFamily: 'var(--font)', fontWeight: 600,
+                                          flexShrink: 0,
                                         }}
                                       >
                                         {isEditing ? '✕ Đóng' : '✏️ Sửa'}
