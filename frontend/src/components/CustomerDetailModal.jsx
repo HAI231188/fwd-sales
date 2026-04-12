@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { format, differenceInDays } from 'date-fns';
-import { getPipelineDetail, updateQuote, quickAddCustomer } from '../api';
+import { getPipelineDetail, updateQuote, quickAddCustomer, addInteractionUpdate } from '../api';
 import QuoteForm, { EMPTY_QUOTE } from './QuoteForm';
 import toast from 'react-hot-toast';
 
@@ -171,6 +171,66 @@ function QuoteEditForm({ quote, pipelineId, onDone }) {
   );
 }
 
+function InteractionUpdateForm({ customerId, pipelineId, onDone }) {
+  const qc = useQueryClient();
+  const [note, setNote] = useState('');
+  const [followUpDate, setFollowUpDate] = useState('');
+
+  const mutation = useMutation({
+    mutationFn: () => addInteractionUpdate(customerId, { note, follow_up_date: followUpDate || null }),
+    onSuccess: () => {
+      toast.success('Đã thêm cập nhật');
+      qc.invalidateQueries({ queryKey: ['pipeline-detail', pipelineId] });
+      onDone();
+    },
+    onError: (err) => toast.error(err?.error || 'Lưu thất bại'),
+  });
+
+  return (
+    <div style={{
+      marginTop: 10, padding: '12px 14px',
+      background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 8,
+    }}>
+      <div style={{ marginBottom: 8 }}>
+        <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.4px', display: 'block', marginBottom: 4 }}>
+          Ghi chú cập nhật *
+        </label>
+        <textarea
+          value={note}
+          onChange={e => setNote(e.target.value)}
+          rows={2}
+          autoFocus
+          placeholder="Kết quả follow up, thông tin mới..."
+          style={{ fontSize: 13, padding: '7px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text)', width: '100%', fontFamily: 'var(--font)', resize: 'vertical', boxSizing: 'border-box' }}
+        />
+      </div>
+      <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8 }}>
+        <div style={{ flex: 1 }}>
+          <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.4px', display: 'block', marginBottom: 4 }}>
+            Follow up tiếp theo
+          </label>
+          <input
+            type="date"
+            value={followUpDate}
+            onChange={e => setFollowUpDate(e.target.value)}
+            style={{ fontSize: 13, padding: '7px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text)', width: '100%', fontFamily: 'var(--font)', boxSizing: 'border-box' }}
+          />
+        </div>
+        <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+          <button type="button" onClick={onDone}
+            style={{ fontSize: 12, padding: '7px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-2)', cursor: 'pointer', fontFamily: 'var(--font)' }}>
+            Hủy
+          </button>
+          <button type="button" onClick={() => mutation.mutate()} disabled={!note.trim() || mutation.isPending}
+            style={{ fontSize: 12, padding: '7px 12px', borderRadius: 6, border: 'none', background: 'var(--primary)', color: '#fff', cursor: 'pointer', fontFamily: 'var(--font)', fontWeight: 600, opacity: (!note.trim() || mutation.isPending) ? 0.6 : 1 }}>
+            {mutation.isPending ? 'Đang lưu...' : '✓ Lưu'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function TodayInteractionForm({ pipeline, pipelineId, onDone }) {
   const qc = useQueryClient();
   const [form, setForm] = useState({
@@ -313,6 +373,7 @@ function TodayInteractionForm({ pipeline, pipelineId, onDone }) {
 export default function CustomerDetailModal({ pipelineId, onClose }) {
   const [editingQuoteId, setEditingQuoteId] = useState(null);
   const [showTodayForm, setShowTodayForm] = useState(false);
+  const [updatingCustomerId, setUpdatingCustomerId] = useState(null);
 
   const { data, isLoading } = useQuery({
     queryKey: ['pipeline-detail', pipelineId],
@@ -529,7 +590,7 @@ export default function CustomerDetailModal({ pipelineId, onClose }) {
                         border: `1px solid ${idx === 0 ? '#bfdbfe' : 'var(--border)'}`,
                         borderRadius: 12, padding: '14px 16px',
                       }}>
-                        {/* Card header: type badge + date */}
+                        {/* Card header: type badge + date + update button */}
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                             <span style={{
@@ -542,11 +603,26 @@ export default function CustomerDetailModal({ pipelineId, onClose }) {
                               <span style={{ fontSize: 11, color: '#3b82f6', fontWeight: 600 }}>● Gần nhất</span>
                             )}
                           </div>
-                          {c.report_date && (
-                            <span style={{ fontSize: 12, color: 'var(--text-3)', fontWeight: 500 }}>
-                              {format(new Date(c.report_date), 'dd/MM/yyyy')}
-                            </span>
-                          )}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            {c.report_date && (
+                              <span style={{ fontSize: 12, color: 'var(--text-3)', fontWeight: 500 }}>
+                                {format(new Date(c.report_date), 'dd/MM/yyyy')}
+                              </span>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => setUpdatingCustomerId(updatingCustomerId === c.id ? null : c.id)}
+                              style={{
+                                fontSize: 11, padding: '3px 10px', borderRadius: 6,
+                                border: `1px solid ${updatingCustomerId === c.id ? '#fbbf24' : '#d1d5db'}`,
+                                background: updatingCustomerId === c.id ? '#fef3c7' : '#f3f4f6',
+                                color: updatingCustomerId === c.id ? '#92400e' : '#374151',
+                                cursor: 'pointer', fontFamily: 'var(--font)', fontWeight: 600,
+                              }}
+                            >
+                              {updatingCustomerId === c.id ? '✕ Đóng' : '➕ Cập nhật'}
+                            </button>
+                          </div>
                         </div>
 
                         {/* Core fields */}
@@ -690,6 +766,36 @@ export default function CustomerDetailModal({ pipelineId, onClose }) {
                                 </div>
                               );
                             })}
+                          </div>
+                        )}
+
+                        {/* Update thread */}
+                        {(c.updates?.length > 0 || updatingCustomerId === c.id) && (
+                          <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
+                            {c.updates?.map(u => (
+                              <div key={u.id} style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
+                                <span style={{ fontSize: 13, color: 'var(--text-3)', flexShrink: 0, marginTop: 1 }}>└─</span>
+                                <div>
+                                  <span style={{ fontSize: 11, color: 'var(--text-3)', marginRight: 6 }}>
+                                    {format(new Date(u.created_at), 'dd/MM/yyyy HH:mm')}
+                                    {u.created_by_name && ` · ${u.created_by_name}`}
+                                  </span>
+                                  <span style={{ fontSize: 13, color: 'var(--text)' }}>{u.note}</span>
+                                  {u.follow_up_date && (
+                                    <span style={{ fontSize: 11, color: 'var(--warning)', fontWeight: 500, marginLeft: 8 }}>
+                                      📅 {format(new Date(u.follow_up_date), 'dd/MM/yyyy')}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                            {updatingCustomerId === c.id && (
+                              <InteractionUpdateForm
+                                customerId={c.id}
+                                pipelineId={pipelineId}
+                                onDone={() => setUpdatingCustomerId(null)}
+                              />
+                            )}
                           </div>
                         )}
                       </div>

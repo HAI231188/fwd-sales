@@ -59,5 +59,6 @@ export const searchPipeline = (q) => api.get('/pipeline/search', { params: q ? {
 export const updatePipelineStage = (id, stage) => api.put(`/pipeline/${id}`, { stage });
 export const getPipelineHistory = (id) => api.get(`/pipeline/${id}/history`);
 export const getPipelineDetail = (id) => api.get(`/pipeline/${id}/detail`);
+export const addInteractionUpdate = (customerId, data) => api.post(`/pipeline/customers/${customerId}/updates`, data);
 
 export default api;

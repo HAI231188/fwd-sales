@@ -229,12 +229,61 @@ router.get('/:id/detail', requireAuth, async (req, res) => {
       quotes = rows;
     }
 
+    let updates = [];
+    if (customerIds.length > 0) {
+      const { rows: updateRows } = await db.query(
+        `SELECT ciu.*, u.name AS created_by_name
+         FROM customer_interaction_updates ciu
+         LEFT JOIN users u ON u.id = ciu.created_by
+         WHERE ciu.customer_id = ANY($1)
+         ORDER BY ciu.created_at ASC`,
+        [customerIds]
+      );
+      updates = updateRows;
+    }
+
     const interactionsWithQuotes = interactions.map(c => ({
       ...c,
       quotes: quotes.filter(q => q.customer_id === c.id),
+      updates: updates.filter(u => u.customer_id === c.id),
     }));
 
     res.json({ pipeline: pipeRows[0], interactions: interactionsWithQuotes });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/customers/:customerId/updates — add a threaded update to an interaction
+router.post('/customers/:customerId/updates', requireAuth, async (req, res) => {
+  const { note, follow_up_date } = req.body;
+  if (!note?.trim()) return res.status(400).json({ error: 'Ghi chú không được để trống' });
+
+  try {
+    // Verify the customer belongs to a pipeline the user can access
+    const { rows: check } = await db.query(`
+      SELECT c.id FROM customers c
+      JOIN customer_pipeline cp ON cp.id = c.pipeline_id
+      WHERE c.id = $1 AND (cp.sales_id = $2 OR $3 = 'lead')
+    `, [req.params.customerId, req.user.id, req.user.role]);
+
+    if (!check[0]) return res.status(404).json({ error: 'Không tìm thấy' });
+
+    const { rows } = await db.query(`
+      INSERT INTO customer_interaction_updates (customer_id, note, follow_up_date, created_by)
+      VALUES ($1, $2, $3, $4)
+      RETURNING *
+    `, [req.params.customerId, note.trim(), follow_up_date || null, req.user.id]);
+
+    // Also bump last_activity_date on the pipeline entry
+    await db.query(`
+      UPDATE customer_pipeline cp
+      SET last_activity_date = CURRENT_DATE, updated_at = NOW()
+      FROM customers c
+      WHERE c.id = $1 AND cp.id = c.pipeline_id
+    `, [req.params.customerId]);
+
+    res.status(201).json(rows[0]);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

@@ -126,3 +126,15 @@ ALTER TABLE customers ADD COLUMN IF NOT EXISTS preferred_contact VARCHAR(50);
 ALTER TABLE customers ADD COLUMN IF NOT EXISTS reason_not_closed TEXT;
 ALTER TABLE customers ADD COLUMN IF NOT EXISTS estimated_value  NUMERIC(15,2);
 ALTER TABLE customers ADD COLUMN IF NOT EXISTS competitor       TEXT;
+
+-- Interaction updates (threaded notes under each customer interaction)
+CREATE TABLE IF NOT EXISTS customer_interaction_updates (
+  id            SERIAL PRIMARY KEY,
+  customer_id   INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+  note          TEXT NOT NULL,
+  follow_up_date DATE,
+  created_at    TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  created_by    INTEGER REFERENCES users(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_interaction_updates_customer ON customer_interaction_updates(customer_id);
