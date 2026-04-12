@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { format, differenceInDays } from 'date-fns';
-import { getPipelineDetail, updateQuote, quickAddCustomer, addInteractionUpdate } from '../api';
+import { getPipelineDetail, updateQuote, quickAddCustomer, addInteractionUpdate, updateCustomer } from '../api';
 import QuoteForm, { EMPTY_QUOTE } from './QuoteForm';
 import toast from 'react-hot-toast';
 
@@ -165,6 +165,159 @@ function QuoteEditForm({ quote, pipelineId, onDone }) {
           style={{ fontSize: 12, padding: '6px 14px', borderRadius: 6, border: 'none', background: 'var(--primary)', color: '#fff', cursor: 'pointer', fontFamily: 'var(--font)', fontWeight: 600, opacity: mutation.isPending ? 0.7 : 1 }}
         >
           {mutation.isPending ? 'Đang lưu...' : 'Lưu'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+const SOURCE_OPTIONS = [
+  { value: '', label: '— Chọn nguồn —' },
+  { value: 'cold_call', label: '📞 Cold Call' },
+  { value: 'zalo_facebook', label: '💬 Zalo/Facebook' },
+  { value: 'referral', label: '🤝 Referral' },
+  { value: 'email', label: '📧 Email' },
+  { value: 'direct', label: '🤝 Gặp trực tiếp' },
+  { value: 'other', label: '💡 Khác' },
+];
+
+function InfoEditForm({ pipeline, latest, pipelineId, customerId, onDone }) {
+  const qc = useQueryClient();
+  const [form, setForm] = useState({
+    company_name:      pipeline.company_name || '',
+    contact_person:    pipeline.contact_person || '',
+    phone:             pipeline.phone || '',
+    industry:          pipeline.industry || '',
+    source:            pipeline.source || '',
+    potential_level:   latest?.potential_level || '',
+    decision_maker:    latest?.decision_maker || false,
+    preferred_contact: latest?.preferred_contact || '',
+    estimated_value:   latest?.estimated_value || '',
+    competitor:        latest?.competitor || '',
+  });
+  const set = (f, v) => setForm(s => ({ ...s, [f]: v }));
+
+  const mutation = useMutation({
+    mutationFn: () => updateCustomer(customerId, {
+      ...form,
+      interaction_type: latest?.interaction_type || 'contacted',
+    }),
+    onSuccess: () => {
+      toast.success('Đã cập nhật thông tin');
+      qc.invalidateQueries({ queryKey: ['pipeline-detail', pipelineId] });
+      qc.invalidateQueries({ queryKey: ['pipeline'] });
+      onDone();
+    },
+    onError: (err) => toast.error(err?.error || 'Cập nhật thất bại'),
+  });
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {/* Basic info */}
+      <div>
+        <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.4px', display: 'block', marginBottom: 4 }}>Tên công ty *</label>
+        <input value={form.company_name} onChange={e => set('company_name', e.target.value)}
+          style={{ fontSize: 13, padding: '7px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text)', width: '100%', fontFamily: 'var(--font)', boxSizing: 'border-box' }} />
+      </div>
+      <div>
+        <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.4px', display: 'block', marginBottom: 4 }}>Người liên hệ</label>
+        <input value={form.contact_person} onChange={e => set('contact_person', e.target.value)}
+          placeholder="Nguyễn Văn A"
+          style={{ fontSize: 13, padding: '7px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text)', width: '100%', fontFamily: 'var(--font)', boxSizing: 'border-box' }} />
+      </div>
+      <div>
+        <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.4px', display: 'block', marginBottom: 4 }}>Điện thoại</label>
+        <input value={form.phone} onChange={e => set('phone', e.target.value)}
+          placeholder="0901234567"
+          style={{ fontSize: 13, padding: '7px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text)', width: '100%', fontFamily: 'var(--font)', boxSizing: 'border-box' }} />
+      </div>
+      <div>
+        <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.4px', display: 'block', marginBottom: 4 }}>Ngành hàng</label>
+        <input value={form.industry} onChange={e => set('industry', e.target.value)}
+          placeholder="Dệt may, Điện tử..."
+          style={{ fontSize: 13, padding: '7px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text)', width: '100%', fontFamily: 'var(--font)', boxSizing: 'border-box' }} />
+      </div>
+      <div>
+        <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.4px', display: 'block', marginBottom: 4 }}>Nguồn</label>
+        <select value={form.source} onChange={e => set('source', e.target.value)}
+          style={{ fontSize: 13, padding: '7px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text)', width: '100%', fontFamily: 'var(--font)' }}>
+          {SOURCE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
+      </div>
+
+      {/* Divider */}
+      <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: 10 }}>Đánh giá</div>
+
+        {/* Potential level */}
+        <div style={{ marginBottom: 12 }}>
+          <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.4px', display: 'block', marginBottom: 6 }}>Tiềm năng</label>
+          <div style={{ display: 'flex', gap: 6 }}>
+            {[
+              { value: 'high',   label: 'Cao',        color: '#16a34a', bg: '#f0fdf4', border: '#bbf7d0' },
+              { value: 'medium', label: 'Trung bình', color: '#d97706', bg: '#fffbeb', border: '#fde68a' },
+              { value: 'low',    label: 'Thấp',       color: '#dc2626', bg: '#fef2f2', border: '#fecaca' },
+            ].map(opt => (
+              <button key={opt.value} type="button"
+                onClick={() => set('potential_level', form.potential_level === opt.value ? '' : opt.value)}
+                style={{
+                  flex: 1, padding: '5px 0', borderRadius: 20, cursor: 'pointer',
+                  fontSize: 12, fontWeight: 600, fontFamily: 'var(--font)',
+                  background: form.potential_level === opt.value ? opt.bg : 'transparent',
+                  border: `1.5px solid ${form.potential_level === opt.value ? opt.color : 'var(--border)'}`,
+                  color: form.potential_level === opt.value ? opt.color : 'var(--text-2)',
+                }}
+              >{opt.label}</button>
+            ))}
+          </div>
+        </div>
+
+        {/* Decision maker */}
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--text-2)', cursor: 'pointer', marginBottom: 12 }}>
+          <input type="checkbox" checked={form.decision_maker || false} onChange={e => set('decision_maker', e.target.checked)}
+            style={{ width: 15, height: 15, cursor: 'pointer', accentColor: 'var(--primary)' }} />
+          Người quyết định
+        </label>
+
+        {/* Preferred contact */}
+        <div style={{ marginBottom: 12 }}>
+          <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.4px', display: 'block', marginBottom: 4 }}>Kênh liên hệ ưa thích</label>
+          <select value={form.preferred_contact || ''} onChange={e => set('preferred_contact', e.target.value)}
+            style={{ fontSize: 13, padding: '7px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text)', width: '100%', fontFamily: 'var(--font)' }}>
+            <option value="">— Chọn —</option>
+            <option value="zalo">💬 Zalo</option>
+            <option value="phone">📞 Điện thoại</option>
+            <option value="email">📧 Email</option>
+            <option value="direct">🤝 Gặp trực tiếp</option>
+          </select>
+        </div>
+
+        {/* Estimated value */}
+        <div style={{ marginBottom: 12 }}>
+          <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.4px', display: 'block', marginBottom: 4 }}>Giá trị ước tính (USD)</label>
+          <input type="number" min="0" value={form.estimated_value || ''} onChange={e => set('estimated_value', e.target.value)}
+            placeholder="0"
+            style={{ fontSize: 13, padding: '7px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text)', width: '100%', fontFamily: 'var(--font)', boxSizing: 'border-box' }} />
+        </div>
+
+        {/* Competitor */}
+        <div>
+          <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.4px', display: 'block', marginBottom: 4 }}>Đối thủ cạnh tranh</label>
+          <input value={form.competitor || ''} onChange={e => set('competitor', e.target.value)}
+            placeholder="Freight forwarder khác..."
+            style={{ fontSize: 13, padding: '7px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text)', width: '100%', fontFamily: 'var(--font)', boxSizing: 'border-box' }} />
+        </div>
+      </div>
+
+      {/* Actions */}
+      <div style={{ display: 'flex', gap: 8, paddingTop: 4 }}>
+        <button type="button" onClick={onDone}
+          style={{ flex: 1, fontSize: 13, padding: '8px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-2)', cursor: 'pointer', fontFamily: 'var(--font)' }}>
+          Hủy
+        </button>
+        <button type="button" onClick={() => mutation.mutate()} disabled={!form.company_name.trim() || mutation.isPending || !customerId}
+          style={{ flex: 1, fontSize: 13, padding: '8px', borderRadius: 8, border: 'none', background: 'var(--primary)', color: '#fff', cursor: 'pointer', fontFamily: 'var(--font)', fontWeight: 600, opacity: (!form.company_name.trim() || mutation.isPending) ? 0.6 : 1 }}>
+          {mutation.isPending ? 'Đang lưu...' : '✓ Lưu'}
         </button>
       </div>
     </div>
@@ -374,6 +527,7 @@ export default function CustomerDetailModal({ pipelineId, onClose }) {
   const [editingQuoteId, setEditingQuoteId] = useState(null);
   const [showTodayForm, setShowTodayForm] = useState(false);
   const [updatingCustomerId, setUpdatingCustomerId] = useState(null);
+  const [editingInfo, setEditingInfo] = useState(false);
 
   const { data, isLoading } = useQuery({
     queryKey: ['pipeline-detail', pipelineId],
@@ -441,7 +595,7 @@ export default function CustomerDetailModal({ pipelineId, onClose }) {
         {!isLoading && pipeline && (
           <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
 
-            {/* ── Left column: static info ── */}
+            {/* ── Left column ── */}
             <div style={{
               width: '35%', flexShrink: 0,
               borderRight: '1px solid var(--border)',
@@ -449,98 +603,121 @@ export default function CustomerDetailModal({ pipelineId, onClose }) {
               overflowY: 'auto',
               background: '#fafbfc',
             }}>
-              {/* Stats row */}
-              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 20 }}>
-                <div style={{ flex: 1, minWidth: 60, background: '#eff6ff', borderRadius: 10, padding: '8px 10px', textAlign: 'center' }}>
-                  <div style={{ fontSize: 18, fontWeight: 800, color: '#1d4ed8', lineHeight: 1 }}>{pipeline.total_interactions}</div>
-                  <div style={{ fontSize: 10, color: '#3b82f6', marginTop: 2 }}>Tiếp cận</div>
-                </div>
-                {pipeline.quote_count > 0 && (
-                  <div style={{ flex: 1, minWidth: 60, background: '#fff7ed', borderRadius: 10, padding: '8px 10px', textAlign: 'center' }}>
-                    <div style={{ fontSize: 18, fontWeight: 800, color: '#c2410c', lineHeight: 1 }}>{pipeline.quote_count}</div>
-                    <div style={{ fontSize: 10, color: '#ea580c', marginTop: 2 }}>Báo giá</div>
-                  </div>
-                )}
-                {pipeline.booked_count > 0 && (
-                  <div style={{ flex: 1, minWidth: 60, background: '#f0fdf4', borderRadius: 10, padding: '8px 10px', textAlign: 'center' }}>
-                    <div style={{ fontSize: 18, fontWeight: 800, color: '#15803d', lineHeight: 1 }}>{pipeline.booked_count}</div>
-                    <div style={{ fontSize: 10, color: '#16a34a', marginTop: 2 }}>Booked</div>
-                  </div>
-                )}
-              </div>
-
-              <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16 }}>
-                <InfoRow label="Người liên hệ" value={pipeline.contact_person} />
-                <InfoRow label="Điện thoại" value={pipeline.phone} />
-                <InfoRow label="Ngành hàng" value={pipeline.industry} />
-                <InfoRow label="Nguồn" value={SOURCE_LABEL[pipeline.source] || pipeline.source} />
-
-                {/* Last activity */}
-                {pipeline.last_activity_date && (
-                  <div style={{ marginBottom: 10 }}>
-                    <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: 2 }}>
-                      Hoạt động cuối
+              {editingInfo ? (
+                <InfoEditForm
+                  pipeline={pipeline}
+                  latest={latest}
+                  pipelineId={pipelineId}
+                  customerId={latest?.id}
+                  onDone={() => setEditingInfo(false)}
+                />
+              ) : (
+                <>
+                  {/* Stats row */}
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 16 }}>
+                    <div style={{ flex: 1, minWidth: 60, background: '#eff6ff', borderRadius: 10, padding: '8px 10px', textAlign: 'center' }}>
+                      <div style={{ fontSize: 18, fontWeight: 800, color: '#1d4ed8', lineHeight: 1 }}>{pipeline.total_interactions}</div>
+                      <div style={{ fontSize: 10, color: '#3b82f6', marginTop: 2 }}>Tiếp cận</div>
                     </div>
-                    <div style={{ fontSize: 13, color: 'var(--text)' }}>
-                      {format(new Date(pipeline.last_activity_date), 'dd/MM/yyyy')}
-                      <span style={{ fontSize: 11, color: 'var(--text-3)', marginLeft: 6 }}>
-                        ({daysSince(pipeline.last_activity_date)})
-                      </span>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Qualification fields from latest interaction */}
-              {latest && (potential || latest.decision_maker || latest.preferred_contact || latest.estimated_value || latest.competitor) && (
-                <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16, marginTop: 6 }}>
-                  <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: 12 }}>
-                    Đánh giá
-                  </div>
-
-                  {potential && (
-                    <div style={{ marginBottom: 10 }}>
-                      <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: 4 }}>Tiềm năng</div>
-                      <span style={{
-                        fontSize: 12, fontWeight: 700, padding: '3px 12px', borderRadius: 20,
-                        background: potential.bg, color: potential.color, border: `1px solid ${potential.border}`,
-                      }}>
-                        {potential.label}
-                      </span>
-                    </div>
-                  )}
-
-                  {latest.decision_maker && (
-                    <div style={{ marginBottom: 10 }}>
-                      <span style={{
-                        fontSize: 12, fontWeight: 600, padding: '3px 12px', borderRadius: 20,
-                        background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe',
-                      }}>
-                        👤 Người quyết định
-                      </span>
-                    </div>
-                  )}
-
-                  {latest.preferred_contact && (
-                    <InfoRow label="Kênh ưa thích" value={PREFERRED_CONTACT_LABEL[latest.preferred_contact] || latest.preferred_contact} />
-                  )}
-
-                  {latest.estimated_value && (
-                    <div style={{ marginBottom: 10 }}>
-                      <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: 2 }}>Giá trị ước tính</div>
-                      <div style={{ fontSize: 15, fontWeight: 800, color: '#15803d', fontFamily: 'var(--font-display)' }}>
-                        ${Number(latest.estimated_value).toLocaleString()} USD
+                    {pipeline.quote_count > 0 && (
+                      <div style={{ flex: 1, minWidth: 60, background: '#fff7ed', borderRadius: 10, padding: '8px 10px', textAlign: 'center' }}>
+                        <div style={{ fontSize: 18, fontWeight: 800, color: '#c2410c', lineHeight: 1 }}>{pipeline.quote_count}</div>
+                        <div style={{ fontSize: 10, color: '#ea580c', marginTop: 2 }}>Báo giá</div>
                       </div>
-                    </div>
+                    )}
+                    {pipeline.booked_count > 0 && (
+                      <div style={{ flex: 1, minWidth: 60, background: '#f0fdf4', borderRadius: 10, padding: '8px 10px', textAlign: 'center' }}>
+                        <div style={{ fontSize: 18, fontWeight: 800, color: '#15803d', lineHeight: 1 }}>{pipeline.booked_count}</div>
+                        <div style={{ fontSize: 10, color: '#16a34a', marginTop: 2 }}>Booked</div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Edit button */}
+                  {latest && (
+                    <button
+                      type="button"
+                      onClick={() => setEditingInfo(true)}
+                      style={{
+                        width: '100%', marginBottom: 16,
+                        padding: '7px 12px', borderRadius: 8,
+                        border: '1px solid #d1d5db', background: '#f3f4f6',
+                        color: '#374151', cursor: 'pointer',
+                        fontFamily: 'var(--font)', fontSize: 12, fontWeight: 600,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                      }}
+                    >
+                      ✏️ Chỉnh sửa thông tin
+                    </button>
                   )}
 
-                  {latest.competitor && (
-                    <div style={{ marginBottom: 10 }}>
-                      <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: 2 }}>Đối thủ</div>
-                      <div style={{ fontSize: 13, color: '#b91c1c' }}>⚔️ {latest.competitor}</div>
+                  <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16 }}>
+                    <InfoRow label="Người liên hệ" value={pipeline.contact_person} />
+                    <InfoRow label="Điện thoại" value={pipeline.phone} />
+                    <InfoRow label="Ngành hàng" value={pipeline.industry} />
+                    <InfoRow label="Nguồn" value={SOURCE_LABEL[pipeline.source] || pipeline.source} />
+
+                    {pipeline.last_activity_date && (
+                      <div style={{ marginBottom: 10 }}>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: 2 }}>
+                          Hoạt động cuối
+                        </div>
+                        <div style={{ fontSize: 13, color: 'var(--text)' }}>
+                          {format(new Date(pipeline.last_activity_date), 'dd/MM/yyyy')}
+                          <span style={{ fontSize: 11, color: 'var(--text-3)', marginLeft: 6 }}>
+                            ({daysSince(pipeline.last_activity_date)})
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Qualification fields from latest interaction */}
+                  {latest && (potential || latest.decision_maker || latest.preferred_contact || latest.estimated_value || latest.competitor) && (
+                    <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16, marginTop: 6 }}>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: 12 }}>
+                        Đánh giá
+                      </div>
+
+                      {potential && (
+                        <div style={{ marginBottom: 10 }}>
+                          <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: 4 }}>Tiềm năng</div>
+                          <span style={{ fontSize: 12, fontWeight: 700, padding: '3px 12px', borderRadius: 20, background: potential.bg, color: potential.color, border: `1px solid ${potential.border}` }}>
+                            {potential.label}
+                          </span>
+                        </div>
+                      )}
+
+                      {latest.decision_maker && (
+                        <div style={{ marginBottom: 10 }}>
+                          <span style={{ fontSize: 12, fontWeight: 600, padding: '3px 12px', borderRadius: 20, background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe' }}>
+                            👤 Người quyết định
+                          </span>
+                        </div>
+                      )}
+
+                      {latest.preferred_contact && (
+                        <InfoRow label="Kênh ưa thích" value={PREFERRED_CONTACT_LABEL[latest.preferred_contact] || latest.preferred_contact} />
+                      )}
+
+                      {latest.estimated_value && (
+                        <div style={{ marginBottom: 10 }}>
+                          <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: 2 }}>Giá trị ước tính</div>
+                          <div style={{ fontSize: 15, fontWeight: 800, color: '#15803d', fontFamily: 'var(--font-display)' }}>
+                            ${Number(latest.estimated_value).toLocaleString()} USD
+                          </div>
+                        </div>
+                      )}
+
+                      {latest.competitor && (
+                        <div style={{ marginBottom: 10 }}>
+                          <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: 2 }}>Đối thủ</div>
+                          <div style={{ fontSize: 13, color: '#b91c1c' }}>⚔️ {latest.competitor}</div>
+                        </div>
+                      )}
                     </div>
                   )}
-                </div>
+                </>
               )}
             </div>
 

@@ -133,26 +133,59 @@ router.put('/:id', requireAuth, async (req, res) => {
   const {
     company_name, contact_person, phone, source, industry,
     interaction_type, needs, notes, next_action, follow_up_date,
+    potential_level, decision_maker, preferred_contact, estimated_value, competitor,
   } = req.body;
 
+  const client = await db.pool.connect();
   try {
-    const { rows } = await db.query(`
+    await client.query('BEGIN');
+
+    const { rows } = await client.query(`
       UPDATE customers SET
         company_name=$1, contact_person=$2, phone=$3, source=$4, industry=$5,
         interaction_type=$6, needs=$7, notes=$8, next_action=$9, follow_up_date=$10,
+        potential_level=$11, decision_maker=$12, preferred_contact=$13,
+        estimated_value=$14, competitor=$15,
         updated_at=NOW()
-      WHERE id=$11 AND user_id=$12
+      WHERE id=$16 AND user_id=$17
       RETURNING *
     `, [
       company_name, contact_person, phone, source, industry,
-      interaction_type, needs, notes, next_action, follow_up_date || null,
+      interaction_type || 'contacted', needs, notes, next_action, follow_up_date || null,
+      potential_level || null, decision_maker || false, preferred_contact || null,
+      estimated_value || null, competitor || null,
       req.params.id, req.user.id,
     ]);
 
-    if (!rows[0]) return res.status(404).json({ error: 'Không tìm thấy' });
+    if (!rows[0]) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Không tìm thấy' });
+    }
+
+    // Sync basic info back to customer_pipeline if this customer belongs to one
+    if (rows[0].pipeline_id) {
+      await client.query(`
+        UPDATE customer_pipeline SET
+          company_name   = $1,
+          contact_person = $2,
+          phone          = $3,
+          industry       = $4,
+          source         = $5,
+          updated_at     = NOW()
+        WHERE id = $6
+      `, [
+        company_name, contact_person || null, phone || null,
+        industry || null, source || null, rows[0].pipeline_id,
+      ]);
+    }
+
+    await client.query('COMMIT');
     res.json(rows[0]);
   } catch (err) {
+    await client.query('ROLLBACK');
     res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
   }
 });
 
