@@ -25,15 +25,11 @@ try {
   console.warn('⚠️  Backfill warning (server will still start):', e.message);
 }
 
-if (!fs.existsSync(frontendDist)) {
-  console.log('🔨 frontend/dist not found — building frontend...');
-  execSync('npm install && npm run build', {
-    cwd: frontendDir,
-    stdio: 'inherit',
-  });
-  console.log('✅ Frontend built successfully');
-} else {
-  console.log('📁 frontend/dist found — skipping build');
-}
+console.log('🔨 Building frontend...');
+execSync('npm install && npm run build', {
+  cwd: frontendDir,
+  stdio: 'inherit',
+});
+console.log('✅ Frontend built successfully');
 
 require('./server');
