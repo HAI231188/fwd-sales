@@ -245,6 +245,152 @@ router.post('/', requireAuth, async (req, res) => {
   }
 });
 
+// Quick-add a single customer interaction to today's report (no report form needed)
+router.post('/quick-customer', requireAuth, async (req, res) => {
+  const today = new Date().toISOString().slice(0, 10);
+  const {
+    company_name, contact_person, phone, source, industry,
+    interaction_type, needs, notes, next_action, follow_up_date,
+    potential_level, decision_maker, preferred_contact,
+    reason_not_closed, estimated_value, competitor,
+    quotes = [],
+  } = req.body;
+
+  if (!company_name) return res.status(400).json({ error: 'Tên công ty là bắt buộc' });
+
+  const client = await db.pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // Check if new company for this salesperson (affects new_customers count)
+    const { rows: existPipe } = await client.query(
+      `SELECT id, stage FROM customer_pipeline WHERE sales_id = $1 AND LOWER(company_name) = LOWER($2)`,
+      [req.user.id, company_name]
+    );
+    const isNewCompany = existPipe.length === 0;
+
+    // Upsert today's report, auto-increment counters
+    const { rows: reportRows } = await client.query(`
+      INSERT INTO reports (user_id, report_date, total_contacts, new_customers, issues)
+      VALUES ($1, $2, 1, $3, NULL)
+      ON CONFLICT (user_id, report_date)
+      DO UPDATE SET
+        total_contacts = reports.total_contacts + 1,
+        new_customers  = reports.new_customers + $3,
+        updated_at     = NOW()
+      RETURNING *
+    `, [req.user.id, today, isNewCompany ? 1 : 0]);
+
+    const report = reportRows[0];
+
+    // Insert customer row
+    const { rows: custRows } = await client.query(`
+      INSERT INTO customers
+        (report_id, user_id, company_name, contact_person, phone, source, industry,
+         interaction_type, needs, notes, next_action, follow_up_date,
+         potential_level, decision_maker, preferred_contact,
+         reason_not_closed, estimated_value, competitor)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+      RETURNING *
+    `, [
+      report.id, req.user.id,
+      company_name, contact_person || null, phone || null,
+      source || null, industry || null, interaction_type || 'contacted',
+      needs || null, notes || null, next_action || null, follow_up_date || null,
+      potential_level || null, decision_maker || false,
+      preferred_contact || null, reason_not_closed || null,
+      estimated_value || null, competitor || null,
+    ]);
+
+    const customer = custRows[0];
+
+    // Pipeline upsert
+    let pipelineId;
+    if (isNewCompany) {
+      const initStage = ['contacted', 'quoted'].includes(interaction_type) ? 'following' : 'new';
+      const { rows: pRows } = await client.query(`
+        INSERT INTO customer_pipeline
+          (customer_id, sales_id, company_name, contact_person, phone, industry, source, stage, last_activity_date)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+        RETURNING id
+      `, [customer.id, req.user.id, company_name, contact_person || null, phone || null,
+          industry || null, source || null, initStage, today]);
+      pipelineId = pRows[0].id;
+      await client.query(
+        `INSERT INTO pipeline_history (pipeline_id, from_stage, to_stage, changed_by) VALUES ($1, NULL, $2, $3)`,
+        [pipelineId, initStage, req.user.id]
+      );
+    } else {
+      pipelineId = existPipe[0].id;
+      const currentStage = existPipe[0].stage;
+      const shouldPromote = ['contacted', 'quoted'].includes(interaction_type)
+        && ['new', 'dormant'].includes(currentStage);
+
+      await client.query(`
+        UPDATE customer_pipeline
+        SET last_activity_date = $1,
+            contact_person = COALESCE($2, contact_person),
+            phone = COALESCE($3, phone),
+            ${shouldPromote ? "stage = 'following'," : ''}
+            updated_at = NOW()
+        WHERE id = $4
+      `, [today, contact_person || null, phone || null, pipelineId]);
+
+      if (shouldPromote) {
+        await client.query(
+          `INSERT INTO pipeline_history (pipeline_id, from_stage, to_stage, changed_by) VALUES ($1, $2, 'following', $3)`,
+          [pipelineId, currentStage, req.user.id]
+        );
+      }
+    }
+
+    await client.query(`UPDATE customers SET pipeline_id = $1 WHERE id = $2`, [pipelineId, customer.id]);
+
+    // Insert quotes
+    for (const q of quotes) {
+      const { rows: qRows } = await client.query(`
+        INSERT INTO quotes
+          (customer_id, cargo_name, monthly_volume_cbm, monthly_volume_kg,
+           monthly_volume_containers, route, cargo_ready_date, mode, carrier,
+           transit_time, price, status, follow_up_notes, lost_reason, closing_soon)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+        RETURNING id, status
+      `, [
+        customer.id, q.cargo_name || null,
+        q.monthly_volume_cbm || null, q.monthly_volume_kg || null,
+        q.monthly_volume_containers || null,
+        q.route || null, q.cargo_ready_date || null, q.mode || 'sea',
+        q.carrier || null, q.transit_time || null, q.price || null,
+        q.status || 'quoting', q.follow_up_notes || null,
+        q.lost_reason || null, q.closing_soon || false,
+      ]);
+
+      if (qRows[0]?.status === 'booked') {
+        const { rows: prevStage } = await client.query(
+          `SELECT stage FROM customer_pipeline WHERE id = $1`, [pipelineId]
+        );
+        if (prevStage[0] && prevStage[0].stage !== 'booked') {
+          await client.query(
+            `UPDATE customer_pipeline SET stage = 'booked', updated_at = NOW() WHERE id = $1`, [pipelineId]
+          );
+          await client.query(
+            `INSERT INTO pipeline_history (pipeline_id, from_stage, to_stage, changed_by) VALUES ($1, $2, 'booked', $3)`,
+            [pipelineId, prevStage[0].stage, req.user.id]
+          );
+        }
+      }
+    }
+
+    await client.query('COMMIT');
+    res.status(201).json({ customerId: customer.id, reportId: report.id, pipelineId });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
 // Update report summary
 router.put('/:id', requireAuth, async (req, res) => {
   const { total_contacts, new_customers, issues } = req.body;

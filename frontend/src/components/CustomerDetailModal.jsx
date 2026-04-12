@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { format, differenceInDays } from 'date-fns';
-import { getPipelineDetail, updateQuote } from '../api';
+import { getPipelineDetail, updateQuote, quickAddCustomer } from '../api';
+import QuoteForm, { EMPTY_QUOTE } from './QuoteForm';
 import toast from 'react-hot-toast';
 
 const STAGE_INFO = {
@@ -170,8 +171,148 @@ function QuoteEditForm({ quote, pipelineId, onDone }) {
   );
 }
 
+function TodayInteractionForm({ pipeline, pipelineId, onDone }) {
+  const qc = useQueryClient();
+  const [form, setForm] = useState({
+    interaction_type: 'contacted',
+    needs: '', notes: '', next_action: '', follow_up_date: '',
+  });
+  const [quotes, setQuotes] = useState([]);
+  const set = (field, val) => setForm(f => ({ ...f, [field]: val }));
+
+  const mutation = useMutation({
+    mutationFn: () => quickAddCustomer({
+      company_name: pipeline.company_name,
+      contact_person: pipeline.contact_person || '',
+      phone: pipeline.phone || '',
+      source: pipeline.source || '',
+      industry: pipeline.industry || '',
+      ...form,
+      quotes: form.interaction_type === 'quoted' ? quotes.map(q => ({
+        cargo_name: q.cargo_name || null,
+        monthly_volume_cbm: q.monthly_volume_cbm || null,
+        monthly_volume_kg: q.monthly_volume_kg || null,
+        monthly_volume_containers: q.monthly_volume_containers || null,
+        route: q.route || null,
+        cargo_ready_date: q.cargo_ready_date || null,
+        mode: q.mode || 'sea',
+        carrier: q.options?.[0]?.carrier || '',
+        price: JSON.stringify(q.options || []),
+        transit_time: q.transit_time || null,
+        status: q.status || 'quoting',
+        follow_up_notes: q.follow_up_notes || null,
+        lost_reason: q.lost_reason || null,
+        closing_soon: q.closing_soon || false,
+      })) : [],
+    }),
+    onSuccess: () => {
+      toast.success('Đã cập nhật tương tác');
+      qc.invalidateQueries({ queryKey: ['pipeline-detail', pipelineId] });
+      qc.invalidateQueries({ queryKey: ['pipeline'] });
+      qc.invalidateQueries({ queryKey: ['stats'] });
+      onDone();
+    },
+    onError: (err) => toast.error(err?.error || 'Lưu thất bại'),
+  });
+
+  return (
+    <div style={{
+      background: '#f0fdf4', border: '1px solid #bbf7d0',
+      borderRadius: 12, padding: '16px 18px', marginBottom: 14,
+    }}>
+      <div style={{ fontSize: 12, fontWeight: 700, color: '#15803d', marginBottom: 12, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <span>📝 Tương tác hôm nay — {pipeline.company_name}</span>
+        <button type="button" onClick={onDone}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-2)', fontSize: 16, lineHeight: 1 }}>✕</button>
+      </div>
+
+      {/* Interaction type */}
+      <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
+        {[
+          { key: 'saved',     label: '📌 Lưu liên hệ' },
+          { key: 'contacted', label: '📞 Đã liên hệ' },
+          { key: 'quoted',    label: '📋 Đã báo giá' },
+        ].map(t => (
+          <button key={t.key} type="button"
+            onClick={() => set('interaction_type', t.key)}
+            className="btn btn-sm"
+            style={{
+              background: form.interaction_type === t.key ? 'var(--primary)' : 'transparent',
+              color:      form.interaction_type === t.key ? '#fff' : 'var(--text-2)',
+              border: `1px solid ${form.interaction_type === t.key ? 'var(--primary)' : 'var(--border)'}`,
+              fontSize: 12,
+            }}
+          >{t.label}</button>
+        ))}
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 10 }}>
+        <div>
+          <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.4px', display: 'block', marginBottom: 3 }}>Nhu cầu</label>
+          <textarea value={form.needs} onChange={e => set('needs', e.target.value)} rows={2}
+            placeholder="Nhu cầu vận chuyển..."
+            style={{ fontSize: 12, padding: '6px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text)', width: '100%', fontFamily: 'var(--font)', resize: 'vertical', boxSizing: 'border-box' }} />
+        </div>
+        <div>
+          <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.4px', display: 'block', marginBottom: 3 }}>Ghi chú</label>
+          <textarea value={form.notes} onChange={e => set('notes', e.target.value)} rows={2}
+            placeholder="Kết quả cuộc gặp..."
+            style={{ fontSize: 12, padding: '6px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text)', width: '100%', fontFamily: 'var(--font)', resize: 'vertical', boxSizing: 'border-box' }} />
+        </div>
+        <div>
+          <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.4px', display: 'block', marginBottom: 3 }}>Hành động tiếp theo</label>
+          <input value={form.next_action} onChange={e => set('next_action', e.target.value)}
+            placeholder="Gửi báo giá, hẹn gặp..."
+            style={{ fontSize: 12, padding: '6px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text)', width: '100%', fontFamily: 'var(--font)', boxSizing: 'border-box' }} />
+        </div>
+        <div>
+          <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.4px', display: 'block', marginBottom: 3 }}>Ngày follow up</label>
+          <input type="date" value={form.follow_up_date} onChange={e => set('follow_up_date', e.target.value)}
+            style={{ fontSize: 12, padding: '6px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text)', width: '100%', fontFamily: 'var(--font)', boxSizing: 'border-box' }} />
+        </div>
+      </div>
+
+      {/* Quotes */}
+      {form.interaction_type === 'quoted' && (
+        <div style={{ marginBottom: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+            <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-2)' }}>📋 Báo giá</span>
+            <button type="button" className="btn btn-sm btn-primary"
+              onClick={() => setQuotes(qs => [...qs, { ...EMPTY_QUOTE }])}>
+              + Thêm báo giá
+            </button>
+          </div>
+          {quotes.map((q, i) => (
+            <QuoteForm key={i} quote={q} index={i}
+              onChange={updated => setQuotes(qs => qs.map((x, idx) => idx === i ? updated : x))}
+              onRemove={quotes.length > 1 ? () => setQuotes(qs => qs.filter((_, idx) => idx !== i)) : undefined}
+            />
+          ))}
+          {quotes.length === 0 && (
+            <div style={{ textAlign: 'center', padding: '10px 0', color: 'var(--text-3)', fontSize: 12 }}>
+              Nhấn "+ Thêm báo giá" để thêm
+            </div>
+          )}
+        </div>
+      )}
+
+      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+        <button type="button" onClick={onDone}
+          style={{ fontSize: 13, padding: '7px 16px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-2)', cursor: 'pointer', fontFamily: 'var(--font)' }}>
+          Hủy
+        </button>
+        <button type="button" onClick={() => mutation.mutate()} disabled={mutation.isPending}
+          style={{ fontSize: 13, padding: '7px 16px', borderRadius: 8, border: 'none', background: 'var(--primary)', color: '#fff', cursor: 'pointer', fontFamily: 'var(--font)', fontWeight: 600, opacity: mutation.isPending ? 0.7 : 1 }}>
+          {mutation.isPending ? 'Đang lưu...' : '✓ Lưu tương tác'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function CustomerDetailModal({ pipelineId, onClose }) {
   const [editingQuoteId, setEditingQuoteId] = useState(null);
+  const [showTodayForm, setShowTodayForm] = useState(false);
 
   const { data, isLoading } = useQuery({
     queryKey: ['pipeline-detail', pipelineId],
@@ -344,6 +485,32 @@ export default function CustomerDetailModal({ pipelineId, onClose }) {
 
             {/* ── Right column: timeline ── */}
             <div style={{ flex: 1, overflowY: 'auto', padding: '20px 20px 24px' }}>
+              {/* Today interaction button */}
+              {!showTodayForm && (
+                <button
+                  type="button"
+                  onClick={() => setShowTodayForm(true)}
+                  style={{
+                    width: '100%', marginBottom: 16,
+                    padding: '10px 16px', borderRadius: 10,
+                    border: '1.5px dashed #86efac',
+                    background: '#f0fdf4', color: '#15803d',
+                    cursor: 'pointer', fontFamily: 'var(--font)',
+                    fontSize: 13, fontWeight: 600,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                  }}
+                >
+                  📝 Cập nhật tương tác hôm nay
+                </button>
+              )}
+              {showTodayForm && pipeline && (
+                <TodayInteractionForm
+                  pipeline={pipeline}
+                  pipelineId={pipelineId}
+                  onDone={() => setShowTodayForm(false)}
+                />
+              )}
+
               <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 14 }}>
                 Lịch sử hoạt động ({interactions.length})
               </div>

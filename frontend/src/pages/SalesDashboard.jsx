@@ -1,12 +1,11 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { format } from 'date-fns';
 import Navbar from '../components/Navbar';
 import StatCard from '../components/StatCard';
 import DateFilter, { useDateFilter } from '../components/DateFilter';
 import DrilldownModal from '../components/DrilldownModal';
-import ReportForm from '../components/ReportForm';
 import PipelineView from '../components/PipelineView';
 import { getStats, getReports } from '../api';
 import { useAuth } from '../App';
@@ -16,7 +15,6 @@ const TYPE_CLASS = { saved: 'type-saved', contacted: 'type-contacted', quoted: '
 
 export default function SalesDashboard() {
   const { user } = useAuth();
-  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('overview');
   const [drilldown, setDrilldown] = useState(null);
   const dateFilter = useDateFilter();
@@ -70,7 +68,6 @@ export default function SalesDashboard() {
             {[
               { key: 'overview',  label: '📋 Báo cáo của tôi' },
               { key: 'pipeline',  label: '📊 Danh sách hoạt động' },
-              { key: 'create',    label: '✏️ Tạo báo cáo' },
             ].map(t => (
               <button key={t.key} className={`tab ${activeTab === t.key ? 'active' : ''}`} onClick={() => setActiveTab(t.key)}>
                 {t.label}
@@ -146,13 +143,7 @@ export default function SalesDashboard() {
           {/* Pipeline */}
           {activeTab === 'pipeline' && <PipelineView />}
 
-          {/* Create report */}
-          {activeTab === 'create' && (
-            <ReportForm onSuccess={(id) => {
-              setActiveTab('overview');
-              navigate(`/reports/${id}`);
-            }} />
-          )}
+
         </div>
       </main>
 

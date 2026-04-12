@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import { getPipeline, updatePipelineStage } from '../api';
 import CustomerDetailModal from './CustomerDetailModal';
+import AddCustomerModal from './AddCustomerModal';
 
 const STAGES = [
   { key: 'new',       label: 'Khách mới',   icon: '🆕', color: '#3b82f6', bg: '#eff6ff', border: '#bfdbfe' },
@@ -165,6 +166,7 @@ export default function PipelineView() {
   const qc = useQueryClient();
   const [selectedStage, setSelectedStage] = useState(null);
   const [detailId, setDetailId] = useState(null);
+  const [showAddModal, setShowAddModal] = useState(false);
 
   const { data: pipeline = [], isLoading } = useQuery({
     queryKey: ['pipeline'],
@@ -206,7 +208,7 @@ export default function PipelineView() {
               background: selectedStage === s.key ? s.bg : 'var(--bg-card)',
               border: `1.5px solid ${selectedStage === s.key ? s.color : 'var(--border)'}`,
               borderRadius: 'var(--radius)', padding: '16px 18px',
-              cursor: 'pointer', transition: 'all 0.15s',
+              cursor: 'pointer', transition: 'all 0.15s', position: 'relative',
             }}
             onMouseEnter={e => { e.currentTarget.style.borderColor = s.color; }}
             onMouseLeave={e => { e.currentTarget.style.borderColor = selectedStage === s.key ? s.color : 'var(--border)'; }}
@@ -219,6 +221,20 @@ export default function PipelineView() {
               {isLoading ? '—' : counts[s.key] || 0}
             </div>
             <div style={{ fontSize: 13, color: 'var(--text-2)', marginTop: 4 }}>{s.label}</div>
+            {s.key === 'new' && (
+              <button
+                type="button"
+                onClick={e => { e.stopPropagation(); setShowAddModal(true); }}
+                style={{
+                  position: 'absolute', top: 10, right: 10,
+                  fontSize: 18, lineHeight: 1, padding: '2px 6px',
+                  background: '#eff6ff', border: '1px solid #bfdbfe',
+                  borderRadius: 8, color: '#1d4ed8', cursor: 'pointer',
+                  fontWeight: 700,
+                }}
+                title="Thêm khách mới"
+              >+</button>
+            )}
           </div>
         ))}
       </div>
@@ -270,6 +286,9 @@ export default function PipelineView() {
 
       {detailId && (
         <CustomerDetailModal pipelineId={detailId} onClose={() => setDetailId(null)} />
+      )}
+      {showAddModal && (
+        <AddCustomerModal onClose={() => setShowAddModal(false)} />
       )}
     </div>
   );
