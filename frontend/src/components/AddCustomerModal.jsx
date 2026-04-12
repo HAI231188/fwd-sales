@@ -18,6 +18,8 @@ const EMPTY = {
   company_name: '', contact_person: '', phone: '', source: '', industry: '',
   interaction_type: 'contacted',
   needs: '', notes: '', next_action: '', follow_up_date: '',
+  potential_level: '', decision_maker: false, preferred_contact: '',
+  estimated_value: '', competitor: '', reason_not_closed: '',
 };
 
 function serializeQuotes(quotes) {
@@ -43,6 +45,7 @@ export default function AddCustomerModal({ onClose }) {
   const qc = useQueryClient();
   const [form, setForm] = useState({ ...EMPTY });
   const [quotes, setQuotes] = useState([]);
+  const [extraOpen, setExtraOpen] = useState(false);
 
   const set = (field, val) => setForm(f => ({ ...f, [field]: val }));
 
@@ -172,6 +175,111 @@ export default function AddCustomerModal({ onClose }) {
               <input type="date" className="form-input" value={form.follow_up_date}
                 onChange={e => set('follow_up_date', e.target.value)} />
             </div>
+          </div>
+
+          {/* Thông tin bổ sung (collapsible) */}
+          <div style={{ marginBottom: 14 }}>
+            <button
+              type="button"
+              onClick={() => setExtraOpen(o => !o)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                background: 'none', border: 'none', cursor: 'pointer',
+                fontSize: 13, fontWeight: 600, color: 'var(--text-2)',
+                padding: '4px 0', fontFamily: 'var(--font)',
+              }}
+            >
+              <span style={{ fontSize: 9, display: 'inline-block', transition: 'transform 0.15s', transform: extraOpen ? 'rotate(90deg)' : 'rotate(0deg)' }}>▶</span>
+              Thông tin bổ sung
+              {(form.potential_level || form.decision_maker || form.preferred_contact || form.estimated_value || form.competitor || form.reason_not_closed) && (
+                <span style={{ fontSize: 10, background: 'var(--primary)', color: '#fff', borderRadius: 8, padding: '1px 6px', marginLeft: 2 }}>✓</span>
+              )}
+            </button>
+
+            {extraOpen && (
+              <div style={{ marginTop: 10, padding: 16, background: 'var(--bg)', borderRadius: 10, border: '1px solid var(--border)' }}>
+                {/* Potential level + decision maker */}
+                <div style={{ marginBottom: 14 }}>
+                  <label className="form-label" style={{ marginBottom: 6 }}>Tiềm năng</label>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                    {[
+                      { value: 'high',   label: 'Cao',        color: '#16a34a', bg: '#f0fdf4', border: '#bbf7d0' },
+                      { value: 'medium', label: 'Trung bình', color: '#d97706', bg: '#fffbeb', border: '#fde68a' },
+                      { value: 'low',    label: 'Thấp',       color: '#dc2626', bg: '#fef2f2', border: '#fecaca' },
+                    ].map(opt => (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        onClick={() => set('potential_level', form.potential_level === opt.value ? '' : opt.value)}
+                        style={{
+                          padding: '5px 14px', borderRadius: 20, cursor: 'pointer',
+                          fontSize: 12, fontWeight: 600, fontFamily: 'var(--font)',
+                          background: form.potential_level === opt.value ? opt.bg : 'transparent',
+                          border: `1.5px solid ${form.potential_level === opt.value ? opt.color : 'var(--border)'}`,
+                          color: form.potential_level === opt.value ? opt.color : 'var(--text-2)',
+                        }}
+                      >{opt.label}</button>
+                    ))}
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: 'var(--text-2)', cursor: 'pointer', marginLeft: 4 }}>
+                      <input
+                        type="checkbox"
+                        checked={form.decision_maker || false}
+                        onChange={e => set('decision_maker', e.target.checked)}
+                        style={{ width: 15, height: 15, cursor: 'pointer', accentColor: 'var(--primary)' }}
+                      />
+                      Người quyết định
+                    </label>
+                  </div>
+                </div>
+
+                {/* Preferred contact + estimated value */}
+                <div className="grid-2" style={{ gap: 12, marginBottom: 14 }}>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label">Kênh liên hệ ưa thích</label>
+                    <select className="form-select" value={form.preferred_contact || ''} onChange={e => set('preferred_contact', e.target.value)}>
+                      <option value="">— Chọn —</option>
+                      <option value="zalo">💬 Zalo</option>
+                      <option value="phone">📞 Điện thoại</option>
+                      <option value="email">📧 Email</option>
+                      <option value="direct">🤝 Gặp trực tiếp</option>
+                    </select>
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label">Giá trị ước tính (USD)</label>
+                    <input
+                      type="number" className="form-input"
+                      placeholder="0" min="0"
+                      value={form.estimated_value || ''}
+                      onChange={e => set('estimated_value', e.target.value)}
+                    />
+                  </div>
+                </div>
+
+                {/* Competitor */}
+                <div className="form-group" style={{ marginBottom: ['contacted', 'quoted'].includes(form.interaction_type) ? 14 : 0 }}>
+                  <label className="form-label">Đối thủ cạnh tranh</label>
+                  <input
+                    className="form-input"
+                    placeholder="Freight forwarder khác đang cạnh tranh..."
+                    value={form.competitor || ''}
+                    onChange={e => set('competitor', e.target.value)}
+                  />
+                </div>
+
+                {/* Reason not closed — only for contacted/quoted */}
+                {['contacted', 'quoted'].includes(form.interaction_type) && (
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label">Lý do chưa chốt</label>
+                    <textarea
+                      className="form-textarea" rows={2}
+                      placeholder="Giá cao hơn đối thủ, đang so sánh, chờ phê duyệt..."
+                      value={form.reason_not_closed || ''}
+                      onChange={e => set('reason_not_closed', e.target.value)}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Quotes */}
