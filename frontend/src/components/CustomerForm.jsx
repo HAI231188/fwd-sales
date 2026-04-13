@@ -8,6 +8,7 @@ const EMPTY_CUSTOMER = {
   needs: '', notes: '', next_action: '', follow_up_date: '',
   potential_level: '', decision_maker: false, preferred_contact: '',
   reason_not_closed: '', estimated_value: '', competitor: '',
+  address: '', tax_code: '',
   quotes: [],
 };
 
@@ -297,6 +298,14 @@ export default function CustomerForm({ customer, onChange, onRemove, index }) {
           <div className="form-group">
             <label className="form-label">Follow up date</label>
             <input type="date" className="form-input" value={c.follow_up_date} onChange={e => set('follow_up_date', e.target.value)} />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Mã số thuế</label>
+            <input className="form-input" placeholder="0123456789" value={c.tax_code || ''} onChange={e => set('tax_code', e.target.value)} />
+          </div>
+          <div className="form-group" style={{ gridColumn: '1 / -1' }}>
+            <label className="form-label">Địa chỉ</label>
+            <input className="form-input" placeholder="Số nhà, đường, quận, tỉnh/thành phố..." value={c.address || ''} onChange={e => set('address', e.target.value)} />
           </div>
         </div>
       )}

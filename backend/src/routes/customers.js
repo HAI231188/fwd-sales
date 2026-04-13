@@ -134,6 +134,7 @@ router.put('/:id', requireAuth, async (req, res) => {
     company_name, contact_person, phone, source, industry,
     interaction_type, needs, notes, next_action, follow_up_date,
     potential_level, decision_maker, preferred_contact, estimated_value, competitor,
+    address, tax_code,
   } = req.body;
 
   const client = await db.pool.connect();
@@ -146,14 +147,16 @@ router.put('/:id', requireAuth, async (req, res) => {
         interaction_type=$6, needs=$7, notes=$8, next_action=$9, follow_up_date=$10,
         potential_level=$11, decision_maker=$12, preferred_contact=$13,
         estimated_value=$14, competitor=$15,
+        address=$16, tax_code=$17,
         updated_at=NOW()
-      WHERE id=$16 AND user_id=$17
+      WHERE id=$18 AND user_id=$19
       RETURNING *
     `, [
       company_name, contact_person, phone, source, industry,
       interaction_type || 'contacted', needs, notes, next_action, follow_up_date || null,
       potential_level || null, decision_maker || false, preferred_contact || null,
       estimated_value || null, competitor || null,
+      address || null, tax_code || null,
       req.params.id, req.user.id,
     ]);
 

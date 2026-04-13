@@ -20,6 +20,7 @@ const EMPTY = {
   needs: '', notes: '', next_action: '', follow_up_date: '',
   potential_level: '', decision_maker: false, preferred_contact: '',
   estimated_value: '', competitor: '', reason_not_closed: '',
+  address: '', tax_code: '',
 };
 
 function serializeQuotes(quotes) {
@@ -126,6 +127,18 @@ export default function AddCustomerModal({ onClose }) {
               <select className="form-select" value={form.source} onChange={e => set('source', e.target.value)}>
                 {SOURCE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Mã số thuế</label>
+              <input className="form-input" value={form.tax_code}
+                onChange={e => set('tax_code', e.target.value)}
+                placeholder="0123456789" />
+            </div>
+            <div className="form-group" style={{ gridColumn: '1 / -1' }}>
+              <label className="form-label">Địa chỉ</label>
+              <input className="form-input" value={form.address}
+                onChange={e => set('address', e.target.value)}
+                placeholder="Số nhà, đường, quận, tỉnh/thành phố..." />
             </div>
           </div>
 

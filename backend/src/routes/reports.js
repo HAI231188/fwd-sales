@@ -119,13 +119,32 @@ router.post('/', requireAuth, async (req, res) => {
     const report = reportRows[0];
 
     for (const cust of customers) {
+      // Check if new company (used for both code generation and pipeline upsert)
+      const { rows: existingPipeline } = await client.query(
+        `SELECT id, stage FROM customer_pipeline WHERE sales_id = $1 AND LOWER(company_name) = LOWER($2)`,
+        [req.user.id, cust.company_name]
+      );
+      const isNewCust = existingPipeline.length === 0;
+
+      let custCode = null;
+      if (isNewCust) {
+        const { rows: seqRows } = await client.query(`
+          INSERT INTO customer_code_seq (seq_date, last_seq)
+          VALUES (CURRENT_DATE, 1)
+          ON CONFLICT (seq_date) DO UPDATE SET last_seq = customer_code_seq.last_seq + 1
+          RETURNING last_seq, TO_CHAR(seq_date, 'DDMMYY') AS date_part
+        `);
+        custCode = String(seqRows[0].last_seq).padStart(4, '0') + seqRows[0].date_part;
+      }
+
       const { rows: custRows } = await client.query(`
         INSERT INTO customers
           (report_id, user_id, company_name, contact_person, phone, source, industry,
            interaction_type, needs, notes, next_action, follow_up_date,
            potential_level, decision_maker, preferred_contact,
-           reason_not_closed, estimated_value, competitor)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+           reason_not_closed, estimated_value, competitor,
+           address, tax_code, customer_code)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
         RETURNING *
       `, [
         report.id, req.user.id,
@@ -135,15 +154,10 @@ router.post('/', requireAuth, async (req, res) => {
         cust.potential_level || null, cust.decision_maker || false,
         cust.preferred_contact || null, cust.reason_not_closed || null,
         cust.estimated_value || null, cust.competitor || null,
+        cust.address || null, cust.tax_code || null, custCode,
       ]);
 
       const customer = custRows[0];
-
-      // ── Pipeline: upsert entry for this company+salesperson ──
-      const { rows: existingPipeline } = await client.query(`
-        SELECT id, stage FROM customer_pipeline
-        WHERE sales_id = $1 AND LOWER(company_name) = LOWER($2)
-      `, [req.user.id, cust.company_name]);
 
       let pipelineId;
       if (existingPipeline.length === 0) {
@@ -253,6 +267,7 @@ router.post('/quick-customer', requireAuth, async (req, res) => {
     interaction_type, needs, notes, next_action, follow_up_date,
     potential_level, decision_maker, preferred_contact,
     reason_not_closed, estimated_value, competitor,
+    address, tax_code,
     quotes = [],
   } = req.body;
 
@@ -283,14 +298,27 @@ router.post('/quick-customer', requireAuth, async (req, res) => {
 
     const report = reportRows[0];
 
+    // Generate customer_code for new companies
+    let customerCode = null;
+    if (isNewCompany) {
+      const { rows: seqRows } = await client.query(`
+        INSERT INTO customer_code_seq (seq_date, last_seq)
+        VALUES (CURRENT_DATE, 1)
+        ON CONFLICT (seq_date) DO UPDATE SET last_seq = customer_code_seq.last_seq + 1
+        RETURNING last_seq, TO_CHAR(seq_date, 'DDMMYY') AS date_part
+      `);
+      customerCode = String(seqRows[0].last_seq).padStart(4, '0') + seqRows[0].date_part;
+    }
+
     // Insert customer row
     const { rows: custRows } = await client.query(`
       INSERT INTO customers
         (report_id, user_id, company_name, contact_person, phone, source, industry,
          interaction_type, needs, notes, next_action, follow_up_date,
          potential_level, decision_maker, preferred_contact,
-         reason_not_closed, estimated_value, competitor)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+         reason_not_closed, estimated_value, competitor,
+         address, tax_code, customer_code)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
       RETURNING *
     `, [
       report.id, req.user.id,
@@ -300,6 +328,7 @@ router.post('/quick-customer', requireAuth, async (req, res) => {
       potential_level || null, decision_maker || false,
       preferred_contact || null, reason_not_closed || null,
       estimated_value || null, competitor || null,
+      address || null, tax_code || null, customerCode,
     ]);
 
     const customer = custRows[0];

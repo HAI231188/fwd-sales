@@ -127,6 +127,19 @@ ALTER TABLE customers ADD COLUMN IF NOT EXISTS reason_not_closed TEXT;
 ALTER TABLE customers ADD COLUMN IF NOT EXISTS estimated_value  NUMERIC(15,2);
 ALTER TABLE customers ADD COLUMN IF NOT EXISTS competitor       TEXT;
 
+-- Customer contact & identity fields
+ALTER TABLE customers ADD COLUMN IF NOT EXISTS address      TEXT;
+ALTER TABLE customers ADD COLUMN IF NOT EXISTS tax_code     VARCHAR(20);
+ALTER TABLE customers ADD COLUMN IF NOT EXISTS customer_code VARCHAR(10);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_customers_customer_code
+  ON customers(customer_code) WHERE customer_code IS NOT NULL;
+
+-- Daily sequence counter for customer_code generation
+CREATE TABLE IF NOT EXISTS customer_code_seq (
+  seq_date DATE    PRIMARY KEY,
+  last_seq INTEGER NOT NULL DEFAULT 0
+);
+
 -- Interaction updates (threaded notes under each customer interaction)
 CREATE TABLE IF NOT EXISTS customer_interaction_updates (
   id            SERIAL PRIMARY KEY,

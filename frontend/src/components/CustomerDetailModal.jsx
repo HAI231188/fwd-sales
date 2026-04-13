@@ -181,7 +181,7 @@ const SOURCE_OPTIONS = [
   { value: 'other', label: '💡 Khác' },
 ];
 
-function InfoEditForm({ pipeline, latest, pipelineId, customerId, onDone }) {
+function InfoEditForm({ pipeline, latest, pipelineId, customerId, customerCode, onDone }) {
   const qc = useQueryClient();
   const [form, setForm] = useState({
     company_name:      pipeline.company_name || '',
@@ -194,6 +194,8 @@ function InfoEditForm({ pipeline, latest, pipelineId, customerId, onDone }) {
     preferred_contact: latest?.preferred_contact || '',
     estimated_value:   latest?.estimated_value || '',
     competitor:        latest?.competitor || '',
+    address:           latest?.address || '',
+    tax_code:          latest?.tax_code || '',
   });
   const set = (f, v) => setForm(s => ({ ...s, [f]: v }));
 
@@ -213,6 +215,15 @@ function InfoEditForm({ pipeline, latest, pipelineId, customerId, onDone }) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {/* Customer code — readonly */}
+      {customerCode && (
+        <div>
+          <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.4px', display: 'block', marginBottom: 4 }}>Mã khách hàng</label>
+          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--primary)', fontFamily: 'var(--font-display)', padding: '7px 10px', background: 'var(--primary-dim)', borderRadius: 6, letterSpacing: '0.5px' }}>
+            {customerCode}
+          </div>
+        </div>
+      )}
       {/* Basic info */}
       <div>
         <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.4px', display: 'block', marginBottom: 4 }}>Tên công ty *</label>
@@ -243,6 +254,18 @@ function InfoEditForm({ pipeline, latest, pipelineId, customerId, onDone }) {
           style={{ fontSize: 13, padding: '7px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text)', width: '100%', fontFamily: 'var(--font)' }}>
           {SOURCE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
+      </div>
+      <div>
+        <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.4px', display: 'block', marginBottom: 4 }}>Mã số thuế</label>
+        <input value={form.tax_code} onChange={e => set('tax_code', e.target.value)}
+          placeholder="0123456789"
+          style={{ fontSize: 13, padding: '7px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text)', width: '100%', fontFamily: 'var(--font)', boxSizing: 'border-box' }} />
+      </div>
+      <div>
+        <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.4px', display: 'block', marginBottom: 4 }}>Địa chỉ</label>
+        <input value={form.address} onChange={e => set('address', e.target.value)}
+          placeholder="Số nhà, đường, quận, tỉnh/thành phố..."
+          style={{ fontSize: 13, padding: '7px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text)', width: '100%', fontFamily: 'var(--font)', boxSizing: 'border-box' }} />
       </div>
 
       {/* Divider */}
@@ -542,6 +565,8 @@ export default function CustomerDetailModal({ pipelineId, onClose }) {
   // Get the most recent qualification fields from the latest interaction
   const latest = interactions[0];
   const potential = latest?.potential_level ? POTENTIAL_INFO[latest.potential_level] : null;
+  // customer_code is only set on the first interaction (new company)
+  const customerCode = interactions.find(i => i.customer_code)?.customer_code || null;
 
   return (
     <div
@@ -609,6 +634,7 @@ export default function CustomerDetailModal({ pipelineId, onClose }) {
                   latest={latest}
                   pipelineId={pipelineId}
                   customerId={latest?.id}
+                  customerCode={customerCode}
                   onDone={() => setEditingInfo(false)}
                 />
               ) : (
@@ -652,10 +678,18 @@ export default function CustomerDetailModal({ pipelineId, onClose }) {
                   )}
 
                   <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16 }}>
+                    {customerCode && (
+                      <div style={{ marginBottom: 10 }}>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: 2 }}>Mã KH</div>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--primary)', fontFamily: 'var(--font-display)', letterSpacing: '0.5px' }}>{customerCode}</div>
+                      </div>
+                    )}
                     <InfoRow label="Người liên hệ" value={pipeline.contact_person} />
                     <InfoRow label="Điện thoại" value={pipeline.phone} />
                     <InfoRow label="Ngành hàng" value={pipeline.industry} />
                     <InfoRow label="Nguồn" value={SOURCE_LABEL[pipeline.source] || pipeline.source} />
+                    <InfoRow label="Mã số thuế" value={latest?.tax_code} />
+                    <InfoRow label="Địa chỉ" value={latest?.address} />
 
                     {pipeline.last_activity_date && (
                       <div style={{ marginBottom: 10 }}>
