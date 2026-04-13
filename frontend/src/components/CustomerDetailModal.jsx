@@ -546,109 +546,97 @@ function TodayInteractionForm({ pipeline, pipelineId, onDone }) {
   );
 }
 
-// Shared widget: pending → [note input] → complete; completed → strikethrough + undo
-function FollowUpWidget({ dateStr, completed, completionNote, onComplete, onUndo, isPending }) {
-  const [showInput, setShowInput] = useState(false);
-  const [note, setNote] = useState('');
-
-  if (completed) {
-    return (
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginTop: 4 }}>
-        <span style={{ fontSize: 11, color: '#16a34a', fontWeight: 600 }}>
-          ✅ <span style={{ textDecoration: 'line-through', color: 'var(--text-3)' }}>
-            {format(new Date(dateStr), 'dd/MM/yyyy')}
-          </span>
-        </span>
-        {completionNote && (
-          <span style={{ fontSize: 11, color: 'var(--text-2)', fontStyle: 'italic' }}>— {completionNote}</span>
-        )}
-        <button
-          type="button"
-          onClick={() => !isPending && onUndo()}
-          disabled={isPending}
-          style={{
-            fontSize: 10, padding: '2px 8px', borderRadius: 5,
-            border: '1px solid #e5e7eb', background: '#f9fafb',
-            color: '#6b7280', cursor: 'pointer', fontFamily: 'var(--font)',
-            fontWeight: 600, opacity: isPending ? 0.6 : 1,
-          }}
-        >
-          ↩️ Hoàn tác
-        </button>
-      </div>
-    );
-  }
-
-  if (showInput) {
-    return (
-      <div style={{ marginTop: 4 }}>
-        <span style={{ fontSize: 11, color: 'var(--warning)', fontWeight: 500 }}>
-          📅 {format(new Date(dateStr), 'dd/MM/yyyy')}
-        </span>
-        <div style={{ display: 'flex', gap: 6, marginTop: 4, alignItems: 'center' }}>
-          <input
-            autoFocus
-            value={note}
-            onChange={e => setNote(e.target.value)}
-            placeholder="Kết quả follow up (tuỳ chọn)..."
-            style={{
-              flex: 1, fontSize: 12, padding: '4px 8px', borderRadius: 5,
-              border: '1px solid var(--border)', background: 'var(--bg-card)',
-              color: 'var(--text)', fontFamily: 'var(--font)',
-            }}
-          />
-          <button
-            type="button"
-            onClick={() => { onComplete(note); setShowInput(false); setNote(''); }}
-            disabled={isPending}
-            style={{
-              fontSize: 10, padding: '4px 10px', borderRadius: 5,
-              border: '1px solid #bbf7d0', background: '#f0fdf4',
-              color: '#15803d', cursor: 'pointer', fontFamily: 'var(--font)',
-              fontWeight: 600, flexShrink: 0, opacity: isPending ? 0.6 : 1,
-            }}
-          >
-            ✅ Xác nhận
-          </button>
-          <button
-            type="button"
-            onClick={() => { setShowInput(false); setNote(''); }}
-            style={{
-              fontSize: 10, padding: '4px 8px', borderRadius: 5,
-              border: '1px solid var(--border)', background: 'var(--bg-card)',
-              color: 'var(--text-2)', cursor: 'pointer', fontFamily: 'var(--font)',
-            }}
-          >
-            Hủy
-          </button>
-        </div>
-      </div>
-    );
-  }
+// Shared widget: state (showInput/note) lives in the CALLER to survive re-renders
+function FollowUpWidget({ dateStr, completed, completionNote, onComplete, onUndo, isPending,
+                          showInput, setShowInput, note, setNote }) {
+  const dateLabel = format(new Date(dateStr), 'dd/MM/yyyy');
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
-      <span style={{ fontSize: 11, color: 'var(--warning)', fontWeight: 500 }}>
-        📅 {format(new Date(dateStr), 'dd/MM/yyyy')}
-      </span>
-      <button
-        type="button"
-        onClick={() => setShowInput(true)}
-        style={{
-          fontSize: 10, padding: '2px 8px', borderRadius: 5,
-          border: '1px solid #bbf7d0', background: '#f0fdf4',
-          color: '#15803d', cursor: 'pointer', fontFamily: 'var(--font)',
-          fontWeight: 600,
-        }}
-      >
-        ✅ Hoàn thành
-      </button>
+    <div style={{ marginTop: 4 }}>
+      {completed ? (
+        /* ── Completed state ── */
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 11, color: '#16a34a', fontWeight: 600 }}>
+            ✅ <span style={{ textDecoration: 'line-through', color: 'var(--text-3)' }}>{dateLabel}</span>
+          </span>
+          {completionNote && (
+            <span style={{ fontSize: 11, color: 'var(--text-2)', fontStyle: 'italic' }}>— {completionNote}</span>
+          )}
+          <button
+            type="button"
+            onClick={() => { if (!isPending) onUndo(); }}
+            disabled={isPending}
+            style={{
+              fontSize: 10, padding: '2px 8px', borderRadius: 5,
+              border: '1px solid #e5e7eb', background: '#f9fafb',
+              color: '#6b7280', cursor: 'pointer', fontFamily: 'var(--font)',
+              fontWeight: 600, opacity: isPending ? 0.6 : 1,
+            }}
+          >↩️ Hoàn tác</button>
+        </div>
+      ) : showInput ? (
+        /* ── Expanded: note input ── */
+        <div>
+          <span style={{ fontSize: 11, color: 'var(--warning)', fontWeight: 500 }}>📅 {dateLabel}</span>
+          <div style={{ display: 'flex', gap: 6, marginTop: 4, alignItems: 'center' }}>
+            <input
+              autoFocus
+              value={note}
+              onChange={e => setNote(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') { onComplete(note); setShowInput(false); setNote(''); } if (e.key === 'Escape') { setShowInput(false); setNote(''); } }}
+              placeholder="Kết quả follow up (tuỳ chọn)..."
+              style={{
+                flex: 1, fontSize: 12, padding: '4px 8px', borderRadius: 5,
+                border: '1px solid var(--border)', background: 'var(--bg-card)',
+                color: 'var(--text)', fontFamily: 'var(--font)',
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => { onComplete(note); setShowInput(false); setNote(''); }}
+              disabled={isPending}
+              style={{
+                fontSize: 10, padding: '4px 10px', borderRadius: 5,
+                border: '1px solid #bbf7d0', background: '#f0fdf4',
+                color: '#15803d', cursor: 'pointer', fontFamily: 'var(--font)',
+                fontWeight: 600, flexShrink: 0, opacity: isPending ? 0.6 : 1,
+              }}
+            >✅ Xác nhận</button>
+            <button
+              type="button"
+              onClick={() => { setShowInput(false); setNote(''); }}
+              style={{
+                fontSize: 10, padding: '4px 8px', borderRadius: 5,
+                border: '1px solid var(--border)', background: 'var(--bg-card)',
+                color: 'var(--text-2)', cursor: 'pointer', fontFamily: 'var(--font)',
+              }}
+            >Hủy</button>
+          </div>
+        </div>
+      ) : (
+        /* ── Pending state ── */
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ fontSize: 11, color: 'var(--warning)', fontWeight: 500 }}>📅 {dateLabel}</span>
+          <button
+            type="button"
+            onClick={() => setShowInput(true)}
+            style={{
+              fontSize: 10, padding: '2px 8px', borderRadius: 5,
+              border: '1px solid #bbf7d0', background: '#f0fdf4',
+              color: '#15803d', cursor: 'pointer', fontFamily: 'var(--font)',
+              fontWeight: 600,
+            }}
+          >✅ Hoàn thành</button>
+        </div>
+      )}
     </div>
   );
 }
 
 function UpdateRow({ u, pipelineId }) {
   const qc = useQueryClient();
+  const [showInput, setShowInput] = useState(false);
+  const [note, setNote] = useState('');
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ['pipeline-detail', pipelineId] });
@@ -656,7 +644,7 @@ function UpdateRow({ u, pipelineId }) {
   };
 
   const completeMutation = useMutation({
-    mutationFn: (note) => markUpdateComplete(u.id, note),
+    mutationFn: (n) => markUpdateComplete(u.id, n),
     onSuccess: () => { toast.success('Đã hoàn thành follow up'); invalidate(); },
     onError: () => toast.error('Cập nhật thất bại'),
   });
@@ -683,9 +671,11 @@ function UpdateRow({ u, pipelineId }) {
             dateStr={u.follow_up_date}
             completed={u.completed}
             completionNote={u.completion_note}
-            onComplete={(note) => completeMutation.mutate(note)}
+            onComplete={(n) => completeMutation.mutate(n)}
             onUndo={() => undoMutation.mutate()}
             isPending={isPending}
+            showInput={showInput} setShowInput={setShowInput}
+            note={note} setNote={setNote}
           />
         )}
       </div>
@@ -695,6 +685,8 @@ function UpdateRow({ u, pipelineId }) {
 
 function InteractionFollowUpWidget({ c, pipelineId }) {
   const qc = useQueryClient();
+  const [showInput, setShowInput] = useState(false);
+  const [note, setNote] = useState('');
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ['pipeline-detail', pipelineId] });
@@ -718,9 +710,11 @@ function InteractionFollowUpWidget({ c, pipelineId }) {
       dateStr={c.follow_up_date}
       completed={c.follow_up_completed}
       completionNote={c.follow_up_result}
-      onComplete={(note) => completeMutation.mutate(note)}
+      onComplete={(n) => completeMutation.mutate(n)}
       onUndo={() => undoMutation.mutate()}
       isPending={completeMutation.isPending || undoMutation.isPending}
+      showInput={showInput} setShowInput={setShowInput}
+      note={note} setNote={setNote}
     />
   );
 }
