@@ -61,6 +61,8 @@ export const getPipelineHistory = (id) => api.get(`/pipeline/${id}/history`);
 export const getPipelineDetail = (id) => api.get(`/pipeline/${id}/detail`);
 export const updatePipelineInfo = (id, data) => api.put(`/pipeline/${id}/info`, data);
 export const addInteractionUpdate = (customerId, data) => api.post(`/pipeline/customers/${customerId}/updates`, data);
-export const markUpdateComplete = (updateId) => api.patch(`/pipeline/customers/updates/${updateId}/complete`, {});
+export const markUpdateComplete = (updateId, completionNote) => api.patch(`/pipeline/customers/updates/${updateId}/complete`, { completion_note: completionNote });
+export const undoUpdateComplete = (updateId) => api.patch(`/pipeline/customers/updates/${updateId}/uncomplete`, {});
+export const markCustomerFollowUpComplete = (customerId, completed, resultNote) => api.patch(`/pipeline/customers/${customerId}/follow-up-complete`, { completed, result_note: resultNote });
 
 export default api;

@@ -66,6 +66,7 @@ router.get('/', requireAuth, async (req, res) => {
         if (endDate)   { wConds.push(`r.report_date <= $${wi++}`); wParams.push(endDate); }
         wConds.push(`c.follow_up_date <= CURRENT_DATE`);
         wConds.push(`c.interaction_type != $${wi++}`); wParams.push('saved');
+        wConds.push(`c.follow_up_completed = FALSE`);
         wConds.push(`NOT EXISTS (
           SELECT 1 FROM customer_interaction_updates ciu
           WHERE ciu.customer_id = c.id

@@ -152,4 +152,9 @@ CREATE TABLE IF NOT EXISTS customer_interaction_updates (
 
 CREATE INDEX IF NOT EXISTS idx_interaction_updates_customer ON customer_interaction_updates(customer_id);
 
-ALTER TABLE customer_interaction_updates ADD COLUMN IF NOT EXISTS completed BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE customer_interaction_updates ADD COLUMN IF NOT EXISTS completed        BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE customer_interaction_updates ADD COLUMN IF NOT EXISTS completion_note TEXT;
+
+-- Follow-up completion on interaction cards (customers table)
+ALTER TABLE customers ADD COLUMN IF NOT EXISTS follow_up_completed BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE customers ADD COLUMN IF NOT EXISTS follow_up_result    TEXT;

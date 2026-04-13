@@ -361,25 +361,74 @@ router.post('/customers/:customerId/updates', requireAuth, async (req, res) => {
   }
 });
 
-// PATCH /api/pipeline/customers/updates/:updateId/complete — mark an interaction update follow-up as done
+// Shared ownership check helper for interaction updates
+async function checkUpdateOwner(updateId, userId, role) {
+  const { rows } = await db.query(`
+    SELECT ciu.id FROM customer_interaction_updates ciu
+    JOIN customers c ON c.id = ciu.customer_id
+    JOIN customer_pipeline cp ON cp.id = c.pipeline_id
+    WHERE ciu.id = $1 AND (cp.sales_id = $2 OR $3 = 'lead')
+  `, [updateId, userId, role]);
+  return rows[0] || null;
+}
+
+// PATCH /api/pipeline/customers/updates/:updateId/complete — mark follow-up done
 router.patch('/customers/updates/:updateId/complete', requireAuth, async (req, res) => {
   try {
-    // Verify ownership: update must belong to a pipeline this user can access
+    if (!await checkUpdateOwner(req.params.updateId, req.user.id, req.user.role))
+      return res.status(404).json({ error: 'Không tìm thấy' });
+
+    const { completion_note } = req.body;
+    const { rows } = await db.query(`
+      UPDATE customer_interaction_updates
+      SET completed = TRUE, completion_note = $2
+      WHERE id = $1
+      RETURNING *
+    `, [req.params.updateId, completion_note || null]);
+
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PATCH /api/pipeline/customers/updates/:updateId/uncomplete — undo follow-up completion
+router.patch('/customers/updates/:updateId/uncomplete', requireAuth, async (req, res) => {
+  try {
+    if (!await checkUpdateOwner(req.params.updateId, req.user.id, req.user.role))
+      return res.status(404).json({ error: 'Không tìm thấy' });
+
+    const { rows } = await db.query(`
+      UPDATE customer_interaction_updates
+      SET completed = FALSE, completion_note = NULL
+      WHERE id = $1
+      RETURNING *
+    `, [req.params.updateId]);
+
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PATCH /api/pipeline/customers/:customerId/follow-up-complete — mark/unmark customer follow-up
+router.patch('/customers/:customerId/follow-up-complete', requireAuth, async (req, res) => {
+  const { completed, result_note } = req.body;
+  try {
     const { rows: check } = await db.query(`
-      SELECT ciu.id FROM customer_interaction_updates ciu
-      JOIN customers c ON c.id = ciu.customer_id
+      SELECT c.id FROM customers c
       JOIN customer_pipeline cp ON cp.id = c.pipeline_id
-      WHERE ciu.id = $1 AND (cp.sales_id = $2 OR $3 = 'lead')
-    `, [req.params.updateId, req.user.id, req.user.role]);
+      WHERE c.id = $1 AND (cp.sales_id = $2 OR $3 = 'lead')
+    `, [req.params.customerId, req.user.id, req.user.role]);
 
     if (!check[0]) return res.status(404).json({ error: 'Không tìm thấy' });
 
     const { rows } = await db.query(`
-      UPDATE customer_interaction_updates
-      SET completed = TRUE
+      UPDATE customers
+      SET follow_up_completed = $2, follow_up_result = $3
       WHERE id = $1
       RETURNING *
-    `, [req.params.updateId]);
+    `, [req.params.customerId, completed === true, completed ? (result_note || null) : null]);
 
     res.json(rows[0]);
   } catch (err) {

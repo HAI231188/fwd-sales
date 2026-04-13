@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { format, differenceInDays } from 'date-fns';
-import { getPipelineDetail, updateQuote, quickAddCustomer, addInteractionUpdate, updateCustomer, markUpdateComplete } from '../api';
+import { getPipelineDetail, updateQuote, quickAddCustomer, addInteractionUpdate, updateCustomer, markUpdateComplete, undoUpdateComplete, markCustomerFollowUpComplete } from '../api';
 import QuoteForm, { EMPTY_QUOTE } from './QuoteForm';
 import toast from 'react-hot-toast';
 
@@ -546,17 +546,128 @@ function TodayInteractionForm({ pipeline, pipelineId, onDone }) {
   );
 }
 
+// Shared widget: pending → [note input] → complete; completed → strikethrough + undo
+function FollowUpWidget({ dateStr, completed, completionNote, onComplete, onUndo, isPending }) {
+  const [showInput, setShowInput] = useState(false);
+  const [note, setNote] = useState('');
+
+  if (completed) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginTop: 4 }}>
+        <span style={{ fontSize: 11, color: '#16a34a', fontWeight: 600 }}>
+          ✅ <span style={{ textDecoration: 'line-through', color: 'var(--text-3)' }}>
+            {format(new Date(dateStr), 'dd/MM/yyyy')}
+          </span>
+        </span>
+        {completionNote && (
+          <span style={{ fontSize: 11, color: 'var(--text-2)', fontStyle: 'italic' }}>— {completionNote}</span>
+        )}
+        <button
+          type="button"
+          onClick={() => !isPending && onUndo()}
+          disabled={isPending}
+          style={{
+            fontSize: 10, padding: '2px 8px', borderRadius: 5,
+            border: '1px solid #e5e7eb', background: '#f9fafb',
+            color: '#6b7280', cursor: 'pointer', fontFamily: 'var(--font)',
+            fontWeight: 600, opacity: isPending ? 0.6 : 1,
+          }}
+        >
+          ↩️ Hoàn tác
+        </button>
+      </div>
+    );
+  }
+
+  if (showInput) {
+    return (
+      <div style={{ marginTop: 4 }}>
+        <span style={{ fontSize: 11, color: 'var(--warning)', fontWeight: 500 }}>
+          📅 {format(new Date(dateStr), 'dd/MM/yyyy')}
+        </span>
+        <div style={{ display: 'flex', gap: 6, marginTop: 4, alignItems: 'center' }}>
+          <input
+            autoFocus
+            value={note}
+            onChange={e => setNote(e.target.value)}
+            placeholder="Kết quả follow up (tuỳ chọn)..."
+            style={{
+              flex: 1, fontSize: 12, padding: '4px 8px', borderRadius: 5,
+              border: '1px solid var(--border)', background: 'var(--bg-card)',
+              color: 'var(--text)', fontFamily: 'var(--font)',
+            }}
+          />
+          <button
+            type="button"
+            onClick={() => { onComplete(note); setShowInput(false); setNote(''); }}
+            disabled={isPending}
+            style={{
+              fontSize: 10, padding: '4px 10px', borderRadius: 5,
+              border: '1px solid #bbf7d0', background: '#f0fdf4',
+              color: '#15803d', cursor: 'pointer', fontFamily: 'var(--font)',
+              fontWeight: 600, flexShrink: 0, opacity: isPending ? 0.6 : 1,
+            }}
+          >
+            ✅ Xác nhận
+          </button>
+          <button
+            type="button"
+            onClick={() => { setShowInput(false); setNote(''); }}
+            style={{
+              fontSize: 10, padding: '4px 8px', borderRadius: 5,
+              border: '1px solid var(--border)', background: 'var(--bg-card)',
+              color: 'var(--text-2)', cursor: 'pointer', fontFamily: 'var(--font)',
+            }}
+          >
+            Hủy
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
+      <span style={{ fontSize: 11, color: 'var(--warning)', fontWeight: 500 }}>
+        📅 {format(new Date(dateStr), 'dd/MM/yyyy')}
+      </span>
+      <button
+        type="button"
+        onClick={() => setShowInput(true)}
+        style={{
+          fontSize: 10, padding: '2px 8px', borderRadius: 5,
+          border: '1px solid #bbf7d0', background: '#f0fdf4',
+          color: '#15803d', cursor: 'pointer', fontFamily: 'var(--font)',
+          fontWeight: 600,
+        }}
+      >
+        ✅ Hoàn thành
+      </button>
+    </div>
+  );
+}
+
 function UpdateRow({ u, pipelineId }) {
   const qc = useQueryClient();
-  const mutation = useMutation({
-    mutationFn: () => markUpdateComplete(u.id),
-    onSuccess: () => {
-      toast.success('Đã hoàn thành follow up');
-      qc.invalidateQueries({ queryKey: ['pipeline-detail', pipelineId] });
-      qc.invalidateQueries({ queryKey: ['stats'] });
-    },
+
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ['pipeline-detail', pipelineId] });
+    qc.invalidateQueries({ queryKey: ['stats'] });
+  };
+
+  const completeMutation = useMutation({
+    mutationFn: (note) => markUpdateComplete(u.id, note),
+    onSuccess: () => { toast.success('Đã hoàn thành follow up'); invalidate(); },
     onError: () => toast.error('Cập nhật thất bại'),
   });
+
+  const undoMutation = useMutation({
+    mutationFn: () => undoUpdateComplete(u.id),
+    onSuccess: () => { toast.success('Đã hoàn tác'); invalidate(); },
+    onError: () => toast.error('Cập nhật thất bại'),
+  });
+
+  const isPending = completeMutation.isPending || undoMutation.isPending;
 
   return (
     <div style={{ display: 'flex', gap: 8, marginBottom: 6, alignItems: 'flex-start' }}>
@@ -568,37 +679,49 @@ function UpdateRow({ u, pipelineId }) {
         </span>
         <span style={{ fontSize: 13, color: 'var(--text)' }}>{u.note}</span>
         {u.follow_up_date && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
-            {u.completed ? (
-              <span style={{ fontSize: 11, color: '#16a34a', fontWeight: 600 }}>
-                ✅ <span style={{ textDecoration: 'line-through', color: 'var(--text-3)' }}>
-                  {format(new Date(u.follow_up_date), 'dd/MM/yyyy')}
-                </span>
-              </span>
-            ) : (
-              <>
-                <span style={{ fontSize: 11, color: 'var(--warning)', fontWeight: 500 }}>
-                  📅 {format(new Date(u.follow_up_date), 'dd/MM/yyyy')}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => mutation.mutate()}
-                  disabled={mutation.isPending}
-                  style={{
-                    fontSize: 10, padding: '2px 8px', borderRadius: 5,
-                    border: '1px solid #bbf7d0', background: '#f0fdf4',
-                    color: '#15803d', cursor: 'pointer', fontFamily: 'var(--font)',
-                    fontWeight: 600, opacity: mutation.isPending ? 0.6 : 1,
-                  }}
-                >
-                  ✅ Hoàn thành
-                </button>
-              </>
-            )}
-          </div>
+          <FollowUpWidget
+            dateStr={u.follow_up_date}
+            completed={u.completed}
+            completionNote={u.completion_note}
+            onComplete={(note) => completeMutation.mutate(note)}
+            onUndo={() => undoMutation.mutate()}
+            isPending={isPending}
+          />
         )}
       </div>
     </div>
+  );
+}
+
+function InteractionFollowUpWidget({ c, pipelineId }) {
+  const qc = useQueryClient();
+
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ['pipeline-detail', pipelineId] });
+    qc.invalidateQueries({ queryKey: ['stats'] });
+  };
+
+  const completeMutation = useMutation({
+    mutationFn: (resultNote) => markCustomerFollowUpComplete(c.id, true, resultNote),
+    onSuccess: () => { toast.success('Đã hoàn thành follow up'); invalidate(); },
+    onError: () => toast.error('Cập nhật thất bại'),
+  });
+
+  const undoMutation = useMutation({
+    mutationFn: () => markCustomerFollowUpComplete(c.id, false, null),
+    onSuccess: () => { toast.success('Đã hoàn tác'); invalidate(); },
+    onError: () => toast.error('Cập nhật thất bại'),
+  });
+
+  return (
+    <FollowUpWidget
+      dateStr={c.follow_up_date}
+      completed={c.follow_up_completed}
+      completionNote={c.follow_up_result}
+      onComplete={(note) => completeMutation.mutate(note)}
+      onUndo={() => undoMutation.mutate()}
+      isPending={completeMutation.isPending || undoMutation.isPending}
+    />
   );
 }
 
@@ -910,9 +1033,7 @@ export default function CustomerDetailModal({ pipelineId, onClose }) {
                             </div>
                           )}
                           {c.follow_up_date && (
-                            <div style={{ fontSize: 12, color: 'var(--warning)', fontWeight: 500 }}>
-                              📅 Follow up: {format(new Date(c.follow_up_date), 'dd/MM/yyyy')}
-                            </div>
+                            <InteractionFollowUpWidget c={c} pipelineId={pipelineId} />
                           )}
                           {c.reason_not_closed && (
                             <div style={{ fontSize: 12, color: '#92400e', background: '#fffbeb', borderRadius: 6, padding: '4px 8px', marginTop: 2 }}>
