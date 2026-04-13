@@ -154,6 +154,78 @@ router.get('/', requireAuth, async (req, res) => {
   }
 });
 
+// PUT /api/pipeline/:id/info — update customer info (pipeline fields + latest interaction qualification)
+router.put('/:id/info', requireAuth, async (req, res) => {
+  const {
+    company_name, contact_person, phone, industry, source,
+    potential_level, decision_maker, preferred_contact, estimated_value, competitor,
+  } = req.body;
+
+  if (!company_name?.trim()) return res.status(400).json({ error: 'Tên công ty là bắt buộc' });
+
+  const client = await db.pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // Sales can only edit their own; lead can edit any
+    const ownerCheck = req.user.role === 'sales' ? 'AND sales_id = $2' : '';
+    const ownerParams = req.user.role === 'sales'
+      ? [req.params.id, req.user.id]
+      : [req.params.id];
+
+    const { rows: pipeRows } = await client.query(
+      `SELECT id FROM customer_pipeline WHERE id = $1 ${ownerCheck}`,
+      ownerParams
+    );
+    if (!pipeRows[0]) return res.status(404).json({ error: 'Không tìm thấy' });
+
+    // Update pipeline basic info
+    await client.query(`
+      UPDATE customer_pipeline SET
+        company_name   = $1,
+        contact_person = $2,
+        phone          = $3,
+        industry       = $4,
+        source         = $5,
+        updated_at     = NOW()
+      WHERE id = $6
+    `, [
+      company_name.trim(), contact_person || null, phone || null,
+      industry || null, source || null, req.params.id,
+    ]);
+
+    // Update qualification fields on the most recent customer row for this pipeline
+    await client.query(`
+      UPDATE customers SET
+        potential_level   = $1,
+        decision_maker    = $2,
+        preferred_contact = $3,
+        estimated_value   = $4,
+        competitor        = $5,
+        updated_at        = NOW()
+      WHERE id = (
+        SELECT c.id FROM customers c
+        JOIN reports r ON r.id = c.report_id
+        WHERE c.pipeline_id = $6
+        ORDER BY r.report_date DESC, c.created_at DESC
+        LIMIT 1
+      )
+    `, [
+      potential_level || null, decision_maker || false,
+      preferred_contact || null, estimated_value || null,
+      competitor || null, req.params.id,
+    ]);
+
+    await client.query('COMMIT');
+    res.json({ ok: true });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
 // PUT /api/pipeline/:id — manually change stage
 router.put('/:id', requireAuth, async (req, res) => {
   const { stage } = req.body;
@@ -284,6 +356,32 @@ router.post('/customers/:customerId/updates', requireAuth, async (req, res) => {
     `, [req.params.customerId]);
 
     res.status(201).json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PATCH /api/pipeline/customers/updates/:updateId/complete — mark an interaction update follow-up as done
+router.patch('/customers/updates/:updateId/complete', requireAuth, async (req, res) => {
+  try {
+    // Verify ownership: update must belong to a pipeline this user can access
+    const { rows: check } = await db.query(`
+      SELECT ciu.id FROM customer_interaction_updates ciu
+      JOIN customers c ON c.id = ciu.customer_id
+      JOIN customer_pipeline cp ON cp.id = c.pipeline_id
+      WHERE ciu.id = $1 AND (cp.sales_id = $2 OR $3 = 'lead')
+    `, [req.params.updateId, req.user.id, req.user.role]);
+
+    if (!check[0]) return res.status(404).json({ error: 'Không tìm thấy' });
+
+    const { rows } = await db.query(`
+      UPDATE customer_interaction_updates
+      SET completed = TRUE
+      WHERE id = $1
+      RETURNING *
+    `, [req.params.updateId]);
+
+    res.json(rows[0]);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

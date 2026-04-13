@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { format, differenceInDays } from 'date-fns';
-import { getPipelineDetail, updateQuote, quickAddCustomer, addInteractionUpdate, updateCustomer } from '../api';
+import { getPipelineDetail, updateQuote, quickAddCustomer, addInteractionUpdate, updateCustomer, markUpdateComplete } from '../api';
 import QuoteForm, { EMPTY_QUOTE } from './QuoteForm';
 import toast from 'react-hot-toast';
 
@@ -546,6 +546,62 @@ function TodayInteractionForm({ pipeline, pipelineId, onDone }) {
   );
 }
 
+function UpdateRow({ u, pipelineId }) {
+  const qc = useQueryClient();
+  const mutation = useMutation({
+    mutationFn: () => markUpdateComplete(u.id),
+    onSuccess: () => {
+      toast.success('Đã hoàn thành follow up');
+      qc.invalidateQueries({ queryKey: ['pipeline-detail', pipelineId] });
+      qc.invalidateQueries({ queryKey: ['stats'] });
+    },
+    onError: () => toast.error('Cập nhật thất bại'),
+  });
+
+  return (
+    <div style={{ display: 'flex', gap: 8, marginBottom: 6, alignItems: 'flex-start' }}>
+      <span style={{ fontSize: 13, color: 'var(--text-3)', flexShrink: 0, marginTop: 1 }}>└─</span>
+      <div style={{ flex: 1 }}>
+        <span style={{ fontSize: 11, color: 'var(--text-3)', marginRight: 6 }}>
+          {format(new Date(u.created_at), 'dd/MM/yyyy HH:mm')}
+          {u.created_by_name && ` · ${u.created_by_name}`}
+        </span>
+        <span style={{ fontSize: 13, color: 'var(--text)' }}>{u.note}</span>
+        {u.follow_up_date && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
+            {u.completed ? (
+              <span style={{ fontSize: 11, color: '#16a34a', fontWeight: 600 }}>
+                ✅ <span style={{ textDecoration: 'line-through', color: 'var(--text-3)' }}>
+                  {format(new Date(u.follow_up_date), 'dd/MM/yyyy')}
+                </span>
+              </span>
+            ) : (
+              <>
+                <span style={{ fontSize: 11, color: 'var(--warning)', fontWeight: 500 }}>
+                  📅 {format(new Date(u.follow_up_date), 'dd/MM/yyyy')}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => mutation.mutate()}
+                  disabled={mutation.isPending}
+                  style={{
+                    fontSize: 10, padding: '2px 8px', borderRadius: 5,
+                    border: '1px solid #bbf7d0', background: '#f0fdf4',
+                    color: '#15803d', cursor: 'pointer', fontFamily: 'var(--font)',
+                    fontWeight: 600, opacity: mutation.isPending ? 0.6 : 1,
+                  }}
+                >
+                  ✅ Hoàn thành
+                </button>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function CustomerDetailModal({ pipelineId, onClose }) {
   const [editingQuoteId, setEditingQuoteId] = useState(null);
   const [showTodayForm, setShowTodayForm] = useState(false);
@@ -984,21 +1040,7 @@ export default function CustomerDetailModal({ pipelineId, onClose }) {
                         {(c.updates?.length > 0 || updatingCustomerId === c.id) && (
                           <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
                             {c.updates?.map(u => (
-                              <div key={u.id} style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
-                                <span style={{ fontSize: 13, color: 'var(--text-3)', flexShrink: 0, marginTop: 1 }}>└─</span>
-                                <div>
-                                  <span style={{ fontSize: 11, color: 'var(--text-3)', marginRight: 6 }}>
-                                    {format(new Date(u.created_at), 'dd/MM/yyyy HH:mm')}
-                                    {u.created_by_name && ` · ${u.created_by_name}`}
-                                  </span>
-                                  <span style={{ fontSize: 13, color: 'var(--text)' }}>{u.note}</span>
-                                  {u.follow_up_date && (
-                                    <span style={{ fontSize: 11, color: 'var(--warning)', fontWeight: 500, marginLeft: 8 }}>
-                                      📅 {format(new Date(u.follow_up_date), 'dd/MM/yyyy')}
-                                    </span>
-                                  )}
-                                </div>
-                              </div>
+                              <UpdateRow key={u.id} u={u} pipelineId={pipelineId} />
                             ))}
                             {updatingCustomerId === c.id && (
                               <InteractionUpdateForm

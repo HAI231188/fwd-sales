@@ -151,3 +151,5 @@ CREATE TABLE IF NOT EXISTS customer_interaction_updates (
 );
 
 CREATE INDEX IF NOT EXISTS idx_interaction_updates_customer ON customer_interaction_updates(customer_id);
+
+ALTER TABLE customer_interaction_updates ADD COLUMN IF NOT EXISTS completed BOOLEAN NOT NULL DEFAULT FALSE;
