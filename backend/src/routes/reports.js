@@ -411,7 +411,12 @@ router.post('/quick-customer', requireAuth, async (req, res) => {
     }
 
     await client.query('COMMIT');
-    res.status(201).json({ customerId: customer.id, reportId: report.id, pipelineId });
+    res.status(201).json({
+      customerId: customer.id,
+      reportId: report.id,
+      pipelineId,
+      customer_code: customer.customer_code || null,
+    });
   } catch (err) {
     await client.query('ROLLBACK');
     res.status(500).json({ error: err.message });

@@ -47,6 +47,8 @@ export default function AddCustomerModal({ onClose }) {
   const [form, setForm] = useState({ ...EMPTY });
   const [quotes, setQuotes] = useState([]);
   const [extraOpen, setExtraOpen] = useState(false);
+  const [savedCode, setSavedCode] = useState(null);
+  const [savedName, setSavedName] = useState('');
 
   const set = (field, val) => setForm(f => ({ ...f, [field]: val }));
 
@@ -55,14 +57,60 @@ export default function AddCustomerModal({ onClose }) {
       ...form,
       quotes: form.interaction_type === 'quoted' ? serializeQuotes(quotes) : [],
     }),
-    onSuccess: () => {
-      toast.success('Đã thêm khách hàng');
+    onSuccess: (data) => {
       qc.invalidateQueries({ queryKey: ['pipeline'] });
       qc.invalidateQueries({ queryKey: ['stats'] });
-      onClose();
+      if (data?.customer_code) {
+        setSavedCode(data.customer_code);
+        setSavedName(form.company_name);
+      } else {
+        toast.success('Đã thêm khách hàng');
+        onClose();
+      }
     },
     onError: (err) => toast.error(err?.error || 'Thêm khách hàng thất bại'),
   });
+
+  if (savedCode) {
+    return (
+      <div
+        style={{
+          position: 'fixed', inset: 0, zIndex: 1100,
+          background: 'rgba(0,0,0,0.55)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          padding: '32px 16px',
+        }}
+        onClick={e => { if (e.target === e.currentTarget) onClose(); }}
+      >
+        <div style={{
+          background: 'var(--bg-card)', borderRadius: 16,
+          width: '100%', maxWidth: 400,
+          boxShadow: '0 12px 48px rgba(0,0,0,0.22)',
+          padding: '40px 32px', textAlign: 'center',
+        }}>
+          <div style={{ fontSize: 40, marginBottom: 12 }}>✅</div>
+          <div style={{ fontSize: 17, fontWeight: 700, color: 'var(--text)', marginBottom: 6, fontFamily: 'var(--font-display)' }}>
+            Đã thêm khách hàng
+          </div>
+          <div style={{ fontSize: 14, color: 'var(--text-2)', marginBottom: 20 }}>{savedName}</div>
+          <div style={{
+            display: 'inline-block',
+            padding: '10px 24px', borderRadius: 10,
+            background: 'var(--primary-dim)', border: '1.5px solid var(--primary)',
+            marginBottom: 28,
+          }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--primary)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 4 }}>Mã khách hàng</div>
+            <div style={{ fontSize: 22, fontWeight: 800, color: 'var(--primary)', fontFamily: 'var(--font-display)', letterSpacing: '1px' }}>{savedCode}</div>
+          </div>
+          <div>
+            <button type="button" className="btn btn-primary" onClick={onClose} style={{ width: '100%' }}>
+              Đóng
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
