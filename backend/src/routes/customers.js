@@ -34,8 +34,8 @@ router.get('/', requireAuth, async (req, res) => {
     conditions.push(`(c.company_name ILIKE $${idx++} OR c.contact_person ILIKE $${idx - 1})`);
     params.push(`%${search}%`);
   }
-  // Exclude 'saved' customers when searching or explicitly requested
-  if (search || excludeSaved === 'true') {
+  // Exclude 'saved' customers only when explicitly requested
+  if (excludeSaved === 'true') {
     conditions.push(`c.interaction_type IN ('contacted', 'quoted')`);
   }
 
@@ -95,39 +95,6 @@ router.get('/:id', requireAuth, async (req, res) => {
   }
 });
 
-// Add customer to existing report
-router.post('/', requireAuth, async (req, res) => {
-  const {
-    report_id, company_name, contact_person, phone, source, industry,
-    interaction_type, needs, notes, next_action, follow_up_date,
-  } = req.body;
-
-  try {
-    // Verify the report belongs to this user
-    const { rows: reportCheck } = await db.query(
-      'SELECT id FROM reports WHERE id=$1 AND user_id=$2',
-      [report_id, req.user.id]
-    );
-    if (!reportCheck[0]) return res.status(403).json({ error: 'Không có quyền' });
-
-    const { rows } = await db.query(`
-      INSERT INTO customers
-        (report_id, user_id, company_name, contact_person, phone, source, industry,
-         interaction_type, needs, notes, next_action, follow_up_date)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
-      RETURNING *
-    `, [
-      report_id, req.user.id, company_name, contact_person, phone,
-      source, industry, interaction_type, needs, notes, next_action,
-      follow_up_date || null,
-    ]);
-
-    res.status(201).json(rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
 // Update customer
 router.put('/:id', requireAuth, async (req, res) => {
   const {
@@ -141,6 +108,18 @@ router.put('/:id', requireAuth, async (req, res) => {
   try {
     await client.query('BEGIN');
 
+    // Sales can only edit their own customers; lead can edit any
+    const ownerClause = req.user.role === 'sales' ? 'AND user_id = $19' : '';
+    const queryParams = [
+      company_name, contact_person, phone, source, industry,
+      interaction_type || 'contacted', needs, notes, next_action, follow_up_date || null,
+      potential_level || null, decision_maker || false, preferred_contact || null,
+      estimated_value || null, competitor || null,
+      address || null, tax_code || null,
+      req.params.id,
+      ...(req.user.role === 'sales' ? [req.user.id] : []),
+    ];
+
     const { rows } = await client.query(`
       UPDATE customers SET
         company_name=$1, contact_person=$2, phone=$3, source=$4, industry=$5,
@@ -149,16 +128,9 @@ router.put('/:id', requireAuth, async (req, res) => {
         estimated_value=$14, competitor=$15,
         address=$16, tax_code=$17,
         updated_at=NOW()
-      WHERE id=$18 AND user_id=$19
+      WHERE id=$18 ${ownerClause}
       RETURNING *
-    `, [
-      company_name, contact_person, phone, source, industry,
-      interaction_type || 'contacted', needs, notes, next_action, follow_up_date || null,
-      potential_level || null, decision_maker || false, preferred_contact || null,
-      estimated_value || null, competitor || null,
-      address || null, tax_code || null,
-      req.params.id, req.user.id,
-    ]);
+    `, queryParams);
 
     if (!rows[0]) {
       await client.query('ROLLBACK');

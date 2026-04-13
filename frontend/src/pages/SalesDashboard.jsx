@@ -28,7 +28,7 @@ export default function SalesDashboard() {
   const reportsQ = useQuery({
     queryKey: ['reports', 'my', dateRange],
     queryFn: () => getReports({ ...dateRange, limit: 50 }),
-    enabled: activeTab !== 'create',
+    enabled: activeTab === 'overview',
   });
 
   const stats = statsQ.data || {};
@@ -83,9 +83,9 @@ export default function SalesDashboard() {
               ) : reports.length === 0 ? (
                 <div className="empty-state">
                   <div className="icon">📭</div>
-                  <p style={{ marginBottom: 16 }}>Chưa có báo cáo nào. Hãy tạo báo cáo đầu tiên!</p>
-                  <button className="btn btn-primary" onClick={() => setActiveTab('create')}>
-                    ✏️ Tạo báo cáo ngay
+                  <p style={{ marginBottom: 16 }}>Chưa có báo cáo nào. Thêm khách hàng để bắt đầu!</p>
+                  <button className="btn btn-primary" onClick={() => setActiveTab('pipeline')}>
+                    📊 Mở Danh sách hoạt động
                   </button>
                 </div>
               ) : (

@@ -5,7 +5,7 @@ import { format } from 'date-fns';
 import toast from 'react-hot-toast';
 import Navbar from '../components/Navbar';
 import CustomerCard from '../components/CustomerCard';
-import { getReport, deleteReport } from '../api';
+import { getReport, deleteReport, updateReport } from '../api';
 import { useAuth } from '../App';
 
 const SOURCE_LABEL = {
@@ -20,6 +20,8 @@ export default function ReportDetail() {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const [filterType, setFilterType] = useState('');
+  const [editingMeta, setEditingMeta] = useState(false);
+  const [metaForm, setMetaForm] = useState(null);
 
   const { data: report, isLoading, error } = useQuery({
     queryKey: ['report', id],
@@ -34,6 +36,17 @@ export default function ReportDetail() {
       navigate(user?.role === 'lead' ? '/dashboard' : '/my-dashboard');
     },
     onError: () => toast.error('Xóa thất bại'),
+  });
+
+  const updateMetaMutation = useMutation({
+    mutationFn: () => updateReport(id, metaForm),
+    onSuccess: () => {
+      toast.success('Đã cập nhật báo cáo');
+      qc.invalidateQueries({ queryKey: ['report', id] });
+      qc.invalidateQueries({ queryKey: ['reports'] });
+      setEditingMeta(false);
+    },
+    onError: () => toast.error('Cập nhật thất bại'),
   });
 
   const handleDelete = () => {
@@ -119,11 +132,63 @@ export default function ReportDetail() {
               </div>
 
               {isOwner && report.user_id === user?.id && (
-                <button className="btn btn-danger btn-sm" onClick={handleDelete} disabled={deleteMutation.isPending}>
-                  🗑 Xóa báo cáo
-                </button>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => { setMetaForm({ total_contacts: report.total_contacts, new_customers: report.new_customers, issues: report.issues || '' }); setEditingMeta(true); }}
+                    disabled={editingMeta}
+                  >
+                    ✏️ Chỉnh sửa
+                  </button>
+                  <button className="btn btn-danger btn-sm" onClick={handleDelete} disabled={deleteMutation.isPending}>
+                    🗑 Xóa
+                  </button>
+                </div>
               )}
             </div>
+
+            {/* Inline meta edit form */}
+            {editingMeta && metaForm && (
+              <div style={{ marginTop: 20, padding: '16px 20px', background: 'var(--bg)', borderRadius: 10, border: '1px solid var(--border)' }}>
+                <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
+                  <div style={{ flex: '1 1 100px' }}>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.4px', display: 'block', marginBottom: 4 }}>Tổng tiếp cận</label>
+                    <input
+                      type="number" min="0" className="form-input"
+                      value={metaForm.total_contacts}
+                      onChange={e => setMetaForm(f => ({ ...f, total_contacts: parseInt(e.target.value) || 0 }))}
+                    />
+                  </div>
+                  <div style={{ flex: '1 1 100px' }}>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.4px', display: 'block', marginBottom: 4 }}>KH mới</label>
+                    <input
+                      type="number" min="0" className="form-input"
+                      value={metaForm.new_customers}
+                      onChange={e => setMetaForm(f => ({ ...f, new_customers: parseInt(e.target.value) || 0 }))}
+                    />
+                  </div>
+                  <div style={{ flex: '1 1 100%' }}>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.4px', display: 'block', marginBottom: 4 }}>Vấn đề cần hỗ trợ</label>
+                    <textarea
+                      className="form-textarea" rows={2}
+                      placeholder="Mô tả vấn đề cần hỗ trợ từ trưởng phòng..."
+                      value={metaForm.issues}
+                      onChange={e => setMetaForm(f => ({ ...f, issues: e.target.value }))}
+                    />
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                  <button className="btn btn-ghost btn-sm" onClick={() => setEditingMeta(false)}>Hủy</button>
+                  <button
+                    className="btn btn-primary btn-sm"
+                    onClick={() => updateMetaMutation.mutate()}
+                    disabled={updateMetaMutation.isPending}
+                  >
+                    {updateMetaMutation.isPending ? 'Đang lưu...' : '✓ Lưu'}
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* Summary stats */}
             <div style={{ display: 'flex', gap: 24, marginTop: 24, flexWrap: 'wrap' }}>
