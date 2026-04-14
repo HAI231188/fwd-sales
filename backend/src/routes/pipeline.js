@@ -58,7 +58,7 @@ async function applyAutoTransitions(client, salesId) {
 router.get('/lead-all', requireAuth, async (req, res) => {
   if (req.user.role !== 'lead') return res.status(403).json({ error: 'Không có quyền' });
 
-  const { userId } = req.query;
+  const { userId, startDate, endDate } = req.query;
 
   const conds = [`u.role = 'sales'`];
   const params = [];
@@ -68,6 +68,8 @@ router.get('/lead-all', requireAuth, async (req, res) => {
     conds.push(`cp.sales_id = $${idx++}`);
     params.push(userId);
   }
+  if (startDate) { conds.push(`cp.last_activity_date >= $${idx++}`); params.push(startDate); }
+  if (endDate)   { conds.push(`cp.last_activity_date <= $${idx++}`); params.push(endDate); }
 
   const WHERE = 'WHERE ' + conds.join(' AND ');
 

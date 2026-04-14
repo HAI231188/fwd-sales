@@ -27,6 +27,8 @@ export default function LeadDashboard() {
   const [detailPipelineId, setDetailPipelineId] = useState(null);
   const dateFilter = useDateFilter();
   const dateRange = dateFilter.getRange();
+  const pipelineDateFilter = useDateFilter();
+  const pipelineDateRange = pipelineDateFilter.getRange();
 
   const statsQ = useQuery({
     queryKey: ['stats', dateRange, filterUser],
@@ -40,8 +42,8 @@ export default function LeadDashboard() {
   });
 
   const pipelineQ = useQuery({
-    queryKey: ['lead-pipeline', filterUser],
-    queryFn: () => getLeadPipeline({ userId: filterUser || undefined }),
+    queryKey: ['lead-pipeline', filterUser, pipelineDateRange],
+    queryFn: () => getLeadPipeline({ userId: filterUser || undefined, ...pipelineDateRange }),
     enabled: activeTab === 'customers',
   });
 
@@ -219,6 +221,9 @@ export default function LeadDashboard() {
 
           {activeTab === 'customers' && (
             <div>
+              {/* Date filter */}
+              <DateFilter {...pipelineDateFilter} />
+
               {/* Stage cards */}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 24 }}>
                 {STAGES.map(s => (
