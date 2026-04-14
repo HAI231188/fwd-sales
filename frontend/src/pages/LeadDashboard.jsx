@@ -124,11 +124,14 @@ export default function LeadDashboard() {
               onClick={() => setDrilldown('total_quotes')}
             />
             <StatCard
-              label="KH Chờ Follow" value={stats.waiting_follow_up}
+              label="KH Chờ Follow"
               icon="⏰" color="var(--danger)"
               loading={statsQ.isLoading}
               onClick={() => setDrilldown('waiting_follow_up')}
-              sublabel="Quá hạn follow up"
+              rows={[
+                { label: 'Hôm nay', value: stats.follow_today, color: '#d97706' },
+                { label: 'Quá hạn', value: stats.overdue,      color: '#ef4444' },
+              ]}
             />
           </div>
 

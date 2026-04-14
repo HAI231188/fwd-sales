@@ -36,7 +36,7 @@ router.get('/', requireAuth, async (req, res) => {
   const rWHERE = rConds.length ? 'WHERE ' + rConds.join(' AND ') : '';
 
   try {
-    const [contacts, newCust, totalQuotes, booked, followUp, closingSoon, waiting] = await Promise.all([
+    const [contacts, newCust, totalQuotes, booked, followUp, closingSoon, followToday, overdue] = await Promise.all([
       // Total contacts (customers in reports)
       db.query(`SELECT COUNT(c.id) AS v FROM customers c JOIN reports r ON r.id=c.report_id ${WHERE}`, params),
 
@@ -55,7 +55,7 @@ router.get('/', requireAuth, async (req, res) => {
       // Closing soon
       db.query(`SELECT COUNT(q.id) AS v FROM quotes q JOIN customers c ON c.id=q.customer_id JOIN reports r ON r.id=c.report_id ${WHERE} ${AND} q.closing_soon=TRUE AND q.status NOT IN ('booked','lost')`, params),
 
-      // Waiting follow up (overdue, not saved)
+      // Follow today — follow_up_date = TODAY, not completed
       (() => {
         const wConds = [];
         const wParams = [];
@@ -64,7 +64,38 @@ router.get('/', requireAuth, async (req, res) => {
         else if (userId) { wConds.push(`c.user_id = $${wi++}`); wParams.push(userId); }
         if (startDate) { wConds.push(`r.report_date >= $${wi++}`); wParams.push(startDate); }
         if (endDate)   { wConds.push(`r.report_date <= $${wi++}`); wParams.push(endDate); }
-        wConds.push(`c.follow_up_date <= CURRENT_DATE`);
+        wConds.push(`c.follow_up_date = CURRENT_DATE`);
+        wConds.push(`c.interaction_type != $${wi++}`); wParams.push('saved');
+        wConds.push(`c.follow_up_completed = FALSE`);
+        wConds.push(`NOT EXISTS (
+          SELECT 1 FROM customer_interaction_updates ciu
+          WHERE ciu.customer_id = c.id
+            AND ciu.follow_up_date IS NOT NULL
+            AND ciu.completed = TRUE
+            AND NOT EXISTS (
+              SELECT 1 FROM customer_interaction_updates ciu2
+              WHERE ciu2.customer_id = c.id
+                AND ciu2.follow_up_date IS NOT NULL
+                AND ciu2.created_at > ciu.created_at
+                AND ciu2.completed = FALSE
+            )
+        )`);
+        return db.query(
+          `SELECT COUNT(DISTINCT c.id) AS v FROM customers c JOIN reports r ON r.id=c.report_id WHERE ${wConds.join(' AND ')}`,
+          wParams
+        );
+      })(),
+
+      // Overdue — follow_up_date < TODAY, not completed
+      (() => {
+        const wConds = [];
+        const wParams = [];
+        let wi = 1;
+        if (!isLead) { wConds.push(`c.user_id = $${wi++}`); wParams.push(req.user.id); }
+        else if (userId) { wConds.push(`c.user_id = $${wi++}`); wParams.push(userId); }
+        if (startDate) { wConds.push(`r.report_date >= $${wi++}`); wParams.push(startDate); }
+        if (endDate)   { wConds.push(`r.report_date <= $${wi++}`); wParams.push(endDate); }
+        wConds.push(`c.follow_up_date < CURRENT_DATE`);
         wConds.push(`c.interaction_type != $${wi++}`); wParams.push('saved');
         wConds.push(`c.follow_up_completed = FALSE`);
         wConds.push(`NOT EXISTS (
@@ -115,8 +146,10 @@ router.get('/', requireAuth, async (req, res) => {
       total_quotes:     parseInt(totalQuotes.rows[0].v),
       booked:           parseInt(booked.rows[0].v),
       follow_up:        parseInt(followUp.rows[0].v),
-      closing_soon:     parseInt(closingSoon.rows[0].v),
-      waiting_follow_up: parseInt(waiting.rows[0].v),
+      closing_soon:      parseInt(closingSoon.rows[0].v),
+      follow_today:      parseInt(followToday.rows[0].v),
+      overdue:           parseInt(overdue.rows[0].v),
+      waiting_follow_up: parseInt(followToday.rows[0].v) + parseInt(overdue.rows[0].v),
       per_sales: perSales,
     });
   } catch (err) {

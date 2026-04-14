@@ -1,4 +1,5 @@
-export default function StatCard({ label, value, icon, color = 'var(--primary)', onClick, loading, sublabel }) {
+// rows = [{ label, value, color }, ...] — renders two sub-counts instead of one big number
+export default function StatCard({ label, value, icon, color = 'var(--primary)', onClick, loading, sublabel, rows }) {
   return (
     <div
       className="card"
@@ -30,12 +31,28 @@ export default function StatCard({ label, value, icon, color = 'var(--primary)',
       }} />
 
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
-        <div>
+        <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 12, color: 'var(--text-2)', fontWeight: 500, marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
             {label}
           </div>
           {loading ? (
             <div className="spinner" style={{ marginTop: 4 }} />
+          ) : rows ? (
+            <div style={{ display: 'flex', gap: 10, marginTop: 2 }}>
+              {rows.map((r, i) => (
+                <div key={i} style={{
+                  flex: 1, padding: '6px 8px', borderRadius: 8,
+                  background: `${r.color}12`, border: `1px solid ${r.color}30`,
+                }}>
+                  <div style={{ fontSize: 22, fontWeight: 700, fontFamily: 'var(--font-display)', color: r.color, lineHeight: 1 }}>
+                    {r.value ?? '—'}
+                  </div>
+                  <div style={{ fontSize: 10, color: r.color, fontWeight: 600, marginTop: 3, opacity: 0.8 }}>
+                    {r.label}
+                  </div>
+                </div>
+              ))}
+            </div>
           ) : (
             <div style={{ fontSize: 32, fontWeight: 700, fontFamily: 'var(--font-display)', color, lineHeight: 1 }}>
               {value ?? '—'}
@@ -49,7 +66,7 @@ export default function StatCard({ label, value, icon, color = 'var(--primary)',
           width: 44, height: 44, borderRadius: 12,
           background: `${color}18`,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontSize: 20, flexShrink: 0,
+          fontSize: 20, flexShrink: 0, marginLeft: 8,
         }}>
           {icon}
         </div>

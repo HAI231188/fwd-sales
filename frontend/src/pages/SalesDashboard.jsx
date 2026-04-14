@@ -60,7 +60,16 @@ export default function SalesDashboard() {
             <StatCard label="Sắp Chốt" value={stats.closing_soon} icon="⚡" color="#ff6b35" loading={statsQ.isLoading} onClick={() => setDrilldown('closing_soon')} />
             <StatCard label="Tiếp Cận" value={stats.total_contacts} icon="👥" color="var(--info)" loading={statsQ.isLoading} onClick={() => setDrilldown('contacts')} />
             <StatCard label="Báo Giá" value={stats.total_quotes} icon="📋" color="var(--purple)" loading={statsQ.isLoading} onClick={() => setDrilldown('total_quotes')} />
-            <StatCard label="Chờ Follow" value={stats.waiting_follow_up} icon="⏰" color="var(--danger)" loading={statsQ.isLoading} onClick={() => setDrilldown('waiting_follow_up')} />
+            <StatCard
+              label="Chờ Follow"
+              icon="⏰" color="var(--danger)"
+              loading={statsQ.isLoading}
+              onClick={() => setDrilldown('waiting_follow_up')}
+              rows={[
+                { label: 'Hôm nay', value: stats.follow_today, color: '#d97706' },
+                { label: 'Quá hạn', value: stats.overdue,      color: '#ef4444' },
+              ]}
+            />
           </div>
 
           {/* Tabs */}

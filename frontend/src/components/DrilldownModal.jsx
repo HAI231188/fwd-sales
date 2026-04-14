@@ -263,7 +263,7 @@ const DRILL_CONFIG = {
   closing_soon:      { title: '⚡ Sắp Chốt', isQuote: true },
   contacts:          { title: '👥 Lượt Tiếp Cận', isQuote: false },
   total_quotes:      { title: '📋 Tổng Báo Giá', isQuote: true },
-  waiting_follow_up: { title: '⏰ KH Chờ Follow Up', isQuote: false },
+  waiting_follow_up: { title: '⏰ Chờ Follow Up', isQuote: false, splitByDate: true },
 };
 
 const TYPE_TABS = [
@@ -272,6 +272,22 @@ const TYPE_TABS = [
   { key: 'contacted', label: 'Đã liên hệ' },
   { key: 'quoted', label: 'Đã báo giá' },
 ];
+
+function SectionHeader({ label, count, color, bg, border }) {
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 10,
+      padding: '8px 12px', borderRadius: 8, marginBottom: 10,
+      background: bg, border: `1px solid ${border}`,
+    }}>
+      <span style={{ fontSize: 13, fontWeight: 700, color }}>{label}</span>
+      <span style={{
+        fontSize: 11, fontWeight: 700, padding: '1px 8px', borderRadius: 10,
+        background: color, color: '#fff',
+      }}>{count}</span>
+    </div>
+  );
+}
 
 export default function DrilldownModal({ type, dateParams, userId, onClose }) {
   const config = DRILL_CONFIG[type] || {};
@@ -285,9 +301,17 @@ export default function DrilldownModal({ type, dateParams, userId, onClose }) {
     enabled: !!type,
   });
 
-  const filteredData = !config.isQuote && filterType
+  const today = new Date().toISOString().slice(0, 10);
+
+  // For waiting_follow_up: partition into today vs overdue
+  const todayRows    = config.splitByDate ? data.filter(c => c.follow_up_date?.slice(0, 10) === today) : [];
+  const overdueRows  = config.splitByDate ? data.filter(c => c.follow_up_date?.slice(0, 10) < today)  : [];
+
+  const filteredData = !config.isQuote && !config.splitByDate && filterType
     ? data.filter(c => c.interaction_type === filterType)
     : data;
+
+  const totalCount = config.splitByDate ? data.length : filteredData.length;
 
   return (
     <>
@@ -296,7 +320,7 @@ export default function DrilldownModal({ type, dateParams, userId, onClose }) {
           <div className="modal-header">
             <h3>{config.title}</h3>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-              <span className="badge badge-primary">{filteredData.length} mục</span>
+              <span className="badge badge-primary">{totalCount} mục</span>
               <button className="btn btn-ghost btn-sm btn-icon" onClick={onClose}>✕</button>
             </div>
           </div>
@@ -310,9 +334,40 @@ export default function DrilldownModal({ type, dateParams, userId, onClose }) {
                 <div className="icon">📭</div>
                 <p>Không có dữ liệu trong khoảng thời gian này</p>
               </div>
+            ) : config.splitByDate ? (
+              /* ── Split layout for waiting_follow_up ── */
+              <div>
+                {/* Today section */}
+                <SectionHeader
+                  label="📅 Follow hôm nay"
+                  count={todayRows.length}
+                  color="#d97706" bg="#fffbeb" border="#fde68a"
+                />
+                {todayRows.length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: '12px 0 20px', color: 'var(--text-3)', fontSize: 13 }}>
+                    Không có khách nào cần follow hôm nay
+                  </div>
+                ) : todayRows.map((c, i) => (
+                  <CustomerRow key={c.id || i} c={c} onCompanyClick={setDetailPipelineId} />
+                ))}
+
+                {/* Overdue section */}
+                <SectionHeader
+                  label="🚨 Quá hạn"
+                  count={overdueRows.length}
+                  color="#ef4444" bg="#fef2f2" border="#fecaca"
+                />
+                {overdueRows.length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: '12px 0', color: 'var(--text-3)', fontSize: 13 }}>
+                    Không có khách nào quá hạn
+                  </div>
+                ) : overdueRows.map((c, i) => (
+                  <CustomerRow key={c.id || i} c={c} onCompanyClick={setDetailPipelineId} />
+                ))}
+              </div>
             ) : (
               <div>
-                {/* Filter tabs for customer lists */}
+                {/* Filter tabs for standard customer lists */}
                 {!config.isQuote && (
                   <div style={{ display: 'flex', gap: 6, marginBottom: 16, flexWrap: 'wrap' }}>
                     {TYPE_TABS.map(({ key, label }) => {
