@@ -24,6 +24,7 @@ export default function LeadDashboard() {
   const [drilldown, setDrilldown] = useState(null);
   const [filterUser, setFilterUser] = useState('');
   const [filterStage, setFilterStage] = useState(null);
+  const [searchQuery, setSearchQuery] = useState('');
   const [detailPipelineId, setDetailPipelineId] = useState(null);
   const dateFilter = useDateFilter();
   const dateRange = dateFilter.getRange();
@@ -50,7 +51,11 @@ export default function LeadDashboard() {
   const stats = statsQ.data || {};
   const reports = reportsQ.data?.reports || [];
   const allPipeline = pipelineQ.data || [];
-  const pipeline = filterStage ? allPipeline.filter(c => c.stage === filterStage) : allPipeline;
+  const q = searchQuery.trim().toLowerCase();
+  const pipeline = allPipeline.filter(c =>
+    (!filterStage || c.stage === filterStage) &&
+    (!q || c.company_name?.toLowerCase().includes(q) || c.contact_person?.toLowerCase().includes(q))
+  );
 
   const stageCounts = STAGES.reduce((acc, s) => {
     acc[s.key] = allPipeline.filter(c => c.stage === s.key).length;
@@ -265,6 +270,19 @@ export default function LeadDashboard() {
                   </div>
                 );
               })()}
+
+              {/* Search */}
+              <div style={{ position: 'relative', marginBottom: 16 }}>
+                <span style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', fontSize: 15, pointerEvents: 'none' }}>🔍</span>
+                <input
+                  className="form-input"
+                  type="text"
+                  placeholder="Tìm theo tên công ty hoặc người liên hệ..."
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                  style={{ width: '100%', paddingLeft: 36, boxSizing: 'border-box' }}
+                />
+              </div>
 
               {pipelineQ.isLoading ? (
                 <div style={{ textAlign: 'center', padding: 40 }}><div className="spinner" style={{ margin: '0 auto' }} /></div>
