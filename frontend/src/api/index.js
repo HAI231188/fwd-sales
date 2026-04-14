@@ -52,6 +52,7 @@ export const getDrilldown = (type, params) => api.get(`/stats/drilldown/${type}`
 
 // Pipeline
 export const getPipeline = () => api.get('/pipeline');
+export const getLeadPipeline = (params) => api.get('/pipeline/lead-all', { params });
 export const searchPipeline = (q) => api.get('/pipeline/search', { params: q ? { q } : {} });
 export const updatePipelineStage = (id, stage) => api.put(`/pipeline/${id}`, { stage });
 export const getPipelineHistory = (id) => api.get(`/pipeline/${id}/history`);

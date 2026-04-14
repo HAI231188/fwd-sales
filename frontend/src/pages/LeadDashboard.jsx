@@ -7,20 +7,23 @@ import StatCard from '../components/StatCard';
 import DateFilter, { useDateFilter } from '../components/DateFilter';
 import DrilldownModal from '../components/DrilldownModal';
 import CustomerDetailModal from '../components/CustomerDetailModal';
-import { getStats, getReports, getCustomers } from '../api';
+import { getStats, getReports, getLeadPipeline } from '../api';
 
-const SOURCE_LABEL = {
-  cold_call: 'Cold Call', zalo_facebook: 'Zalo/FB',
-  referral: 'Referral', email: 'Email', direct: 'Gặp trực tiếp', other: 'Khác',
-};
 const TYPE_LABEL = { saved: 'Lưu liên hệ', contacted: 'Đã liên hệ', quoted: 'Đã báo giá' };
 const TYPE_CLASS = { saved: 'type-saved', contacted: 'type-contacted', quoted: 'type-quoted' };
+
+const STAGES = [
+  { key: 'new',       label: 'Khách mới',   icon: '🆕', color: '#3b82f6', bg: '#eff6ff', border: '#bfdbfe' },
+  { key: 'dormant',   label: 'Ngủ đông',    icon: '😴', color: '#6b7280', bg: '#f9fafb', border: '#e5e7eb' },
+  { key: 'following', label: 'Đang follow', icon: '🔄', color: '#f59e0b', bg: '#fffbeb', border: '#fde68a' },
+  { key: 'booked',    label: 'Đã booking',  icon: '✅', color: '#10b981', bg: '#f0fdf4', border: '#bbf7d0' },
+];
 
 export default function LeadDashboard() {
   const [activeTab, setActiveTab] = useState('overview');
   const [drilldown, setDrilldown] = useState(null);
   const [filterUser, setFilterUser] = useState('');
-  const [filterType, setFilterType] = useState('');
+  const [filterStage, setFilterStage] = useState(null);
   const [detailPipelineId, setDetailPipelineId] = useState(null);
   const dateFilter = useDateFilter();
   const dateRange = dateFilter.getRange();
@@ -36,16 +39,21 @@ export default function LeadDashboard() {
     enabled: activeTab === 'reports' || activeTab === 'overview',
   });
 
-  const customersQ = useQuery({
-    queryKey: ['customers', dateRange, filterUser],
-    queryFn: () => getCustomers({ ...dateRange, userId: filterUser || undefined }),
+  const pipelineQ = useQuery({
+    queryKey: ['lead-pipeline', filterUser],
+    queryFn: () => getLeadPipeline({ userId: filterUser || undefined }),
     enabled: activeTab === 'customers',
   });
 
   const stats = statsQ.data || {};
   const reports = reportsQ.data?.reports || [];
-  const allCustomers = customersQ.data || [];
-  const customers = filterType ? allCustomers.filter(c => c.interaction_type === filterType) : allCustomers;
+  const allPipeline = pipelineQ.data || [];
+  const pipeline = filterStage ? allPipeline.filter(c => c.stage === filterStage) : allPipeline;
+
+  const stageCounts = STAGES.reduce((acc, s) => {
+    acc[s.key] = allPipeline.filter(c => c.stage === s.key).length;
+    return acc;
+  }, {});
 
   return (
     <div className="page">
@@ -211,46 +219,55 @@ export default function LeadDashboard() {
 
           {activeTab === 'customers' && (
             <div>
-              {/* Filter tabs with count badges */}
-              <div style={{ display: 'flex', gap: 6, marginBottom: 16, flexWrap: 'wrap' }}>
-                {[
-                  { key: '', label: 'Tất cả' },
-                  { key: 'saved', label: 'Lưu liên hệ' },
-                  { key: 'contacted', label: 'Đã liên hệ' },
-                  { key: 'quoted', label: 'Đã báo giá' },
-                ].map(({ key, label }) => {
-                  const count = key === '' ? allCustomers.length : allCustomers.filter(c => c.interaction_type === key).length;
-                  return (
-                    <button
-                      key={key}
-                      className={`btn btn-sm ${filterType === key ? 'btn-primary' : 'btn-ghost'}`}
-                      onClick={() => setFilterType(key)}
-                    >
-                      {label}
-                      <span style={{
-                        marginLeft: 6,
-                        background: filterType === key ? 'rgba(255,255,255,0.25)' : 'var(--border)',
-                        borderRadius: 10, padding: '1px 7px', fontSize: 11, fontWeight: 700,
-                      }}>
-                        {count}
-                      </span>
-                    </button>
-                  );
-                })}
-                {allCustomers.filter(c => c.has_closing_soon).length > 0 && (
-                  <span className="badge badge-warning" style={{ alignSelf: 'center', marginLeft: 4 }}>
-                    ⚡ Sắp chốt: {allCustomers.filter(c => c.has_closing_soon).length}
-                  </span>
-                )}
+              {/* Stage cards */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 24 }}>
+                {STAGES.map(s => (
+                  <div
+                    key={s.key}
+                    onClick={() => setFilterStage(filterStage === s.key ? null : s.key)}
+                    style={{
+                      background: filterStage === s.key ? s.bg : 'var(--bg-card)',
+                      border: `1.5px solid ${filterStage === s.key ? s.color : 'var(--border)'}`,
+                      borderRadius: 'var(--radius)', padding: '16px 18px',
+                      cursor: 'pointer', transition: 'all 0.15s',
+                    }}
+                    onMouseEnter={e => { e.currentTarget.style.borderColor = s.color; }}
+                    onMouseLeave={e => { e.currentTarget.style.borderColor = filterStage === s.key ? s.color : 'var(--border)'; }}
+                  >
+                    <div style={{ fontSize: 22, marginBottom: 6 }}>{s.icon}</div>
+                    <div style={{ fontSize: 28, fontWeight: 800, fontFamily: 'var(--font-display)', color: s.color, lineHeight: 1 }}>
+                      {pipelineQ.isLoading ? '—' : stageCounts[s.key] || 0}
+                    </div>
+                    <div style={{ fontSize: 13, color: 'var(--text-2)', marginTop: 4 }}>{s.label}</div>
+                  </div>
+                ))}
               </div>
 
-              {customersQ.isLoading ? (
+              {/* Active filter label */}
+              {filterStage && (() => {
+                const s = STAGES.find(x => x.key === filterStage);
+                return (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+                    <span style={{ fontSize: 13, color: 'var(--text-2)' }}>
+                      Đang xem: <strong style={{ color: s.color }}>{s.icon} {s.label}</strong>
+                    </span>
+                    <button
+                      onClick={() => setFilterStage(null)}
+                      style={{ fontSize: 12, background: 'none', border: '1px solid var(--border)', borderRadius: 6, padding: '2px 8px', cursor: 'pointer', color: 'var(--text-2)' }}
+                    >
+                      Xem tất cả ✕
+                    </button>
+                  </div>
+                );
+              })()}
+
+              {pipelineQ.isLoading ? (
                 <div style={{ textAlign: 'center', padding: 40 }}><div className="spinner" style={{ margin: '0 auto' }} /></div>
-              ) : customers.length === 0 ? (
+              ) : pipeline.length === 0 ? (
                 <div className="empty-state"><div className="icon">👥</div><p>Không có khách hàng nào</p></div>
               ) : (
                 <div>
-                  {customers.map(c => <CustomerRow key={c.id} customer={c} onCompanyClick={setDetailPipelineId} />)}
+                  {pipeline.map(c => <CustomerRow key={c.pipeline_id} customer={c} onCompanyClick={setDetailPipelineId} />)}
                 </div>
               )}
             </div>
@@ -300,22 +317,33 @@ function ReportRow({ report: r }) {
 }
 
 function CustomerRow({ customer: c, onCompanyClick }) {
+  const stage = STAGES.find(s => s.key === c.stage);
   return (
     <div
       style={{
         background: '#f8f9fa', border: '1px solid var(--border)',
         borderRadius: 10, padding: '14px 16px', marginBottom: 2,
-        cursor: c.pipeline_id ? 'pointer' : 'default', transition: 'all 0.15s',
+        cursor: 'pointer', transition: 'all 0.15s',
       }}
-      onClick={() => c.pipeline_id && onCompanyClick(c.pipeline_id)}
-      onMouseEnter={e => { if (c.pipeline_id) { e.currentTarget.style.borderColor = 'var(--primary)'; e.currentTarget.style.background = 'rgba(34,197,94,0.04)'; } }}
+      onClick={() => onCompanyClick(c.pipeline_id)}
+      onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--primary)'; e.currentTarget.style.background = 'rgba(34,197,94,0.04)'; }}
       onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.background = '#f8f9fa'; }}
     >
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
         <div style={{ flex: 1 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
             <span style={{ fontWeight: 600, fontSize: 14 }}>{c.company_name}</span>
-            <span className={`badge ${TYPE_CLASS[c.interaction_type]}`}>{TYPE_LABEL[c.interaction_type]}</span>
+            {stage && (
+              <span style={{
+                display: 'inline-flex', alignItems: 'center', gap: 4,
+                background: stage.bg, border: `1px solid ${stage.border}`,
+                borderRadius: 20, padding: '2px 8px',
+                fontSize: 11, fontWeight: 600, color: stage.color,
+              }}>
+                {stage.icon} {stage.label}
+              </span>
+            )}
+            {c.interaction_type && <span className={`badge ${TYPE_CLASS[c.interaction_type]}`}>{TYPE_LABEL[c.interaction_type]}</span>}
             {c.has_closing_soon && <span className="badge badge-warning">⚡ Sắp chốt</span>}
           </div>
           <div style={{ fontSize: 12, color: 'var(--text-2)' }}>
@@ -336,8 +364,10 @@ function CustomerRow({ customer: c, onCompanyClick }) {
             <div className="avatar avatar-sm" style={{ background: c.avatar_color }}>{c.user_code}</div>
             <span style={{ fontSize: 11, color: 'var(--text-2)' }}>{c.user_name}</span>
           </div>
-          {c.report_date && (
-            <span style={{ fontSize: 11, color: 'var(--text-3)' }}>{format(new Date(c.report_date), 'dd/MM/yyyy')}</span>
+          {c.last_activity_date && (
+            <span style={{ fontSize: 11, color: 'var(--text-3)' }}>
+              🕐 {format(new Date(c.last_activity_date), 'dd/MM/yyyy')}
+            </span>
           )}
         </div>
       </div>

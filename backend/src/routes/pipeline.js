@@ -54,6 +54,67 @@ async function applyAutoTransitions(client, salesId) {
   }
 }
 
+// GET /api/pipeline/lead-all — all pipeline entries across all sales users (lead only)
+router.get('/lead-all', requireAuth, async (req, res) => {
+  if (req.user.role !== 'lead') return res.status(403).json({ error: 'Không có quyền' });
+
+  const { userId } = req.query;
+
+  const conds = [`u.role = 'sales'`];
+  const params = [];
+  let idx = 1;
+
+  if (userId) {
+    conds.push(`cp.sales_id = $${idx++}`);
+    params.push(userId);
+  }
+
+  const WHERE = 'WHERE ' + conds.join(' AND ');
+
+  try {
+    const { rows } = await db.query(`
+      SELECT
+        cp.id AS pipeline_id,
+        cp.company_name, cp.contact_person, cp.phone, cp.industry,
+        cp.stage, cp.last_activity_date,
+        u.id AS user_id, u.name AS user_name, u.code AS user_code, u.avatar_color,
+        COUNT(DISTINCT c.id)::int AS total_interactions,
+        COUNT(DISTINCT q.id)::int AS quote_count,
+        BOOL_OR(q.closing_soon) AS has_closing_soon,
+        latest.interaction_type,
+        latest.follow_up_date,
+        latest.needs,
+        MAX(r.report_date) AS report_date
+      FROM customer_pipeline cp
+      JOIN users u ON u.id = cp.sales_id
+      LEFT JOIN customers c ON c.pipeline_id = cp.id
+      LEFT JOIN reports r ON r.id = c.report_id
+      LEFT JOIN quotes q ON q.customer_id = c.id
+      LEFT JOIN LATERAL (
+        SELECT c2.interaction_type, c2.follow_up_date, c2.needs
+        FROM customers c2
+        JOIN reports r2 ON r2.id = c2.report_id
+        WHERE c2.pipeline_id = cp.id
+        ORDER BY r2.report_date DESC, c2.created_at DESC
+        LIMIT 1
+      ) latest ON true
+      ${WHERE}
+      GROUP BY cp.id, u.id, u.name, u.code, u.avatar_color,
+               latest.interaction_type, latest.follow_up_date, latest.needs
+      ORDER BY
+        CASE cp.stage
+          WHEN 'following' THEN 1 WHEN 'new' THEN 2 WHEN 'dormant' THEN 3 WHEN 'booked' THEN 4
+        END,
+        cp.last_activity_date DESC NULLS LAST,
+        cp.created_at DESC
+    `, params);
+
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/pipeline/search — lightweight search for "Khách hàng cũ" dropdown
 // Returns all pipeline customers for the current salesperson (any stage),
 // optionally filtered by company name. No auto-transitions applied.
