@@ -293,6 +293,7 @@ export default function DrilldownModal({ type, dateParams, userId, onClose }) {
   const config = DRILL_CONFIG[type] || {};
   const [selectedQuote, setSelectedQuote] = useState(null);
   const [filterType, setFilterType] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
   const [detailPipelineId, setDetailPipelineId] = useState(null);
 
   const { data = [], isLoading } = useQuery({
@@ -304,16 +305,21 @@ export default function DrilldownModal({ type, dateParams, userId, onClose }) {
   const today  = new Date().toISOString().slice(0, 10);
   const plus3  = new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10);
 
+  const sq = searchQuery.trim().toLowerCase();
+  const matchesSearch = (item) => !sq || item.company_name?.toLowerCase().includes(sq);
+
   // For waiting_follow_up: partition into today, upcoming (tomorrow–+3d), overdue
-  const todayRows    = config.splitByDate ? data.filter(c => c.follow_up_date?.slice(0, 10) === today)                                                        : [];
-  const upcomingRows = config.splitByDate ? data.filter(c => c.follow_up_date?.slice(0, 10) > today && c.follow_up_date?.slice(0, 10) <= plus3) : [];
-  const overdueRows  = config.splitByDate ? data.filter(c => c.follow_up_date?.slice(0, 10) < today)                                                          : [];
+  const todayRows    = config.splitByDate ? data.filter(c => c.follow_up_date?.slice(0, 10) === today && matchesSearch(c))                                                        : [];
+  const upcomingRows = config.splitByDate ? data.filter(c => c.follow_up_date?.slice(0, 10) > today && c.follow_up_date?.slice(0, 10) <= plus3 && matchesSearch(c)) : [];
+  const overdueRows  = config.splitByDate ? data.filter(c => c.follow_up_date?.slice(0, 10) < today && matchesSearch(c))                                                          : [];
 
-  const filteredData = !config.isQuote && !config.splitByDate && filterType
-    ? data.filter(c => c.interaction_type === filterType)
-    : data;
+  const filteredData = data
+    .filter(item => !config.isQuote && !config.splitByDate && filterType ? item.interaction_type === filterType : true)
+    .filter(matchesSearch);
 
-  const totalCount = config.splitByDate ? data.length : filteredData.length;
+  const totalCount = config.splitByDate
+    ? todayRows.length + upcomingRows.length + overdueRows.length
+    : filteredData.length;
 
   return (
     <>
@@ -327,6 +333,19 @@ export default function DrilldownModal({ type, dateParams, userId, onClose }) {
             </div>
           </div>
           <div className="modal-body">
+            {/* Search */}
+            <div style={{ position: 'relative', marginBottom: 16 }}>
+              <span style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', fontSize: 15, pointerEvents: 'none' }}>🔍</span>
+              <input
+                className="form-input"
+                type="text"
+                placeholder="Tìm theo tên công ty..."
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                style={{ width: '100%', paddingLeft: 36, boxSizing: 'border-box' }}
+              />
+            </div>
+
             {isLoading ? (
               <div style={{ textAlign: 'center', padding: 40 }}>
                 <div className="spinner" style={{ margin: '0 auto' }} />

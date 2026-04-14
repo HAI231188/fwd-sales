@@ -165,6 +165,7 @@ function PipelineCard({ entry, onUpdate, disabled, onCompanyClick }) {
 export default function PipelineView() {
   const qc = useQueryClient();
   const [selectedStage, setSelectedStage] = useState(null);
+  const [searchQuery, setSearchQuery] = useState('');
   const [detailId, setDetailId] = useState(null);
   const [showAddModal, setShowAddModal] = useState(false);
 
@@ -187,9 +188,11 @@ export default function PipelineView() {
     return acc;
   }, {});
 
-  const visibleList = selectedStage
-    ? pipeline.filter(c => c.stage === selectedStage)
-    : pipeline;
+  const q = searchQuery.trim().toLowerCase();
+  const visibleList = pipeline.filter(c =>
+    (!selectedStage || c.stage === selectedStage) &&
+    (!q || c.company_name?.toLowerCase().includes(q) || c.contact_person?.toLowerCase().includes(q))
+  );
 
   return (
     <div>
@@ -254,6 +257,19 @@ export default function PipelineView() {
           </button>
         </div>
       )}
+
+      {/* Search */}
+      <div style={{ position: 'relative', marginBottom: 14 }}>
+        <span style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', fontSize: 15, pointerEvents: 'none' }}>🔍</span>
+        <input
+          className="form-input"
+          type="text"
+          placeholder="Tìm theo tên công ty hoặc người liên hệ..."
+          value={searchQuery}
+          onChange={e => setSearchQuery(e.target.value)}
+          style={{ width: '100%', paddingLeft: 36, boxSizing: 'border-box' }}
+        />
+      </div>
 
       {/* Customer list */}
       {isLoading ? (
