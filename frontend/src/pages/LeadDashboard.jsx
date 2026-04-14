@@ -15,7 +15,6 @@ const SOURCE_LABEL = {
 };
 const TYPE_LABEL = { saved: 'Lưu liên hệ', contacted: 'Đã liên hệ', quoted: 'Đã báo giá' };
 const TYPE_CLASS = { saved: 'type-saved', contacted: 'type-contacted', quoted: 'type-quoted' };
-const STATUS_LABEL = { quoting: 'Nhận TT check giá', follow_up: 'Báo giá follow', booked: 'Booked', lost: 'Lost' };
 
 export default function LeadDashboard() {
   const [activeTab, setActiveTab] = useState('overview');
@@ -250,7 +249,7 @@ export default function LeadDashboard() {
               ) : customers.length === 0 ? (
                 <div className="empty-state"><div className="icon">👥</div><p>Không có khách hàng nào</p></div>
               ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <div>
                   {customers.map(c => <CustomerRow key={c.id} customer={c} onCompanyClick={setDetailPipelineId} />)}
                 </div>
               )}
@@ -301,30 +300,45 @@ function ReportRow({ report: r }) {
 }
 
 function CustomerRow({ customer: c, onCompanyClick }) {
-  const statuses = (c.quote_statuses || '').split(',').filter(Boolean);
   return (
-    <div className="card" style={{ padding: '14px 20px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+    <div
+      style={{
+        background: '#f8f9fa', border: '1px solid var(--border)',
+        borderRadius: 10, padding: '14px 16px', marginBottom: 2,
+        cursor: c.pipeline_id ? 'pointer' : 'default', transition: 'all 0.15s',
+      }}
+      onClick={() => c.pipeline_id && onCompanyClick(c.pipeline_id)}
+      onMouseEnter={e => { if (c.pipeline_id) { e.currentTarget.style.borderColor = 'var(--primary)'; e.currentTarget.style.background = 'rgba(34,197,94,0.04)'; } }}
+      onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.background = '#f8f9fa'; }}
+    >
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
         <div style={{ flex: 1 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
-            <span
-              style={{ fontWeight: 600, fontSize: 14, cursor: c.pipeline_id ? 'pointer' : 'default', color: c.pipeline_id ? 'var(--primary)' : 'inherit', textDecoration: c.pipeline_id ? 'underline' : 'none', textDecorationStyle: 'dotted' }}
-              onClick={() => c.pipeline_id && onCompanyClick(c.pipeline_id)}
-            >{c.company_name}</span>
+            <span style={{ fontWeight: 600, fontSize: 14 }}>{c.company_name}</span>
             <span className={`badge ${TYPE_CLASS[c.interaction_type]}`}>{TYPE_LABEL[c.interaction_type]}</span>
             {c.has_closing_soon && <span className="badge badge-warning">⚡ Sắp chốt</span>}
           </div>
-          <div style={{ fontSize: 12, color: 'var(--text-2)', display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-            {c.contact_person && <span>👤 {c.contact_person}</span>}
-            {c.industry && <span>🏭 {c.industry}</span>}
-            {c.report_date && <span>📅 {format(new Date(c.report_date), 'dd/MM/yyyy')}</span>}
+          <div style={{ fontSize: 12, color: 'var(--text-2)' }}>
+            {c.contact_person && <>👤 {c.contact_person}</>}
+            {c.phone && <> · 📞 {c.phone}</>}
           </div>
+          {c.industry && <div style={{ fontSize: 12, color: 'var(--text-2)', marginTop: 2 }}>🏭 {c.industry}</div>}
+          {c.follow_up_date && (
+            <div style={{ fontSize: 12, color: 'var(--warning)', marginTop: 4 }}>
+              📅 Follow up: {format(new Date(c.follow_up_date), 'dd/MM/yyyy')}
+            </div>
+          )}
+          {c.needs && <div style={{ fontSize: 12, color: 'var(--text-2)', marginTop: 4, fontStyle: 'italic' }}>{c.needs}</div>}
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-          {statuses.map(s => (
-            <span key={s} className={`badge status-${s}`}>{STATUS_LABEL[s]}</span>
-          ))}
-          <div className="avatar avatar-sm" style={{ background: c.avatar_color }}>{c.user_code}</div>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6, flexShrink: 0 }}>
+          {c.quote_count > 0 && <span className="badge badge-primary">📋 {c.quote_count} báo giá</span>}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <div className="avatar avatar-sm" style={{ background: c.avatar_color }}>{c.user_code}</div>
+            <span style={{ fontSize: 11, color: 'var(--text-2)' }}>{c.user_name}</span>
+          </div>
+          {c.report_date && (
+            <span style={{ fontSize: 11, color: 'var(--text-3)' }}>{format(new Date(c.report_date), 'dd/MM/yyyy')}</span>
+          )}
         </div>
       </div>
     </div>
