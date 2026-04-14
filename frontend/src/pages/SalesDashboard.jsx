@@ -66,8 +66,9 @@ export default function SalesDashboard() {
               loading={statsQ.isLoading}
               onClick={() => setDrilldown('waiting_follow_up')}
               rows={[
-                { label: 'Hôm nay', value: stats.follow_today, color: '#d97706' },
-                { label: 'Quá hạn', value: stats.overdue,      color: '#ef4444' },
+                { label: 'Hôm nay',  value: stats.follow_today,    color: '#d97706' },
+                { label: 'Sắp tới',  value: stats.follow_upcoming, color: '#3b82f6' },
+                { label: 'Quá hạn',  value: stats.overdue,         color: '#ef4444' },
               ]}
             />
           </div>

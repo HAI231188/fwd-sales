@@ -301,11 +301,13 @@ export default function DrilldownModal({ type, dateParams, userId, onClose }) {
     enabled: !!type,
   });
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today  = new Date().toISOString().slice(0, 10);
+  const plus3  = new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10);
 
-  // For waiting_follow_up: partition into today vs overdue
-  const todayRows    = config.splitByDate ? data.filter(c => c.follow_up_date?.slice(0, 10) === today) : [];
-  const overdueRows  = config.splitByDate ? data.filter(c => c.follow_up_date?.slice(0, 10) < today)  : [];
+  // For waiting_follow_up: partition into today, upcoming (tomorrow–+3d), overdue
+  const todayRows    = config.splitByDate ? data.filter(c => c.follow_up_date?.slice(0, 10) === today)                                                        : [];
+  const upcomingRows = config.splitByDate ? data.filter(c => c.follow_up_date?.slice(0, 10) > today && c.follow_up_date?.slice(0, 10) <= plus3) : [];
+  const overdueRows  = config.splitByDate ? data.filter(c => c.follow_up_date?.slice(0, 10) < today)                                                          : [];
 
   const filteredData = !config.isQuote && !config.splitByDate && filterType
     ? data.filter(c => c.interaction_type === filterType)
@@ -348,6 +350,20 @@ export default function DrilldownModal({ type, dateParams, userId, onClose }) {
                     Không có khách nào cần follow hôm nay
                   </div>
                 ) : todayRows.map((c, i) => (
+                  <CustomerRow key={c.id || i} c={c} onCompanyClick={setDetailPipelineId} />
+                ))}
+
+                {/* Upcoming section (tomorrow → +3 days) */}
+                <SectionHeader
+                  label="📆 Sắp tới (3 ngày tới)"
+                  count={upcomingRows.length}
+                  color="#3b82f6" bg="#eff6ff" border="#bfdbfe"
+                />
+                {upcomingRows.length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: '12px 0 20px', color: 'var(--text-3)', fontSize: 13 }}>
+                    Không có lịch follow nào trong 3 ngày tới
+                  </div>
+                ) : upcomingRows.map((c, i) => (
                   <CustomerRow key={c.id || i} c={c} onCompanyClick={setDetailPipelineId} />
                 ))}
 
