@@ -8,8 +8,8 @@ const PRESETS = [
   { key: 'custom', label: 'Tùy chọn' },
 ];
 
-export function useDateFilter() {
-  const [preset, setPreset] = useState('today');
+export function useDateFilter(initialPreset = 'today') {
+  const [preset, setPreset] = useState(initialPreset);
   const [customStart, setCustomStart] = useState('');
   const [customEnd, setCustomEnd] = useState('');
 

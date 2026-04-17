@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import { getPipeline, updatePipelineStage } from '../api';
+import DateFilter, { useDateFilter } from './DateFilter';
 import CustomerDetailModal from './CustomerDetailModal';
 import AddCustomerModal from './AddCustomerModal';
 
@@ -168,10 +169,12 @@ export default function PipelineView() {
   const [searchQuery, setSearchQuery] = useState('');
   const [detailId, setDetailId] = useState(null);
   const [showAddModal, setShowAddModal] = useState(false);
+  const dateFilter = useDateFilter('month');
+  const dateRange = dateFilter.getRange();
 
   const { data: pipeline = [], isLoading } = useQuery({
-    queryKey: ['pipeline'],
-    queryFn: getPipeline,
+    queryKey: ['pipeline', dateRange],
+    queryFn: () => getPipeline(dateRange),
   });
 
   const stageMutation = useMutation({
@@ -196,6 +199,9 @@ export default function PipelineView() {
 
   return (
     <div>
+      {/* Date filter */}
+      <DateFilter {...dateFilter} />
+
       {/* Stage summary cards */}
       <div style={{
         display: 'grid',

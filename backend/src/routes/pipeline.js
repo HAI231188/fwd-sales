@@ -153,6 +153,12 @@ router.get('/search', requireAuth, async (req, res) => {
 
 // GET /api/pipeline — return current user's pipeline (with auto-transitions applied)
 router.get('/', requireAuth, async (req, res) => {
+  const { startDate, endDate } = req.query;
+  const dateFilter = [
+    startDate ? `AND cp.last_activity_date >= '${startDate.replace(/'/g, '')}'` : '',
+    endDate   ? `AND cp.last_activity_date <= '${endDate.replace(/'/g, '')}'`   : '',
+  ].join(' ');
+
   const client = await db.pool.connect();
   try {
     await client.query('BEGIN');
@@ -171,7 +177,7 @@ router.get('/', requireAuth, async (req, res) => {
       LEFT JOIN customers c   ON c.pipeline_id = cp.id
       LEFT JOIN reports r     ON r.id = c.report_id
       LEFT JOIN quotes q      ON q.customer_id = c.id
-      WHERE cp.sales_id = $1
+      WHERE cp.sales_id = $1 ${dateFilter}
       GROUP BY cp.id
       ORDER BY
         CASE cp.stage
