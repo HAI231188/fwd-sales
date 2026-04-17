@@ -208,6 +208,7 @@ function InfoEditForm({ pipeline, latest, pipelineId, customerId, customerCode, 
       toast.success('Đã cập nhật thông tin');
       qc.invalidateQueries({ queryKey: ['pipeline-detail', pipelineId] });
       qc.invalidateQueries({ queryKey: ['pipeline'] });
+      qc.invalidateQueries({ queryKey: ['lead-pipeline'] });
       onDone();
     },
     onError: (err) => toast.error(err?.error || 'Cập nhật thất bại'),
