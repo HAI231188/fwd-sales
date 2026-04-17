@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
-import { getPipeline, updatePipelineStage } from '../api';
+import { getPipeline, updatePipelineStage, deletePipelineEntry } from '../api';
 import DateFilter, { useDateFilter } from './DateFilter';
 import CustomerDetailModal from './CustomerDetailModal';
 import AddCustomerModal from './AddCustomerModal';
@@ -84,20 +84,21 @@ function StageSelect({ currentStage, pipelineId, onUpdate, disabled }) {
   );
 }
 
-function PipelineCard({ entry, onUpdate, disabled, onCompanyClick }) {
+function PipelineCard({ entry, onUpdate, disabled, onCompanyClick, onDelete }) {
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const lastDate = entry.last_activity_date || entry.last_report_date;
   const statuses = (entry.quote_statuses || '').split(',').filter(Boolean);
 
   return (
     <div style={{
-      background: 'var(--bg-card)', border: '1px solid var(--border)',
+      background: 'var(--bg-card)', border: `1px solid ${confirmDelete ? 'var(--danger)' : 'var(--border)'}`,
       borderRadius: 'var(--radius)', padding: '14px 18px',
       display: 'flex', alignItems: 'flex-start', gap: 14, flexWrap: 'wrap',
     }}>
       <div style={{ flex: 1, minWidth: 180 }}>
         <div
           style={{ fontWeight: 700, fontSize: 14, marginBottom: 4, cursor: 'pointer', color: 'var(--primary)', textDecoration: 'underline', textDecorationStyle: 'dotted' }}
-          onClick={() => onCompanyClick(entry.id)}
+          onClick={() => !confirmDelete && onCompanyClick(entry.id)}
         >
           {entry.company_name}
         </div>
@@ -106,6 +107,25 @@ function PipelineCard({ entry, onUpdate, disabled, onCompanyClick }) {
           {entry.phone && <span>📞 {entry.phone}</span>}
           {entry.industry && <span>🏭 {entry.industry}</span>}
         </div>
+        {confirmDelete && (
+          <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 13, color: 'var(--danger)', fontWeight: 500 }}>
+              Xóa khách hàng này khỏi pipeline?
+            </span>
+            <button
+              className="btn btn-danger btn-sm"
+              onClick={() => { setConfirmDelete(false); onDelete(entry.id); }}
+            >
+              Xóa
+            </button>
+            <button
+              className="btn btn-ghost btn-sm"
+              onClick={() => setConfirmDelete(false)}
+            >
+              Hủy
+            </button>
+          </div>
+        )}
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6, flexShrink: 0 }}>
@@ -158,6 +178,20 @@ function PipelineCard({ entry, onUpdate, disabled, onCompanyClick }) {
             🕐 {daysSince(lastDate)}
           </div>
         )}
+        <button
+          type="button"
+          onClick={e => { e.stopPropagation(); setConfirmDelete(true); }}
+          style={{
+            background: 'none', border: '1px solid var(--border)', borderRadius: 6,
+            padding: '3px 7px', cursor: 'pointer', fontSize: 13, color: 'var(--text-3)',
+            lineHeight: 1,
+          }}
+          onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--danger)'; e.currentTarget.style.color = 'var(--danger)'; }}
+          onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--text-3)'; }}
+          title="Xóa khỏi pipeline"
+        >
+          🗑
+        </button>
       </div>
     </div>
   );
@@ -184,6 +218,15 @@ export default function PipelineView() {
       toast.success('Đã cập nhật giai đoạn');
     },
     onError: () => toast.error('Cập nhật thất bại'),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (id) => deletePipelineEntry(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['pipeline'] });
+      toast.success('Đã xóa khỏi pipeline');
+    },
+    onError: () => toast.error('Xóa thất bại'),
   });
 
   const counts = STAGES.reduce((acc, s) => {
@@ -301,6 +344,7 @@ export default function PipelineView() {
               onUpdate={(id, stage) => stageMutation.mutate({ id, stage })}
               disabled={stageMutation.isPending}
               onCompanyClick={setDetailId}
+              onDelete={(id) => deleteMutation.mutate(id)}
             />
           ))}
         </div>

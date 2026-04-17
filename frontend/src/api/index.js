@@ -55,6 +55,7 @@ export const getPipeline = (params = {}) => api.get('/pipeline', { params });
 export const getLeadPipeline = (params) => api.get('/pipeline/lead-all', { params });
 export const searchPipeline = (q) => api.get('/pipeline/search', { params: q ? { q } : {} });
 export const updatePipelineStage = (id, stage) => api.put(`/pipeline/${id}`, { stage });
+export const deletePipelineEntry = (id) => api.delete(`/pipeline/${id}`);
 export const getPipelineHistory = (id) => api.get(`/pipeline/${id}/history`);
 export const getPipelineDetail = (id) => api.get(`/pipeline/${id}/detail`);
 export const updatePipelineInfo = (id, data) => api.put(`/pipeline/${id}/info`, data);

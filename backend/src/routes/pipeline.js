@@ -482,6 +482,37 @@ router.patch('/customers/:customerId/follow-up-complete', requireAuth, async (re
   }
 });
 
+// DELETE /api/pipeline/:id — remove pipeline entry + interaction updates (history cascades)
+router.delete('/:id', requireAuth, async (req, res) => {
+  const client = await db.pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const { rows: check } = await client.query(
+      `SELECT id FROM customer_pipeline WHERE id = $1 AND sales_id = $2`,
+      [req.params.id, req.user.id]
+    );
+    if (!check[0]) return res.status(404).json({ error: 'Không tìm thấy' });
+
+    // Remove interaction updates for all customer rows linked to this pipeline
+    await client.query(`
+      DELETE FROM customer_interaction_updates
+      WHERE customer_id IN (SELECT id FROM customers WHERE pipeline_id = $1)
+    `, [req.params.id]);
+
+    // Delete the pipeline entry (pipeline_history cascades; customers.pipeline_id set to NULL)
+    await client.query(`DELETE FROM customer_pipeline WHERE id = $1`, [req.params.id]);
+
+    await client.query('COMMIT');
+    res.json({ ok: true });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
 // GET /api/pipeline/:id/history — stage change history for a customer
 router.get('/:id/history', requireAuth, async (req, res) => {
   try {
