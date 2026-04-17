@@ -151,6 +151,102 @@ router.get('/search', requireAuth, async (req, res) => {
   }
 });
 
+// POST /api/pipeline/:id/request-delete — sales submits a delete request
+router.post('/:id/request-delete', requireAuth, async (req, res) => {
+  if (req.user.role !== 'sales') return res.status(403).json({ error: 'Không có quyền' });
+  try {
+    const { rows: check } = await db.query(
+      `SELECT id FROM customer_pipeline WHERE id = $1 AND sales_id = $2`,
+      [req.params.id, req.user.id]
+    );
+    if (!check[0]) return res.status(404).json({ error: 'Không tìm thấy' });
+
+    const { rows } = await db.query(`
+      INSERT INTO pipeline_delete_requests (pipeline_id, requested_by)
+      VALUES ($1, $2)
+      ON CONFLICT DO NOTHING
+      RETURNING id
+    `, [req.params.id, req.user.id]);
+
+    if (!rows[0]) return res.status(409).json({ error: 'Đã có yêu cầu xóa đang chờ duyệt' });
+    res.status(201).json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/pipeline/delete-requests — lead sees all pending delete requests
+router.get('/delete-requests', requireAuth, async (req, res) => {
+  if (req.user.role !== 'lead') return res.status(403).json({ error: 'Không có quyền' });
+  try {
+    const { rows } = await db.query(`
+      SELECT
+        dr.id, dr.pipeline_id, dr.status, dr.created_at,
+        cp.company_name, cp.contact_person, cp.stage,
+        u.id AS requester_id, u.name AS requester_name,
+        u.code AS requester_code, u.avatar_color AS requester_avatar_color
+      FROM pipeline_delete_requests dr
+      JOIN customer_pipeline cp ON cp.id = dr.pipeline_id
+      JOIN users u ON u.id = dr.requested_by
+      WHERE dr.status = 'pending'
+      ORDER BY dr.created_at ASC
+    `);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/pipeline/delete-requests/:id/approve — lead approves: executes hard delete
+router.post('/delete-requests/:id/approve', requireAuth, async (req, res) => {
+  if (req.user.role !== 'lead') return res.status(403).json({ error: 'Không có quyền' });
+  const client = await db.pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const { rows: drRows } = await client.query(
+      `SELECT pipeline_id FROM pipeline_delete_requests WHERE id = $1 AND status = 'pending'`,
+      [req.params.id]
+    );
+    if (!drRows[0]) return res.status(404).json({ error: 'Không tìm thấy yêu cầu' });
+
+    const pipelineId = drRows[0].pipeline_id;
+
+    await client.query(`
+      DELETE FROM customer_interaction_updates
+      WHERE customer_id IN (SELECT id FROM customers WHERE pipeline_id = $1)
+    `, [pipelineId]);
+
+    // Deleting pipeline cascades to pipeline_history and pipeline_delete_requests
+    await client.query(`DELETE FROM customer_pipeline WHERE id = $1`, [pipelineId]);
+
+    await client.query('COMMIT');
+    res.json({ ok: true });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// POST /api/pipeline/delete-requests/:id/reject — lead rejects: dismisses request
+router.post('/delete-requests/:id/reject', requireAuth, async (req, res) => {
+  if (req.user.role !== 'lead') return res.status(403).json({ error: 'Không có quyền' });
+  try {
+    const { rows } = await db.query(`
+      UPDATE pipeline_delete_requests
+      SET status = 'rejected', reviewed_at = NOW(), reviewed_by = $2
+      WHERE id = $1 AND status = 'pending'
+      RETURNING id
+    `, [req.params.id, req.user.id]);
+    if (!rows[0]) return res.status(404).json({ error: 'Không tìm thấy yêu cầu' });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/pipeline — return current user's pipeline (with auto-transitions applied)
 router.get('/', requireAuth, async (req, res) => {
   const { startDate, endDate } = req.query;
@@ -479,37 +575,6 @@ router.patch('/customers/:customerId/follow-up-complete', requireAuth, async (re
     res.json(rows[0]);
   } catch (err) {
     res.status(500).json({ error: err.message });
-  }
-});
-
-// DELETE /api/pipeline/:id — remove pipeline entry + interaction updates (history cascades)
-router.delete('/:id', requireAuth, async (req, res) => {
-  const client = await db.pool.connect();
-  try {
-    await client.query('BEGIN');
-
-    const { rows: check } = await client.query(
-      `SELECT id FROM customer_pipeline WHERE id = $1 AND sales_id = $2`,
-      [req.params.id, req.user.id]
-    );
-    if (!check[0]) return res.status(404).json({ error: 'Không tìm thấy' });
-
-    // Remove interaction updates for all customer rows linked to this pipeline
-    await client.query(`
-      DELETE FROM customer_interaction_updates
-      WHERE customer_id IN (SELECT id FROM customers WHERE pipeline_id = $1)
-    `, [req.params.id]);
-
-    // Delete the pipeline entry (pipeline_history cascades; customers.pipeline_id set to NULL)
-    await client.query(`DELETE FROM customer_pipeline WHERE id = $1`, [req.params.id]);
-
-    await client.query('COMMIT');
-    res.json({ ok: true });
-  } catch (err) {
-    await client.query('ROLLBACK');
-    res.status(500).json({ error: err.message });
-  } finally {
-    client.release();
   }
 });
 

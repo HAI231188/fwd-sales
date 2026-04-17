@@ -1,13 +1,14 @@
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { format } from 'date-fns';
+import toast from 'react-hot-toast';
 import Navbar from '../components/Navbar';
 import StatCard from '../components/StatCard';
 import DateFilter, { useDateFilter } from '../components/DateFilter';
 import DrilldownModal from '../components/DrilldownModal';
 import CustomerDetailModal from '../components/CustomerDetailModal';
-import { getStats, getReports, getLeadPipeline } from '../api';
+import { getStats, getReports, getLeadPipeline, getDeleteRequests, approvePipelineDelete, rejectPipelineDelete } from '../api';
 
 const TYPE_LABEL = { saved: 'Lưu liên hệ', contacted: 'Đã liên hệ', quoted: 'Đã báo giá' };
 const TYPE_CLASS = { saved: 'type-saved', contacted: 'type-contacted', quoted: 'type-quoted' };
@@ -20,6 +21,7 @@ const STAGES = [
 ];
 
 export default function LeadDashboard() {
+  const qc = useQueryClient();
   const [activeTab, setActiveTab] = useState('overview');
   const [drilldown, setDrilldown] = useState(null);
   const [filterUser, setFilterUser] = useState('');
@@ -48,9 +50,34 @@ export default function LeadDashboard() {
     enabled: activeTab === 'customers',
   });
 
+  const deleteRequestsQ = useQuery({
+    queryKey: ['delete-requests'],
+    queryFn: getDeleteRequests,
+  });
+
+  const approveMutation = useMutation({
+    mutationFn: (id) => approvePipelineDelete(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['delete-requests'] });
+      qc.invalidateQueries({ queryKey: ['lead-pipeline'] });
+      toast.success('Đã duyệt xóa khách hàng');
+    },
+    onError: () => toast.error('Duyệt thất bại'),
+  });
+
+  const rejectMutation = useMutation({
+    mutationFn: (id) => rejectPipelineDelete(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['delete-requests'] });
+      toast.success('Đã từ chối yêu cầu xóa');
+    },
+    onError: () => toast.error('Thao tác thất bại'),
+  });
+
   const stats = statsQ.data || {};
   const reports = reportsQ.data?.reports || [];
   const allPipeline = pipelineQ.data || [];
+  const deleteRequests = deleteRequestsQ.data || [];
   const q = searchQuery.trim().toLowerCase();
   const pipeline = allPipeline.filter(c =>
     (!filterStage || c.stage === filterStage) &&
@@ -197,12 +224,25 @@ export default function LeadDashboard() {
           {/* Tabs */}
           <div className="tabs">
             {[
-              { key: 'overview', label: '📋 Báo cáo gần đây' },
-              { key: 'reports', label: '📁 Tất cả báo cáo' },
-              { key: 'customers', label: '👥 Khách hàng' },
+              { key: 'overview',        label: '📋 Báo cáo gần đây' },
+              { key: 'reports',         label: '📁 Tất cả báo cáo' },
+              { key: 'customers',       label: '👥 Khách hàng' },
+              { key: 'delete_requests', label: '🗑 Yêu cầu xóa' },
             ].map(t => (
-              <button key={t.key} className={`tab ${activeTab === t.key ? 'active' : ''}`} onClick={() => setActiveTab(t.key)}>
+              <button key={t.key} className={`tab ${activeTab === t.key ? 'active' : ''}`} onClick={() => setActiveTab(t.key)}
+                style={{ position: 'relative' }}
+              >
                 {t.label}
+                {t.key === 'delete_requests' && deleteRequests.length > 0 && (
+                  <span style={{
+                    position: 'absolute', top: 2, right: 2,
+                    background: 'var(--danger)', color: '#fff',
+                    borderRadius: 999, fontSize: 10, fontWeight: 700,
+                    padding: '1px 5px', lineHeight: 1.4,
+                  }}>
+                    {deleteRequests.length}
+                  </span>
+                )}
               </button>
             ))}
           </div>
@@ -218,6 +258,62 @@ export default function LeadDashboard() {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                   {(activeTab === 'overview' ? reports.slice(0, 10) : reports).map(r => (
                     <ReportRow key={r.id} report={r} />
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {activeTab === 'delete_requests' && (
+            <div>
+              {deleteRequestsQ.isLoading ? (
+                <div style={{ textAlign: 'center', padding: 40 }}><div className="spinner" style={{ margin: '0 auto' }} /></div>
+              ) : deleteRequests.length === 0 ? (
+                <div className="empty-state">
+                  <div className="icon">✅</div>
+                  <p>Không có yêu cầu xóa nào đang chờ duyệt</p>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  {deleteRequests.map(dr => (
+                    <div key={dr.id} className="card" style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+                      <div style={{ flex: 1, minWidth: 180 }}>
+                        <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4 }}>{dr.company_name}</div>
+                        <div style={{ fontSize: 12, color: 'var(--text-2)', display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                          {dr.contact_person && <span>👤 {dr.contact_person}</span>}
+                          {(() => {
+                            const s = STAGES.find(x => x.key === dr.stage);
+                            return s ? (
+                              <span style={{ color: s.color, fontWeight: 600 }}>{s.icon} {s.label}</span>
+                            ) : null;
+                          })()}
+                        </div>
+                        <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 4 }}>
+                          Yêu cầu bởi{' '}
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                            <span className="avatar avatar-sm" style={{ background: dr.requester_avatar_color }}>{dr.requester_code}</span>
+                            <strong>{dr.requester_name}</strong>
+                          </span>
+                          {' '}· {format(new Date(dr.created_at), 'dd/MM/yyyy HH:mm')}
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+                        <button
+                          className="btn btn-danger btn-sm"
+                          disabled={approveMutation.isPending || rejectMutation.isPending}
+                          onClick={() => approveMutation.mutate(dr.id)}
+                        >
+                          ✅ Duyệt xóa
+                        </button>
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          disabled={approveMutation.isPending || rejectMutation.isPending}
+                          onClick={() => rejectMutation.mutate(dr.id)}
+                        >
+                          Từ chối
+                        </button>
+                      </div>
+                    </div>
                   ))}
                 </div>
               )}

@@ -158,3 +158,17 @@ ALTER TABLE customer_interaction_updates ADD COLUMN IF NOT EXISTS completion_not
 -- Follow-up completion on interaction cards (customers table)
 ALTER TABLE customers ADD COLUMN IF NOT EXISTS follow_up_completed BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE customers ADD COLUMN IF NOT EXISTS follow_up_result    TEXT;
+
+-- Pipeline delete requests (sales requests, lead approves/rejects)
+CREATE TABLE IF NOT EXISTS pipeline_delete_requests (
+  id           SERIAL PRIMARY KEY,
+  pipeline_id  INTEGER NOT NULL REFERENCES customer_pipeline(id) ON DELETE CASCADE,
+  requested_by INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  status       VARCHAR(10) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
+  created_at   TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  reviewed_at  TIMESTAMP WITH TIME ZONE,
+  reviewed_by  INTEGER REFERENCES users(id) ON DELETE SET NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_pipeline_delete_requests_pending
+  ON pipeline_delete_requests(pipeline_id) WHERE status = 'pending';

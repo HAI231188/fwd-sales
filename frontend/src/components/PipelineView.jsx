@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
-import { getPipeline, updatePipelineStage, deletePipelineEntry } from '../api';
+import { getPipeline, updatePipelineStage, requestPipelineDelete } from '../api';
 import DateFilter, { useDateFilter } from './DateFilter';
 import CustomerDetailModal from './CustomerDetailModal';
 import AddCustomerModal from './AddCustomerModal';
@@ -110,13 +110,13 @@ function PipelineCard({ entry, onUpdate, disabled, onCompanyClick, onDelete }) {
         {confirmDelete && (
           <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             <span style={{ fontSize: 13, color: 'var(--danger)', fontWeight: 500 }}>
-              Xóa khách hàng này khỏi pipeline?
+              Gửi yêu cầu xóa khách hàng này?
             </span>
             <button
               className="btn btn-danger btn-sm"
               onClick={() => { setConfirmDelete(false); onDelete(entry.id); }}
             >
-              Xóa
+              Gửi
             </button>
             <button
               className="btn btn-ghost btn-sm"
@@ -221,12 +221,9 @@ export default function PipelineView() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id) => deletePipelineEntry(id),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['pipeline'] });
-      toast.success('Đã xóa khỏi pipeline');
-    },
-    onError: () => toast.error('Xóa thất bại'),
+    mutationFn: (id) => requestPipelineDelete(id),
+    onSuccess: () => toast.success('Đã gửi yêu cầu xóa — chờ trưởng phòng duyệt'),
+    onError: (err) => toast.error(err?.response?.data?.error || 'Gửi yêu cầu thất bại'),
   });
 
   const counts = STAGES.reduce((acc, s) => {
