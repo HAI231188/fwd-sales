@@ -245,8 +245,11 @@ router.get('/drilldown/:type', requireAuth, async (req, res) => {
       let wi = 1;
       if (!isLead) { wConds.push(`c.user_id = $${wi++}`); wParams.push(req.user.id); }
       else if (userId) { wConds.push(`c.user_id = $${wi++}`); wParams.push(userId); }
+      if (startDate) { wConds.push(`r.report_date >= $${wi++}`); wParams.push(startDate); }
+      if (endDate)   { wConds.push(`r.report_date <= $${wi++}`); wParams.push(endDate); }
       wConds.push(`c.follow_up_date <= CURRENT_DATE + INTERVAL '3 days'`);
       wConds.push(`c.interaction_type != $${wi++}`); wParams.push('saved');
+      wConds.push(`c.follow_up_completed = FALSE`);
       wConds.push(`NOT EXISTS (
         SELECT 1 FROM customer_interaction_updates ciu
         WHERE ciu.customer_id = c.id
