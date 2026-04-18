@@ -302,14 +302,26 @@ export default function DrilldownModal({ type, dateParams, userId, onClose }) {
     enabled: !!type,
   });
 
-  const today  = new Date().toISOString().slice(0, 10);
-  const plus7  = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
+  // Use local date parts to avoid UTC offset shifting the date across midnight in UTC+7
+  const localDateStr = (d) => {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  };
+  const today = localDateStr(new Date());
+  const plus7 = localDateStr(new Date(Date.now() + 7 * 86400000));
 
   const sq = searchQuery.trim().toLowerCase();
   const matchesSearch = (item) => !sq || item.company_name?.toLowerCase().includes(sq);
 
   // For waiting_follow_up: partition using effective_follow_up_date (covers both c.follow_up_date and ciu dates)
-  const effDate = (c) => (c.effective_follow_up_date ?? c.follow_up_date)?.slice(0, 10);
+  // Parse via new Date() then extract local parts so '2026-04-18T00:00:00.000Z' in UTC+7 stays '2026-04-18'
+  const effDate = (c) => {
+    const raw = c.effective_follow_up_date ?? c.follow_up_date;
+    if (!raw) return undefined;
+    return localDateStr(new Date(raw));
+  };
   const todayRows    = config.splitByDate ? data.filter(c => effDate(c) === today && matchesSearch(c))                              : [];
   const upcomingRows = config.splitByDate ? data.filter(c => effDate(c) > today && effDate(c) <= plus7 && matchesSearch(c)) : [];
   const overdueRows  = config.splitByDate ? data.filter(c => effDate(c) < today && matchesSearch(c))                               : [];
