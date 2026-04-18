@@ -228,15 +228,20 @@ router.get('/drilldown/:type', requireAuth, async (req, res) => {
             AND ciu.completed = FALSE
         )
       )`);
-      // Deduplicate: one row per (user, company) — pick row with latest effective follow-up date.
-      // effective_follow_up_date = customer-level date (if not completed) OR latest pending ciu date.
+      // Deduplicate: one row per (user, company).
+      // effective_follow_up_date = MAX of all pending dates from both sources
+      // (most recent wins so a customer with an overdue c.follow_up_date but a CIU for today shows in "today").
       ({ rows } = await db.query(`
         SELECT DISTINCT ON (c.user_id, LOWER(c.company_name))
           c.*, u.name AS user_name, u.code AS user_code, u.avatar_color, r.report_date,
-          COALESCE(
-            CASE WHEN c.follow_up_completed = FALSE THEN c.follow_up_date END,
-            (SELECT MAX(ciu2.follow_up_date) FROM customer_interaction_updates ciu2
-             WHERE ciu2.customer_id = c.id AND ciu2.completed = FALSE AND ciu2.follow_up_date IS NOT NULL)
+          (
+            SELECT MAX(d) FROM (
+              SELECT CASE WHEN c.follow_up_completed = FALSE THEN c.follow_up_date END AS d
+              UNION ALL
+              SELECT MAX(ciu2.follow_up_date)
+              FROM customer_interaction_updates ciu2
+              WHERE ciu2.customer_id = c.id AND ciu2.completed = FALSE AND ciu2.follow_up_date IS NOT NULL
+            ) sub WHERE d IS NOT NULL
           ) AS effective_follow_up_date,
           (
             SELECT COUNT(q2.id)
@@ -249,10 +254,14 @@ router.get('/drilldown/:type', requireAuth, async (req, res) => {
         JOIN users u ON u.id = c.user_id
         WHERE ${wConds.join(' AND ')}
         ORDER BY c.user_id, LOWER(c.company_name),
-          COALESCE(
-            CASE WHEN c.follow_up_completed = FALSE THEN c.follow_up_date END,
-            (SELECT MAX(ciu2.follow_up_date) FROM customer_interaction_updates ciu2
-             WHERE ciu2.customer_id = c.id AND ciu2.completed = FALSE AND ciu2.follow_up_date IS NOT NULL)
+          (
+            SELECT MAX(d) FROM (
+              SELECT CASE WHEN c.follow_up_completed = FALSE THEN c.follow_up_date END AS d
+              UNION ALL
+              SELECT MAX(ciu2.follow_up_date)
+              FROM customer_interaction_updates ciu2
+              WHERE ciu2.customer_id = c.id AND ciu2.completed = FALSE AND ciu2.follow_up_date IS NOT NULL
+            ) sub WHERE d IS NOT NULL
           ) DESC NULLS LAST
       `, wParams));
       // Re-sort by effective_follow_up_date ASC after deduplication
