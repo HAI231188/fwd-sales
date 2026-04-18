@@ -62,9 +62,8 @@ router.get('/', requireAuth, async (req, res) => {
         let wi = 1;
         if (!isLead) { wConds.push(`c.user_id = $${wi++}`); wParams.push(req.user.id); }
         else if (userId) { wConds.push(`c.user_id = $${wi++}`); wParams.push(userId); }
-        wConds.push(`c.interaction_type != $${wi++}`); wParams.push('saved');
         wConds.push(`(
-          (c.follow_up_date = CURRENT_DATE AND c.follow_up_completed = FALSE)
+          (c.follow_up_date = CURRENT_DATE AND c.follow_up_completed = FALSE AND c.interaction_type != 'saved')
           OR EXISTS (
             SELECT 1 FROM customer_interaction_updates ciu
             WHERE ciu.customer_id = c.id
@@ -85,9 +84,8 @@ router.get('/', requireAuth, async (req, res) => {
         let wi = 1;
         if (!isLead) { wConds.push(`c.user_id = $${wi++}`); wParams.push(req.user.id); }
         else if (userId) { wConds.push(`c.user_id = $${wi++}`); wParams.push(userId); }
-        wConds.push(`c.interaction_type != $${wi++}`); wParams.push('saved');
         wConds.push(`(
-          (c.follow_up_date < CURRENT_DATE AND c.follow_up_completed = FALSE)
+          (c.follow_up_date < CURRENT_DATE AND c.follow_up_completed = FALSE AND c.interaction_type != 'saved')
           OR EXISTS (
             SELECT 1 FROM customer_interaction_updates ciu
             WHERE ciu.customer_id = c.id
@@ -108,9 +106,8 @@ router.get('/', requireAuth, async (req, res) => {
         let wi = 1;
         if (!isLead) { wConds.push(`c.user_id = $${wi++}`); wParams.push(req.user.id); }
         else if (userId) { wConds.push(`c.user_id = $${wi++}`); wParams.push(userId); }
-        wConds.push(`c.interaction_type != $${wi++}`); wParams.push('saved');
         wConds.push(`(
-          (c.follow_up_date > CURRENT_DATE AND c.follow_up_date <= CURRENT_DATE + INTERVAL '7 days' AND c.follow_up_completed = FALSE)
+          (c.follow_up_date > CURRENT_DATE AND c.follow_up_date <= CURRENT_DATE + INTERVAL '7 days' AND c.follow_up_completed = FALSE AND c.interaction_type != 'saved')
           OR EXISTS (
             SELECT 1 FROM customer_interaction_updates ciu
             WHERE ciu.customer_id = c.id
@@ -221,9 +218,8 @@ router.get('/drilldown/:type', requireAuth, async (req, res) => {
       let wi = 1;
       if (!isLead) { wConds.push(`c.user_id = $${wi++}`); wParams.push(req.user.id); }
       else if (userId) { wConds.push(`c.user_id = $${wi++}`); wParams.push(userId); }
-      wConds.push(`c.interaction_type != $${wi++}`); wParams.push('saved');
       wConds.push(`(
-        (c.follow_up_date IS NOT NULL AND c.follow_up_date <= CURRENT_DATE + INTERVAL '7 days' AND c.follow_up_completed = FALSE)
+        (c.follow_up_date IS NOT NULL AND c.follow_up_date <= CURRENT_DATE + INTERVAL '7 days' AND c.follow_up_completed = FALSE AND c.interaction_type != 'saved')
         OR EXISTS (
           SELECT 1 FROM customer_interaction_updates ciu
           WHERE ciu.customer_id = c.id
