@@ -38,6 +38,25 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// Temporary debug: follow-up customers — remove after diagnosis
+app.get('/api/debug/followup', async (req, res) => {
+  const db = require('./db');
+  try {
+    const { rows } = await db.query(`
+      SELECT c.id, c.user_id, c.company_name, c.follow_up_date, c.follow_up_completed, c.interaction_type
+      FROM customers c
+      WHERE c.follow_up_date IS NOT NULL
+        AND c.follow_up_completed = FALSE
+        AND c.interaction_type != 'saved'
+      ORDER BY c.follow_up_date
+      LIMIT 20
+    `);
+    res.json({ count: rows.length, rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Serve frontend — always, whenever the dist folder exists
 if (hasFrontend) {
   app.use(express.static(frontendPath));
