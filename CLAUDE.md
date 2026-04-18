@@ -136,6 +136,54 @@ fwd-sales/
 
 ---
 
+## 5a. Critical Lessons Learned
+
+### L1 — Multi-row customer pattern
+One `company_name` can have **multiple rows in the `customers` table** (one per report interaction). Never assume one customer = one row. When aggregating (counts, follow-up dates, quote counts) across a company, always JOIN across all rows sharing the same `(user_id, LOWER(company_name))` pair, or use a correlated subquery that spans all matching rows.
+
+### L2 — Two follow-up sources; always check both
+The follow-up system has **two independent sources**:
+
+| Source | Table | Date column | Completion flag |
+|--------|-------|-------------|-----------------|
+| Customer-level | `customers` | `follow_up_date` | `follow_up_completed = FALSE` |
+| Update-level | `customer_interaction_updates` | `follow_up_date` | `completed = FALSE` |
+
+Every follow-up stat query and every drilldown filter **must check both** via `OR EXISTS` (for counts) or `UNION ALL` (for row-level results). Checking only `customers.follow_up_date` will silently miss customers who only have CIU follow-up dates set.
+
+Also: `c.interaction_type != 'saved'` must only guard the **customer-level branch** of the OR — not the top-level WHERE. A 'saved' customer with a CIU follow-up is still a valid pending task.
+
+### L3 — Never use `toISOString()` for date comparisons in the frontend
+`new Date().toISOString().slice(0, 10)` returns the **UTC date**. In Vietnam (UTC+7), after ~5 pm local time the UTC date is already tomorrow, silently bucketing today's follow-ups into "upcoming" or "overdue".
+
+**Always** compute date strings using local time parts:
+```js
+const localDateStr = (d) => {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+};
+const today = localDateStr(new Date());
+```
+Apply the same local-date extraction when parsing server date strings for comparison.
+
+### L4 — CHỜ FOLLOW drilldown uses UNION ALL, not DISTINCT ON
+The `waiting_follow_up` drilldown returns **one row per follow-up task**, not one row per company. A company with two pending CIU dates (e.g., 18/04 and 20/04) appears **twice** — once in "Hôm nay" and once in "7 ngày tới". This is intentional: each row is an action item.
+
+The query is a `UNION ALL` of:
+- **Source A**: `customers.follow_up_date` (deduplicated per pipeline + date via `DISTINCT ON`)
+- **Source B**: `customer_interaction_updates.follow_up_date` (one row per CIU)
+
+Do not collapse back to DISTINCT ON per company — that was the original bug.
+
+### L5 — Stat query and drilldown must use identical WHERE logic
+If the stat counts a customer in "today" using condition X, the drilldown must also include that customer using the same condition X. Any divergence (extra filters, missing OR branch, different date range) causes the displayed count to disagree with the modal rows — which is a confusing and hard-to-debug UX bug.
+
+Rule: when changing a stat query condition, always update the matching drilldown condition in the same commit, and vice versa. Also note that **follow-up stats must NOT be filtered by `r.report_date`** — follow-up obligations are independent of when the report was filed.
+
+---
+
 ## 6. Session Start Checklist
 
 1. Read this file.
