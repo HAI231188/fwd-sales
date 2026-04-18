@@ -41,40 +41,25 @@ app.get('/api/health', (req, res) => {
 // Temporary debug: follow-up customers — remove after diagnosis
 app.get('/api/debug/followup', async (req, res) => {
   const db = require('./db');
+  const base = `FROM customers c WHERE c.follow_up_completed = FALSE AND c.interaction_type != 'saved'`;
   try {
-    const [dateRow, rawRows, overdueAll, perUser] = await Promise.all([
+    const [dateRow, todayCount, todayRows, upcomingCount, upcomingRows, overdueCount, overdueRows] = await Promise.all([
       db.query(`SELECT CURRENT_DATE AS today, NOW() AS now`),
-      db.query(`
-        SELECT c.id, c.user_id, c.company_name, c.follow_up_date,
-               c.follow_up_completed, c.interaction_type
-        FROM customers c
-        WHERE c.follow_up_date IS NOT NULL
-          AND c.follow_up_completed = FALSE
-          AND c.interaction_type != 'saved'
-        ORDER BY c.follow_up_date
-        LIMIT 20
-      `),
-      db.query(`
-        SELECT COUNT(DISTINCT c.id) AS overdue_all
-        FROM customers c
-        WHERE c.follow_up_date < CURRENT_DATE
-          AND c.follow_up_completed = FALSE
-          AND c.interaction_type != 'saved'
-      `),
-      db.query(`
-        SELECT c.user_id, COUNT(DISTINCT c.id) AS overdue_count
-        FROM customers c
-        WHERE c.follow_up_date < CURRENT_DATE
-          AND c.follow_up_completed = FALSE
-          AND c.interaction_type != 'saved'
-        GROUP BY c.user_id
-      `),
+      db.query(`SELECT COUNT(DISTINCT c.id) AS v ${base} AND c.follow_up_date = CURRENT_DATE`),
+      db.query(`SELECT c.id, c.user_id, c.company_name, c.follow_up_date ${base} AND c.follow_up_date = CURRENT_DATE ORDER BY c.company_name`),
+      db.query(`SELECT COUNT(DISTINCT c.id) AS v ${base} AND c.follow_up_date > CURRENT_DATE AND c.follow_up_date <= CURRENT_DATE + INTERVAL '7 days'`),
+      db.query(`SELECT c.id, c.user_id, c.company_name, c.follow_up_date ${base} AND c.follow_up_date > CURRENT_DATE AND c.follow_up_date <= CURRENT_DATE + INTERVAL '7 days' ORDER BY c.follow_up_date`),
+      db.query(`SELECT COUNT(DISTINCT c.id) AS v ${base} AND c.follow_up_date < CURRENT_DATE`),
+      db.query(`SELECT c.id, c.user_id, c.company_name, c.follow_up_date ${base} AND c.follow_up_date < CURRENT_DATE ORDER BY c.follow_up_date DESC`),
     ]);
     res.json({
       db_date: dateRow.rows[0],
-      raw_matching_customers: rawRows.rows,
-      overdue_count_no_user_filter: overdueAll.rows[0].overdue_all,
-      overdue_per_user: perUser.rows,
+      today_count: parseInt(todayCount.rows[0].v),
+      today_rows: todayRows.rows,
+      upcoming_count: parseInt(upcomingCount.rows[0].v),
+      upcoming_rows: upcomingRows.rows,
+      overdue_count: parseInt(overdueCount.rows[0].v),
+      overdue_rows: overdueRows.rows,
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
