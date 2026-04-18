@@ -42,16 +42,40 @@ app.get('/api/health', (req, res) => {
 app.get('/api/debug/followup', async (req, res) => {
   const db = require('./db');
   try {
-    const { rows } = await db.query(`
-      SELECT c.id, c.user_id, c.company_name, c.follow_up_date, c.follow_up_completed, c.interaction_type
-      FROM customers c
-      WHERE c.follow_up_date IS NOT NULL
-        AND c.follow_up_completed = FALSE
-        AND c.interaction_type != 'saved'
-      ORDER BY c.follow_up_date
-      LIMIT 20
-    `);
-    res.json({ count: rows.length, rows });
+    const [dateRow, rawRows, overdueAll, perUser] = await Promise.all([
+      db.query(`SELECT CURRENT_DATE AS today, NOW() AS now`),
+      db.query(`
+        SELECT c.id, c.user_id, c.company_name, c.follow_up_date,
+               c.follow_up_completed, c.interaction_type
+        FROM customers c
+        WHERE c.follow_up_date IS NOT NULL
+          AND c.follow_up_completed = FALSE
+          AND c.interaction_type != 'saved'
+        ORDER BY c.follow_up_date
+        LIMIT 20
+      `),
+      db.query(`
+        SELECT COUNT(DISTINCT c.id) AS overdue_all
+        FROM customers c
+        WHERE c.follow_up_date < CURRENT_DATE
+          AND c.follow_up_completed = FALSE
+          AND c.interaction_type != 'saved'
+      `),
+      db.query(`
+        SELECT c.user_id, COUNT(DISTINCT c.id) AS overdue_count
+        FROM customers c
+        WHERE c.follow_up_date < CURRENT_DATE
+          AND c.follow_up_completed = FALSE
+          AND c.interaction_type != 'saved'
+        GROUP BY c.user_id
+      `),
+    ]);
+    res.json({
+      db_date: dateRow.rows[0],
+      raw_matching_customers: rawRows.rows,
+      overdue_count_no_user_filter: overdueAll.rows[0].overdue_all,
+      overdue_per_user: perUser.rows,
+    });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
