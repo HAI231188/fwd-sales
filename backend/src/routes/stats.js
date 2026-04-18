@@ -266,6 +266,10 @@ router.get('/drilldown/:type', requireAuth, async (req, res) => {
       `, wParams));
       // Re-sort by effective_follow_up_date ASC after deduplication
       rows.sort((a, b) => new Date(a.effective_follow_up_date) - new Date(b.effective_follow_up_date));
+      console.log('[drilldown waiting_follow_up] wConds:', wConds.join(' AND '));
+      console.log('[drilldown waiting_follow_up] wParams:', wParams);
+      console.log('[drilldown waiting_follow_up] rows returned:', rows.length);
+      rows.forEach(r => console.log('  -', r.company_name, '| follow_up_date:', r.follow_up_date, '| effective:', r.effective_follow_up_date, '| user_id:', r.user_id));
     }
 
     res.json(rows);
