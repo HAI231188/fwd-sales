@@ -43,7 +43,7 @@ app.get('/api/debug/followup', async (req, res) => {
   const db = require('./db');
   const base = `FROM customers c WHERE c.follow_up_completed = FALSE AND c.interaction_type != 'saved'`;
   try {
-    const [dateRow, todayCount, todayRows, upcomingCount, upcomingRows, overdueCount, overdueRows] = await Promise.all([
+    const [dateRow, todayCount, todayRows, upcomingCount, upcomingRows, overdueCount, overdueRows, ciuRows, users] = await Promise.all([
       db.query(`SELECT CURRENT_DATE AS today, NOW() AS now`),
       db.query(`SELECT COUNT(DISTINCT c.id) AS v ${base} AND c.follow_up_date = CURRENT_DATE`),
       db.query(`SELECT c.id, c.user_id, c.company_name, c.follow_up_date ${base} AND c.follow_up_date = CURRENT_DATE ORDER BY c.company_name`),
@@ -51,6 +51,15 @@ app.get('/api/debug/followup', async (req, res) => {
       db.query(`SELECT c.id, c.user_id, c.company_name, c.follow_up_date ${base} AND c.follow_up_date > CURRENT_DATE AND c.follow_up_date <= CURRENT_DATE + INTERVAL '7 days' ORDER BY c.follow_up_date`),
       db.query(`SELECT COUNT(DISTINCT c.id) AS v ${base} AND c.follow_up_date < CURRENT_DATE`),
       db.query(`SELECT c.id, c.user_id, c.company_name, c.follow_up_date ${base} AND c.follow_up_date < CURRENT_DATE ORDER BY c.follow_up_date DESC`),
+      db.query(`
+        SELECT ciu.id, ciu.customer_id, ciu.follow_up_date, ciu.completed, c.user_id, c.company_name
+        FROM customer_interaction_updates ciu
+        JOIN customers c ON c.id = ciu.customer_id
+        WHERE ciu.follow_up_date IS NOT NULL AND ciu.completed = FALSE
+        ORDER BY ciu.follow_up_date
+        LIMIT 20
+      `),
+      db.query(`SELECT id, name, role FROM users ORDER BY id`),
     ]);
     res.json({
       db_date: dateRow.rows[0],
@@ -60,6 +69,8 @@ app.get('/api/debug/followup', async (req, res) => {
       upcoming_rows: upcomingRows.rows,
       overdue_count: parseInt(overdueCount.rows[0].v),
       overdue_rows: overdueRows.rows,
+      pending_ciu_follow_ups: ciuRows.rows,
+      users,
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
