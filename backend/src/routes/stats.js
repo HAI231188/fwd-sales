@@ -213,59 +213,66 @@ router.get('/drilldown/:type', requireAuth, async (req, res) => {
     } else if (type === 'total_quotes') {
       ({ rows } = await db.query(`SELECT ${quoteSelect} ${WHERE} ORDER BY q.created_at DESC`, params));
     } else if (type === 'waiting_follow_up') {
-      const wConds = [];
       const wParams = [];
-      let wi = 1;
-      if (!isLead) { wConds.push(`c.user_id = $${wi++}`); wParams.push(req.user.id); }
-      else if (userId) { wConds.push(`c.user_id = $${wi++}`); wParams.push(userId); }
-      wConds.push(`(
-        (c.follow_up_date IS NOT NULL AND c.follow_up_date <= CURRENT_DATE + INTERVAL '7 days' AND c.follow_up_completed = FALSE AND c.interaction_type != 'saved')
-        OR EXISTS (
-          SELECT 1 FROM customer_interaction_updates ciu
-          WHERE ciu.customer_id = c.id
-            AND ciu.follow_up_date IS NOT NULL
+      let userCond = '';
+      if (!isLead) { userCond = 'AND c.user_id = $1'; wParams.push(req.user.id); }
+      else if (userId) { userCond = 'AND c.user_id = $1'; wParams.push(userId); }
+
+      // One row per follow-up task: customer-level dates and CIU dates are separate rows.
+      // KAW VIỆT NAM with CIU 18/04 AND CIU 20/04 appears twice — once per bucket.
+      ({ rows } = await db.query(`
+        SELECT * FROM (
+          -- Source A: customer-level pending follow-ups, one per (pipeline, date)
+          SELECT DISTINCT ON (COALESCE(c.pipeline_id::text, c.user_id::text || '_' || LOWER(c.company_name)), c.follow_up_date::text)
+            c.company_name, c.contact_person, c.phone, c.industry,
+            c.user_id, c.pipeline_id, c.interaction_type, c.needs,
+            cp.stage,
+            c.follow_up_date AS follow_up_date,
+            c.follow_up_date AS effective_follow_up_date,
+            u.name AS user_name, u.code AS user_code, u.avatar_color,
+            (SELECT COUNT(q2.id) FROM customers c2 LEFT JOIN quotes q2 ON q2.customer_id = c2.id
+             WHERE c2.user_id = c.user_id AND LOWER(c2.company_name) = LOWER(c.company_name))::int AS quote_count,
+            COALESCE((SELECT BOOL_OR(q2.closing_soon) FROM customers c2 JOIN quotes q2 ON q2.customer_id = c2.id
+                      WHERE c2.user_id = c.user_id AND LOWER(c2.company_name) = LOWER(c.company_name)), FALSE) AS has_closing_soon
+          FROM customers c
+          JOIN users u ON u.id = c.user_id
+          LEFT JOIN customer_pipeline cp ON cp.id = c.pipeline_id
+          WHERE c.follow_up_date IS NOT NULL
+            AND c.follow_up_date <= CURRENT_DATE + INTERVAL '7 days'
+            AND c.follow_up_completed = FALSE
+            AND c.interaction_type != 'saved'
+            ${userCond}
+          ORDER BY COALESCE(c.pipeline_id::text, c.user_id::text || '_' || LOWER(c.company_name)),
+                   c.follow_up_date::text, c.created_at DESC
+        ) src_a
+
+        UNION ALL
+
+        SELECT * FROM (
+          -- Source B: CIU-level pending follow-ups, one row per CIU
+          SELECT
+            c.company_name, c.contact_person, c.phone, c.industry,
+            c.user_id, c.pipeline_id, c.interaction_type, c.needs,
+            cp.stage,
+            ciu.follow_up_date AS follow_up_date,
+            ciu.follow_up_date AS effective_follow_up_date,
+            u.name AS user_name, u.code AS user_code, u.avatar_color,
+            (SELECT COUNT(q2.id) FROM customers c2 LEFT JOIN quotes q2 ON q2.customer_id = c2.id
+             WHERE c2.user_id = c.user_id AND LOWER(c2.company_name) = LOWER(c.company_name))::int AS quote_count,
+            COALESCE((SELECT BOOL_OR(q2.closing_soon) FROM customers c2 JOIN quotes q2 ON q2.customer_id = c2.id
+                      WHERE c2.user_id = c.user_id AND LOWER(c2.company_name) = LOWER(c.company_name)), FALSE) AS has_closing_soon
+          FROM customer_interaction_updates ciu
+          JOIN customers c ON c.id = ciu.customer_id
+          JOIN users u ON u.id = c.user_id
+          LEFT JOIN customer_pipeline cp ON cp.id = c.pipeline_id
+          WHERE ciu.follow_up_date IS NOT NULL
             AND ciu.follow_up_date <= CURRENT_DATE + INTERVAL '7 days'
             AND ciu.completed = FALSE
-        )
-      )`);
-      // Deduplicate: one row per (user, company).
-      // effective_follow_up_date = MIN (most urgent) across ALL customer rows + ALL CIUs for the company,
-      // so a company with one CIU for today and another for next week shows in "today" — matching the stat.
-      ({ rows } = await db.query(`
-        SELECT DISTINCT ON (c.user_id, LOWER(c.company_name))
-          c.*, u.name AS user_name, u.code AS user_code, u.avatar_color, r.report_date,
-          (
-            SELECT MIN(d) FROM (
-              SELECT c2.follow_up_date AS d
-              FROM customers c2
-              WHERE c2.user_id = c.user_id AND LOWER(c2.company_name) = LOWER(c.company_name)
-                AND c2.follow_up_completed = FALSE AND c2.follow_up_date IS NOT NULL
-              UNION ALL
-              SELECT ciu2.follow_up_date
-              FROM customer_interaction_updates ciu2
-              JOIN customers c2 ON c2.id = ciu2.customer_id
-              WHERE c2.user_id = c.user_id AND LOWER(c2.company_name) = LOWER(c.company_name)
-                AND ciu2.completed = FALSE AND ciu2.follow_up_date IS NOT NULL
-            ) sub
-          ) AS effective_follow_up_date,
-          (
-            SELECT COUNT(q2.id)
-            FROM customers c2
-            LEFT JOIN quotes q2 ON q2.customer_id = c2.id
-            WHERE c2.user_id = c.user_id AND LOWER(c2.company_name) = LOWER(c.company_name)
-          )::int AS quote_count
-        FROM customers c
-        JOIN reports r ON r.id = c.report_id
-        JOIN users u ON u.id = c.user_id
-        WHERE ${wConds.join(' AND ')}
-        ORDER BY c.user_id, LOWER(c.company_name), c.created_at DESC
+            ${userCond}
+        ) src_b
+
+        ORDER BY effective_follow_up_date ASC
       `, wParams));
-      // Re-sort by effective_follow_up_date ASC after deduplication
-      rows.sort((a, b) => new Date(a.effective_follow_up_date) - new Date(b.effective_follow_up_date));
-      console.log('[drilldown waiting_follow_up] wConds:', wConds.join(' AND '));
-      console.log('[drilldown waiting_follow_up] wParams:', wParams);
-      console.log('[drilldown waiting_follow_up] rows returned:', rows.length);
-      rows.forEach(r => console.log('  -', r.company_name, '| follow_up_date:', r.follow_up_date, '| effective:', r.effective_follow_up_date, '| user_id:', r.user_id));
     }
 
     res.json(rows);
