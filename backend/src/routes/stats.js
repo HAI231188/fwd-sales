@@ -65,21 +65,8 @@ router.get('/', requireAuth, async (req, res) => {
         wConds.push(`c.follow_up_date = CURRENT_DATE`);
         wConds.push(`c.interaction_type != $${wi++}`); wParams.push('saved');
         wConds.push(`c.follow_up_completed = FALSE`);
-        wConds.push(`NOT EXISTS (
-          SELECT 1 FROM customer_interaction_updates ciu
-          WHERE ciu.customer_id = c.id
-            AND ciu.follow_up_date IS NOT NULL
-            AND ciu.completed = TRUE
-            AND NOT EXISTS (
-              SELECT 1 FROM customer_interaction_updates ciu2
-              WHERE ciu2.customer_id = c.id
-                AND ciu2.follow_up_date IS NOT NULL
-                AND ciu2.created_at > ciu.created_at
-                AND ciu2.completed = FALSE
-            )
-        )`);
         return db.query(
-          `SELECT COUNT(DISTINCT c.id) AS v FROM customers c JOIN reports r ON r.id=c.report_id WHERE ${wConds.join(' AND ')}`,
+          `SELECT COUNT(DISTINCT c.id) AS v FROM customers c WHERE ${wConds.join(' AND ')}`,
           wParams
         );
       })(),
@@ -94,21 +81,8 @@ router.get('/', requireAuth, async (req, res) => {
         wConds.push(`c.follow_up_date < CURRENT_DATE`);
         wConds.push(`c.interaction_type != $${wi++}`); wParams.push('saved');
         wConds.push(`c.follow_up_completed = FALSE`);
-        wConds.push(`NOT EXISTS (
-          SELECT 1 FROM customer_interaction_updates ciu
-          WHERE ciu.customer_id = c.id
-            AND ciu.follow_up_date IS NOT NULL
-            AND ciu.completed = TRUE
-            AND NOT EXISTS (
-              SELECT 1 FROM customer_interaction_updates ciu2
-              WHERE ciu2.customer_id = c.id
-                AND ciu2.follow_up_date IS NOT NULL
-                AND ciu2.created_at > ciu.created_at
-                AND ciu2.completed = FALSE
-            )
-        )`);
         return db.query(
-          `SELECT COUNT(DISTINCT c.id) AS v FROM customers c JOIN reports r ON r.id=c.report_id WHERE ${wConds.join(' AND ')}`,
+          `SELECT COUNT(DISTINCT c.id) AS v FROM customers c WHERE ${wConds.join(' AND ')}`,
           wParams
         );
       })(),
@@ -124,21 +98,8 @@ router.get('/', requireAuth, async (req, res) => {
         wConds.push(`c.follow_up_date <= CURRENT_DATE + INTERVAL '3 days'`);
         wConds.push(`c.interaction_type != $${wi++}`); wParams.push('saved');
         wConds.push(`c.follow_up_completed = FALSE`);
-        wConds.push(`NOT EXISTS (
-          SELECT 1 FROM customer_interaction_updates ciu
-          WHERE ciu.customer_id = c.id
-            AND ciu.follow_up_date IS NOT NULL
-            AND ciu.completed = TRUE
-            AND NOT EXISTS (
-              SELECT 1 FROM customer_interaction_updates ciu2
-              WHERE ciu2.customer_id = c.id
-                AND ciu2.follow_up_date IS NOT NULL
-                AND ciu2.created_at > ciu.created_at
-                AND ciu2.completed = FALSE
-            )
-        )`);
         return db.query(
-          `SELECT COUNT(DISTINCT c.id) AS v FROM customers c JOIN reports r ON r.id=c.report_id WHERE ${wConds.join(' AND ')}`,
+          `SELECT COUNT(DISTINCT c.id) AS v FROM customers c WHERE ${wConds.join(' AND ')}`,
           wParams
         );
       })(),
@@ -242,19 +203,6 @@ router.get('/drilldown/:type', requireAuth, async (req, res) => {
       wConds.push(`c.follow_up_date <= CURRENT_DATE + INTERVAL '3 days'`);
       wConds.push(`c.interaction_type != $${wi++}`); wParams.push('saved');
       wConds.push(`c.follow_up_completed = FALSE`);
-      wConds.push(`NOT EXISTS (
-        SELECT 1 FROM customer_interaction_updates ciu
-        WHERE ciu.customer_id = c.id
-          AND ciu.follow_up_date IS NOT NULL
-          AND ciu.completed = TRUE
-          AND NOT EXISTS (
-            SELECT 1 FROM customer_interaction_updates ciu2
-            WHERE ciu2.customer_id = c.id
-              AND ciu2.follow_up_date IS NOT NULL
-              AND ciu2.created_at > ciu.created_at
-              AND ciu2.completed = FALSE
-          )
-      )`);
       // Deduplicate: one row per (user, company) — pick latest follow_up_date row,
       // count total quotes across ALL entries for that company+user
       ({ rows } = await db.query(`
