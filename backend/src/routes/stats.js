@@ -87,7 +87,7 @@ router.get('/', requireAuth, async (req, res) => {
         );
       })(),
 
-      // Upcoming — follow_up_date between tomorrow and +3 days, not completed
+      // Upcoming — follow_up_date between tomorrow and +7 days, not completed
       (() => {
         const wConds = [];
         const wParams = [];
@@ -95,7 +95,7 @@ router.get('/', requireAuth, async (req, res) => {
         if (!isLead) { wConds.push(`c.user_id = $${wi++}`); wParams.push(req.user.id); }
         else if (userId) { wConds.push(`c.user_id = $${wi++}`); wParams.push(userId); }
         wConds.push(`c.follow_up_date > CURRENT_DATE`);
-        wConds.push(`c.follow_up_date <= CURRENT_DATE + INTERVAL '3 days'`);
+        wConds.push(`c.follow_up_date <= CURRENT_DATE + INTERVAL '7 days'`);
         wConds.push(`c.interaction_type != $${wi++}`); wParams.push('saved');
         wConds.push(`c.follow_up_completed = FALSE`);
         return db.query(
@@ -200,7 +200,7 @@ router.get('/drilldown/:type', requireAuth, async (req, res) => {
       let wi = 1;
       if (!isLead) { wConds.push(`c.user_id = $${wi++}`); wParams.push(req.user.id); }
       else if (userId) { wConds.push(`c.user_id = $${wi++}`); wParams.push(userId); }
-      wConds.push(`c.follow_up_date <= CURRENT_DATE + INTERVAL '3 days'`);
+      wConds.push(`c.follow_up_date <= CURRENT_DATE + INTERVAL '7 days'`);
       wConds.push(`c.interaction_type != $${wi++}`); wParams.push('saved');
       wConds.push(`c.follow_up_completed = FALSE`);
       // Deduplicate: one row per (user, company) — pick latest follow_up_date row,
