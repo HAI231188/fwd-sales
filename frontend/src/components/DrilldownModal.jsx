@@ -308,10 +308,11 @@ export default function DrilldownModal({ type, dateParams, userId, onClose }) {
   const sq = searchQuery.trim().toLowerCase();
   const matchesSearch = (item) => !sq || item.company_name?.toLowerCase().includes(sq);
 
-  // For waiting_follow_up: partition into today, upcoming (tomorrow–+7d), overdue
-  const todayRows    = config.splitByDate ? data.filter(c => c.follow_up_date?.slice(0, 10) === today && matchesSearch(c))                                                        : [];
-  const upcomingRows = config.splitByDate ? data.filter(c => c.follow_up_date?.slice(0, 10) > today && c.follow_up_date?.slice(0, 10) <= plus7 && matchesSearch(c)) : [];
-  const overdueRows  = config.splitByDate ? data.filter(c => c.follow_up_date?.slice(0, 10) < today && matchesSearch(c))                                                          : [];
+  // For waiting_follow_up: partition using effective_follow_up_date (covers both c.follow_up_date and ciu dates)
+  const effDate = (c) => (c.effective_follow_up_date ?? c.follow_up_date)?.slice(0, 10);
+  const todayRows    = config.splitByDate ? data.filter(c => effDate(c) === today && matchesSearch(c))                              : [];
+  const upcomingRows = config.splitByDate ? data.filter(c => effDate(c) > today && effDate(c) <= plus7 && matchesSearch(c)) : [];
+  const overdueRows  = config.splitByDate ? data.filter(c => effDate(c) < today && matchesSearch(c))                               : [];
 
   const filteredData = data
     .filter(item => !config.isQuote && !config.splitByDate && filterType ? item.interaction_type === filterType : true)

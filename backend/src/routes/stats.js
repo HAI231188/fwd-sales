@@ -55,49 +55,70 @@ router.get('/', requireAuth, async (req, res) => {
       // Closing soon
       db.query(`SELECT COUNT(q.id) AS v FROM quotes q JOIN customers c ON c.id=q.customer_id JOIN reports r ON r.id=c.report_id ${WHERE} ${AND} q.closing_soon=TRUE AND q.status NOT IN ('booked','lost')`, params),
 
-      // Follow today — follow_up_date = TODAY, not completed
+      // Follow today — customer-level OR ciu-level follow_up_date = TODAY
       (() => {
         const wConds = [];
         const wParams = [];
         let wi = 1;
         if (!isLead) { wConds.push(`c.user_id = $${wi++}`); wParams.push(req.user.id); }
         else if (userId) { wConds.push(`c.user_id = $${wi++}`); wParams.push(userId); }
-        wConds.push(`c.follow_up_date = CURRENT_DATE`);
         wConds.push(`c.interaction_type != $${wi++}`); wParams.push('saved');
-        wConds.push(`c.follow_up_completed = FALSE`);
+        wConds.push(`(
+          (c.follow_up_date = CURRENT_DATE AND c.follow_up_completed = FALSE)
+          OR EXISTS (
+            SELECT 1 FROM customer_interaction_updates ciu
+            WHERE ciu.customer_id = c.id
+              AND ciu.follow_up_date = CURRENT_DATE
+              AND ciu.completed = FALSE
+          )
+        )`);
         return db.query(
           `SELECT COUNT(DISTINCT c.id) AS v FROM customers c WHERE ${wConds.join(' AND ')}`,
           wParams
         );
       })(),
 
-      // Overdue — follow_up_date < TODAY, not completed
+      // Overdue — customer-level OR ciu-level follow_up_date < TODAY
       (() => {
         const wConds = [];
         const wParams = [];
         let wi = 1;
         if (!isLead) { wConds.push(`c.user_id = $${wi++}`); wParams.push(req.user.id); }
         else if (userId) { wConds.push(`c.user_id = $${wi++}`); wParams.push(userId); }
-        wConds.push(`c.follow_up_date < CURRENT_DATE`);
         wConds.push(`c.interaction_type != $${wi++}`); wParams.push('saved');
-        wConds.push(`c.follow_up_completed = FALSE`);
+        wConds.push(`(
+          (c.follow_up_date < CURRENT_DATE AND c.follow_up_completed = FALSE)
+          OR EXISTS (
+            SELECT 1 FROM customer_interaction_updates ciu
+            WHERE ciu.customer_id = c.id
+              AND ciu.follow_up_date < CURRENT_DATE
+              AND ciu.completed = FALSE
+          )
+        )`);
         return db.query(
           `SELECT COUNT(DISTINCT c.id) AS v FROM customers c WHERE ${wConds.join(' AND ')}`,
           wParams
         );
       })(),
 
-      // Upcoming — follow_up_date between tomorrow and +7 days, not completed
+      // Upcoming — customer-level OR ciu-level follow_up_date tomorrow → +7 days
       (() => {
         const wConds = [];
         const wParams = [];
         let wi = 1;
         if (!isLead) { wConds.push(`c.user_id = $${wi++}`); wParams.push(req.user.id); }
         else if (userId) { wConds.push(`c.user_id = $${wi++}`); wParams.push(userId); }
-        wConds.push(`c.follow_up_date > CURRENT_DATE`);
-        wConds.push(`c.follow_up_date <= CURRENT_DATE + INTERVAL '7 days'`);
         wConds.push(`c.interaction_type != $${wi++}`); wParams.push('saved');
-        wConds.push(`c.follow_up_completed = FALSE`);
+        wConds.push(`(
+          (c.follow_up_date > CURRENT_DATE AND c.follow_up_date <= CURRENT_DATE + INTERVAL '7 days' AND c.follow_up_completed = FALSE)
+          OR EXISTS (
+            SELECT 1 FROM customer_interaction_updates ciu
+            WHERE ciu.customer_id = c.id
+              AND ciu.follow_up_date > CURRENT_DATE
+              AND ciu.follow_up_date <= CURRENT_DATE + INTERVAL '7 days'
+              AND ciu.completed = FALSE
+          )
+        )`);
         return db.query(
           `SELECT COUNT(DISTINCT c.id) AS v FROM customers c WHERE ${wConds.join(' AND ')}`,
           wParams
@@ -200,14 +221,27 @@ router.get('/drilldown/:type', requireAuth, async (req, res) => {
       let wi = 1;
       if (!isLead) { wConds.push(`c.user_id = $${wi++}`); wParams.push(req.user.id); }
       else if (userId) { wConds.push(`c.user_id = $${wi++}`); wParams.push(userId); }
-      wConds.push(`c.follow_up_date <= CURRENT_DATE + INTERVAL '7 days'`);
       wConds.push(`c.interaction_type != $${wi++}`); wParams.push('saved');
-      wConds.push(`c.follow_up_completed = FALSE`);
-      // Deduplicate: one row per (user, company) — pick latest follow_up_date row,
-      // count total quotes across ALL entries for that company+user
+      wConds.push(`(
+        (c.follow_up_date IS NOT NULL AND c.follow_up_date <= CURRENT_DATE + INTERVAL '7 days' AND c.follow_up_completed = FALSE)
+        OR EXISTS (
+          SELECT 1 FROM customer_interaction_updates ciu
+          WHERE ciu.customer_id = c.id
+            AND ciu.follow_up_date IS NOT NULL
+            AND ciu.follow_up_date <= CURRENT_DATE + INTERVAL '7 days'
+            AND ciu.completed = FALSE
+        )
+      )`);
+      // Deduplicate: one row per (user, company) — pick row with latest effective follow-up date.
+      // effective_follow_up_date = customer-level date (if not completed) OR latest pending ciu date.
       ({ rows } = await db.query(`
         SELECT DISTINCT ON (c.user_id, LOWER(c.company_name))
           c.*, u.name AS user_name, u.code AS user_code, u.avatar_color, r.report_date,
+          COALESCE(
+            CASE WHEN c.follow_up_completed = FALSE THEN c.follow_up_date END,
+            (SELECT MAX(ciu2.follow_up_date) FROM customer_interaction_updates ciu2
+             WHERE ciu2.customer_id = c.id AND ciu2.completed = FALSE AND ciu2.follow_up_date IS NOT NULL)
+          ) AS effective_follow_up_date,
           (
             SELECT COUNT(q2.id)
             FROM customers c2
@@ -218,10 +252,15 @@ router.get('/drilldown/:type', requireAuth, async (req, res) => {
         JOIN reports r ON r.id = c.report_id
         JOIN users u ON u.id = c.user_id
         WHERE ${wConds.join(' AND ')}
-        ORDER BY c.user_id, LOWER(c.company_name), c.follow_up_date DESC
+        ORDER BY c.user_id, LOWER(c.company_name),
+          COALESCE(
+            CASE WHEN c.follow_up_completed = FALSE THEN c.follow_up_date END,
+            (SELECT MAX(ciu2.follow_up_date) FROM customer_interaction_updates ciu2
+             WHERE ciu2.customer_id = c.id AND ciu2.completed = FALSE AND ciu2.follow_up_date IS NOT NULL)
+          ) DESC NULLS LAST
       `, wParams));
-      // Re-sort by follow_up_date ASC after deduplication
-      rows.sort((a, b) => new Date(a.follow_up_date) - new Date(b.follow_up_date));
+      // Re-sort by effective_follow_up_date ASC after deduplication
+      rows.sort((a, b) => new Date(a.effective_follow_up_date) - new Date(b.effective_follow_up_date));
     }
 
     res.json(rows);
