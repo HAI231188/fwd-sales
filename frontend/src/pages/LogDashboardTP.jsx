@@ -2,6 +2,7 @@ import { useState, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import Navbar from '../components/Navbar';
 import JobDetailModal from '../components/JobDetailModal';
+import CreateJobModal from '../components/CreateJobModal';
 import {
   getJobStats, getJobs, getDeadlineRequests, getLogStaff,
   assignJob, setJobDeadline, reviewDeadlineRequest, createJob,
@@ -78,170 +79,6 @@ function InlineDeadline({ value, onSave }) {
       <input ref={ref} type="datetime-local" value={val} onChange={e => setVal(e.target.value)}
         onBlur={save} onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') setEditing(false); }}
         style={{ padding: '2px 6px', border: '1px solid var(--primary)', borderRadius: 4, fontSize: 12 }} />
-    </div>
-  );
-}
-
-// ─── Create Job Modal ─────────────────────────────────────────────────────────
-function CreateJobModal({ staff, onClose, onCreated }) {
-  const [form, setForm] = useState({
-    job_code: '', customer_name: '', customer_address: '', customer_tax_code: '',
-    sales_id: '', pol: '', pod: '', bill_number: '', cont_number: '', cont_type: '',
-    seal_number: '', etd: '', eta: '', tons: '', cbm: '', deadline: '',
-    service_type: 'tk', assignment_mode: 'auto', other_services: {},
-  });
-  const [saving, setSaving] = useState(false);
-  const salesStaff = staff.filter(s => s.role === 'sales');
-  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
-  const toggleOs = k => setForm(f => ({ ...f, other_services: { ...f.other_services, [k]: !f.other_services[k] } }));
-
-  async function submit() {
-    if (!form.customer_name || !form.service_type) return;
-    setSaving(true);
-    try {
-      await onCreated({
-        ...form,
-        sales_id: form.sales_id || null,
-        tons: form.tons ? Number(form.tons) : null,
-        cbm: form.cbm ? Number(form.cbm) : null,
-        deadline: form.deadline || null,
-        etd: form.etd || null,
-        eta: form.eta || null,
-      });
-      onClose();
-    } finally { setSaving(false); }
-  }
-
-  return (
-    <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="modal modal-lg" style={{ maxHeight: '92vh' }}>
-        <div className="modal-header">
-          <h3>Tạo Job Mới</h3>
-          <button className="btn btn-ghost btn-sm btn-icon" onClick={onClose}>✕</button>
-        </div>
-        <div className="modal-body">
-          <div className="grid-2" style={{ gap: 12 }}>
-            <div className="form-group">
-              <label className="form-label">Mã Job</label>
-              <input className="form-input" value={form.job_code} onChange={e => set('job_code', e.target.value)} placeholder="VD: SLB-2024-001" />
-            </div>
-            <div className="form-group">
-              <label className="form-label">Loại dịch vụ *</label>
-              <select className="form-select" value={form.service_type} onChange={e => set('service_type', e.target.value)}>
-                <option value="tk">Tờ khai (TK)</option>
-                <option value="truck">Vận chuyển (Truck)</option>
-                <option value="both">TK + Vận chuyển</option>
-              </select>
-            </div>
-          </div>
-          <div className="grid-2" style={{ gap: 12, marginTop: 12 }}>
-            <div className="form-group">
-              <label className="form-label">Tên khách hàng *</label>
-              <input className="form-input" value={form.customer_name} onChange={e => set('customer_name', e.target.value)} placeholder="Tên công ty..." />
-            </div>
-            <div className="form-group">
-              <label className="form-label">MST</label>
-              <input className="form-input" value={form.customer_tax_code} onChange={e => set('customer_tax_code', e.target.value)} />
-            </div>
-          </div>
-          <div className="form-group" style={{ marginTop: 12 }}>
-            <label className="form-label">Địa chỉ</label>
-            <input className="form-input" value={form.customer_address} onChange={e => set('customer_address', e.target.value)} />
-          </div>
-          <div className="grid-2" style={{ gap: 12, marginTop: 12 }}>
-            <div className="form-group">
-              <label className="form-label">POL</label>
-              <input className="form-input" value={form.pol} onChange={e => set('pol', e.target.value)} placeholder="Cảng xếp hàng" />
-            </div>
-            <div className="form-group">
-              <label className="form-label">POD</label>
-              <input className="form-input" value={form.pod} onChange={e => set('pod', e.target.value)} placeholder="Cảng dỡ hàng" />
-            </div>
-          </div>
-          <div className="grid-2" style={{ gap: 12, marginTop: 12 }}>
-            <div className="form-group">
-              <label className="form-label">Số Cont</label>
-              <input className="form-input" value={form.cont_number} onChange={e => set('cont_number', e.target.value)} />
-            </div>
-            <div className="form-group">
-              <label className="form-label">Loại Cont</label>
-              <select className="form-select" value={form.cont_type} onChange={e => set('cont_type', e.target.value)}>
-                <option value="">-- Chọn --</option>
-                {CONT_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
-              </select>
-            </div>
-          </div>
-          <div className="grid-2" style={{ gap: 12, marginTop: 12 }}>
-            <div className="form-group">
-              <label className="form-label">Số B/L</label>
-              <input className="form-input" value={form.bill_number} onChange={e => set('bill_number', e.target.value)} />
-            </div>
-            <div className="form-group">
-              <label className="form-label">Số Seal</label>
-              <input className="form-input" value={form.seal_number} onChange={e => set('seal_number', e.target.value)} />
-            </div>
-          </div>
-          <div className="grid-2" style={{ gap: 12, marginTop: 12 }}>
-            <div className="form-group">
-              <label className="form-label">ETD</label>
-              <input type="date" className="form-input" value={form.etd} onChange={e => set('etd', e.target.value)} />
-            </div>
-            <div className="form-group">
-              <label className="form-label">ETA</label>
-              <input type="date" className="form-input" value={form.eta} onChange={e => set('eta', e.target.value)} />
-            </div>
-          </div>
-          <div className="grid-2" style={{ gap: 12, marginTop: 12 }}>
-            <div className="form-group">
-              <label className="form-label">Tấn</label>
-              <input type="number" className="form-input" value={form.tons} onChange={e => set('tons', e.target.value)} />
-            </div>
-            <div className="form-group">
-              <label className="form-label">CBM</label>
-              <input type="number" className="form-input" value={form.cbm} onChange={e => set('cbm', e.target.value)} />
-            </div>
-          </div>
-          <div className="grid-2" style={{ gap: 12, marginTop: 12 }}>
-            <div className="form-group">
-              <label className="form-label">Deadline</label>
-              <input type="datetime-local" className="form-input" value={form.deadline} onChange={e => set('deadline', e.target.value)} />
-            </div>
-            <div className="form-group">
-              <label className="form-label">Sales phụ trách</label>
-              <select className="form-select" value={form.sales_id} onChange={e => set('sales_id', e.target.value)}>
-                <option value="">-- Chọn --</option>
-                {salesStaff.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-              </select>
-            </div>
-          </div>
-          <div style={{ marginTop: 12 }}>
-            <div className="form-label" style={{ marginBottom: 8 }}>Dịch vụ khác</div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
-              {OTHER_SVC_KEYS.map(k => (
-                <label key={k} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
-                  <input type="checkbox" checked={!!form.other_services[k]} onChange={() => toggleOs(k)} />
-                  {OTHER_SVC_LABEL[k]}
-                </label>
-              ))}
-            </div>
-          </div>
-          <div className="form-group" style={{ marginTop: 12 }}>
-            <label className="form-label">Chế độ phân công</label>
-            <select className="form-select" value={form.assignment_mode} onChange={e => set('assignment_mode', e.target.value)}>
-              <option value="auto">Tự động (Auto)</option>
-              <option value="manual">Thủ công (Manual)</option>
-            </select>
-          </div>
-        </div>
-        <div className="modal-footer">
-          <button className="btn btn-ghost btn-sm" onClick={onClose}>Hủy</button>
-          <button className="btn btn-primary btn-sm"
-            disabled={!form.customer_name || !form.service_type || saving}
-            onClick={submit}>
-            {saving ? 'Đang lưu...' : 'Tạo Job'}
-          </button>
-        </div>
-      </div>
     </div>
   );
 }
@@ -620,7 +457,7 @@ export default function LogDashboardTP() {
       </div>
 
       {showCreate && (
-        <CreateJobModal staff={staff} onClose={() => setShowCreate(false)}
+        <CreateJobModal onClose={() => setShowCreate(false)}
           onCreated={data => createMut.mutateAsync(data)} />
       )}
       {showDeadline && (

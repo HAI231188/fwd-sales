@@ -87,6 +87,7 @@ export const createOpsTask = (jobId, data) => api.post(`/jobs/${jobId}/ops-task`
 export const completeOpsTask = (tid, notes) => api.patch(`/jobs/ops-task/${tid}/complete`, { notes });
 export const completeJob = (id) => api.patch(`/jobs/${id}/complete`, {});
 export const getLogStaff = () => api.get('/jobs/users/log-staff');
+export const searchJobCustomers = (q) => api.get('/jobs/customer-search', { params: { q } });
 export const getStaffWorkload = () => api.get('/jobs/staff-workload');
 export const deleteJob = (id) => api.delete(`/jobs/${id}`);
 export const requestJobDelete = (id, reason) => api.post(`/jobs/${id}/delete-request`, { reason });

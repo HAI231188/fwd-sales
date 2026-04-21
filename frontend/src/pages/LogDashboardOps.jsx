@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import Navbar from '../components/Navbar';
 import JobDetailModal from '../components/JobDetailModal';
-import { getJobStats, getJobs, completeOpsTask, completeJob, requestJobDelete } from '../api';
+import CreateJobModal from '../components/CreateJobModal';
+import { getJobStats, getJobs, completeOpsTask, completeJob, requestJobDelete, createJob } from '../api';
 
 const TK_STATUS_LABEL = {
   chua_truyen: 'Chưa truyền', dang_lam: 'Đang làm',
@@ -53,6 +54,7 @@ export default function LogDashboardOps() {
   const qc = useQueryClient();
   const [tab, setTab] = useState('follow_tq');
   const [detailJobId, setDetailJobId] = useState(null);
+  const [showCreate, setShowCreate] = useState(false);
 
   const { data: stats } = useQuery({ queryKey: ['jobStats'], queryFn: getJobStats, refetchInterval: 30000 });
   const { data: pendingJobs = [], isLoading } = useQuery({
@@ -78,6 +80,10 @@ export default function LogDashboardOps() {
     mutationFn: ({ id, reason }) => requestJobDelete(id, reason),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['jobs'] }),
   });
+  const createMut = useMutation({
+    mutationFn: data => createJob(data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['jobs', 'jobStats'] }),
+  });
 
   const displayJobs = tab === 'hoan_thanh' ? completedJobs : pendingJobs;
 
@@ -93,8 +99,9 @@ export default function LogDashboardOps() {
     <div className="page">
       <Navbar />
       <div className="container" style={{ padding: '24px 20px' }}>
-        <div style={{ marginBottom: 20 }}>
-          <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 20 }}>Dashboard OPS</h2>
+        <div style={{ marginBottom: 20, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 20, margin: 0 }}>Dashboard OPS</h2>
+          <button className="btn btn-primary btn-sm" onClick={() => setShowCreate(true)}>+ Tạo Job Mới</button>
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12, marginBottom: 24 }}>
@@ -255,6 +262,7 @@ export default function LogDashboardOps() {
       </div>
 
       {detailJobId && <JobDetailModal jobId={detailJobId} onClose={() => setDetailJobId(null)} />}
+      {showCreate && <CreateJobModal onClose={() => setShowCreate(false)} onCreated={data => createMut.mutateAsync(data)} />}
     </div>
   );
 }

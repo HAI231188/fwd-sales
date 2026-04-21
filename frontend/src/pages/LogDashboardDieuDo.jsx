@@ -2,7 +2,8 @@ import { useState, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import Navbar from '../components/Navbar';
 import JobDetailModal from '../components/JobDetailModal';
-import { getJobStats, getJobs, updateJobTruck, completeJobTruck, requestJobDelete } from '../api';
+import CreateJobModal from '../components/CreateJobModal';
+import { getJobStats, getJobs, updateJobTruck, completeJobTruck, requestJobDelete, createJob } from '../api';
 
 function fmtDate(val) {
   if (!val) return '—';
@@ -60,6 +61,7 @@ export default function LogDashboardDieuDo() {
   const qc = useQueryClient();
   const [tab, setTab] = useState('pending');
   const [detailJobId, setDetailJobId] = useState(null);
+  const [showCreate, setShowCreate] = useState(false);
 
   const { data: stats } = useQuery({ queryKey: ['jobStats'], queryFn: getJobStats, refetchInterval: 30000 });
   const { data: jobs = [], isLoading } = useQuery({
@@ -80,6 +82,10 @@ export default function LogDashboardDieuDo() {
     mutationFn: ({ id, reason }) => requestJobDelete(id, reason),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['jobs'] }),
   });
+  const createMut = useMutation({
+    mutationFn: data => createJob(data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['jobs', 'jobStats'] }),
+  });
 
   function canComplete(j) {
     return !!(j.transport_name && j.vehicle_number && j.truck_delivery_location && j.cost);
@@ -96,8 +102,9 @@ export default function LogDashboardDieuDo() {
     <div className="page">
       <Navbar />
       <div className="container" style={{ padding: '24px 20px' }}>
-        <div style={{ marginBottom: 20 }}>
+        <div style={{ marginBottom: 20, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 20 }}>Dashboard Điều Độ</h2>
+          <button className="btn btn-primary btn-sm" onClick={() => setShowCreate(true)}>+ Tạo Job Mới</button>
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12, marginBottom: 24 }}>
@@ -227,6 +234,7 @@ export default function LogDashboardDieuDo() {
       </div>
 
       {detailJobId && <JobDetailModal jobId={detailJobId} onClose={() => setDetailJobId(null)} />}
+      {showCreate && <CreateJobModal onClose={() => setShowCreate(false)} onCreated={data => createMut.mutateAsync(data)} />}
     </div>
   );
 }

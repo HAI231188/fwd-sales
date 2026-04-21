@@ -213,12 +213,42 @@ router.get('/staff-workload', requireAuth, async (req, res) => {
 
 // GET /api/jobs/users/log-staff
 router.get('/users/log-staff', requireAuth, async (req, res) => {
+  const ALL_STAFF_ROLES = [...LOG_ROLES, 'sales', 'lead'];
   try {
     const { rows } = await db.query(`
       SELECT id, name, role, code, avatar_color
       FROM users WHERE role = ANY($1)
       ORDER BY role, name
-    `, [LOG_ROLES]);
+    `, [ALL_STAFF_ROLES]);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/jobs/customer-search?q=...
+router.get('/customer-search', requireAuth, async (req, res) => {
+  const q = (req.query.q || '').trim();
+  if (!q) return res.json([]);
+  try {
+    const { rows } = await db.query(`
+      SELECT cp.id AS pipeline_id, cp.customer_id, cp.sales_id,
+        cp.company_name AS customer_name, cp.contact_person, cp.phone,
+        u.name AS sales_name,
+        (SELECT j.customer_address FROM jobs j
+         WHERE (j.customer_id = cp.customer_id OR (cp.customer_id IS NULL AND LOWER(j.customer_name) = LOWER(cp.company_name)))
+           AND j.customer_address IS NOT NULL AND j.deleted_at IS NULL
+         ORDER BY j.created_at DESC LIMIT 1) AS customer_address,
+        (SELECT j.customer_tax_code FROM jobs j
+         WHERE (j.customer_id = cp.customer_id OR (cp.customer_id IS NULL AND LOWER(j.customer_name) = LOWER(cp.company_name)))
+           AND j.customer_tax_code IS NOT NULL AND j.deleted_at IS NULL
+         ORDER BY j.created_at DESC LIMIT 1) AS customer_tax_code
+      FROM customer_pipeline cp
+      LEFT JOIN users u ON u.id = cp.sales_id
+      WHERE cp.stage = 'booked' AND cp.company_name ILIKE $1
+      ORDER BY cp.company_name
+      LIMIT 10
+    `, [`%${q}%`]);
     res.json(rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -316,6 +346,7 @@ router.post('/', requireAuth, async (req, res) => {
     job_code, customer_id, customer_name, customer_address, customer_tax_code,
     sales_id, pol, pod, bill_number, cont_number, cont_type, seal_number,
     etd, eta, tons, cbm, deadline, service_type, other_services, assignment_mode,
+    is_new_customer,
   } = req.body;
 
   if (!customer_name || !service_type) {
@@ -352,6 +383,12 @@ router.post('/', requireAuth, async (req, res) => {
         UPDATE customer_pipeline SET stage = 'booked', updated_at = NOW()
         WHERE customer_id = $1 AND stage != 'booked'
       `, [customer_id]);
+    } else if (is_new_customer && sales_id && customer_name) {
+      await client.query(`
+        INSERT INTO customer_pipeline (sales_id, company_name, stage)
+        VALUES ($1, $2, 'booked')
+        ON CONFLICT (sales_id, LOWER(company_name)) DO UPDATE SET stage = 'booked', updated_at = NOW()
+      `, [sales_id, customer_name]);
     }
 
     if (service_type === 'truck' || service_type === 'both') {
