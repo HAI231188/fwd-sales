@@ -182,6 +182,26 @@ If the stat counts a customer in "today" using condition X, the drilldown must a
 
 Rule: when changing a stat query condition, always update the matching drilldown condition in the same commit, and vice versa. Also note that **follow-up stats must NOT be filtered by `r.report_date`** — follow-up obligations are independent of when the report was filed.
 
+### L6 — SQL alias names are the API contract; never rename them during debugging
+
+This codebase has no TypeScript, no API schema validation, no serializers. The SQL `AS alias` name is consumed **directly** by field name in every frontend component. Renaming an alias silently returns `undefined` in JS — no error is thrown, the `|| ''` fallback masks it, and the UI appears to work while showing blank data.
+
+**The bug:** Adding debug visibility to `GET /customer-search` renamed `customer_address → cust_address` and `customer_tax_code → cust_tax_code`. The frontend's `selectCustomer(c)` read `c.customer_address` → `undefined` → `''`. Auto-fill silently broke with no console error.
+
+**Compounding factor:** The original query also looked in the wrong table — `jobs.customer_address` (rarely filled) instead of `customers.address` (filled by sales via CRM). Two bugs layered on each other made it hard to diagnose.
+
+**Rules:**
+1. When debugging a query, **add** new fields alongside existing ones — never rename or remove existing aliases.
+2. Safe pattern: `SELECT existing_col, existing_col AS _debug_raw FROM ...` — keeps the contract intact, adds visibility.
+3. Remove all `_debug_*` fields before committing.
+4. When writing a new query, verify alias names match exactly what the frontend reads before shipping.
+5. When a field is NULL/empty and shouldn't be, check **which table the data actually lives in** before assuming the JOIN or subquery is broken.
+
+**Known high-risk aliases** (consumed directly by frontend — never rename):
+- `GET /api/jobs/` → `tk_notes`, `truck_delivery_location`, `cus_name`, `ops_name`, `tk_status`, `tq_datetime`, `truck_completed_at`
+- `GET /api/jobs/stats` → `total_pending`, `warn_soon`, `delete_requests`, `total_managing`, `sap_han`, `qua_han`
+- `GET /api/jobs/customer-search` → `customer_address`, `customer_tax_code`, `pipeline_id`, `sales_id`, `sales_name`
+
 ---
 
 ## 6. Session Start Checklist
