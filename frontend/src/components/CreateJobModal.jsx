@@ -12,7 +12,7 @@ const INIT_FORM = {
   job_code: '', customer_name: '', customer_address: '', customer_tax_code: '',
   sales_id: '', pol: '', pod: '', bill_number: '',
   etd: '', eta: '', tons: '', cbm: '', kg: '', so_kien: '', deadline: '',
-  service_type: 'tk', assignment_mode: 'auto', other_services: {},
+  service_type: 'tk', other_services: {},
 };
 
 export default function CreateJobModal({ onClose, onCreated }) {
@@ -340,13 +340,6 @@ export default function CreateJobModal({ onClose, onCreated }) {
             <div className="form-group">
               <label className="form-label">Deadline</label>
               <input type="datetime-local" className="form-input" value={form.deadline} onChange={e => set('deadline', e.target.value)} />
-            </div>
-            <div className="form-group">
-              <label className="form-label">Chế độ phân công</label>
-              <select className="form-select" value={form.assignment_mode} onChange={e => set('assignment_mode', e.target.value)}>
-                <option value="auto">Tự động (Auto)</option>
-                <option value="manual">Thủ công (Manual)</option>
-              </select>
             </div>
           </div>
         </div>
