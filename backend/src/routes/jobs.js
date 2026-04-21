@@ -235,20 +235,23 @@ router.get('/customer-search', requireAuth, async (req, res) => {
       SELECT cp.id AS pipeline_id, cp.customer_id, cp.sales_id,
         cp.company_name AS customer_name, cp.contact_person, cp.phone,
         u.name AS sales_name,
+        c.address AS cust_address, c.tax_code AS cust_tax_code,
         (SELECT j.customer_address FROM jobs j
          WHERE (j.customer_id = cp.customer_id OR LOWER(j.customer_name) = LOWER(cp.company_name))
            AND j.customer_address IS NOT NULL AND j.deleted_at IS NULL
-         ORDER BY j.created_at DESC LIMIT 1) AS customer_address,
+         ORDER BY j.created_at DESC LIMIT 1) AS job_address,
         (SELECT j.customer_tax_code FROM jobs j
          WHERE (j.customer_id = cp.customer_id OR LOWER(j.customer_name) = LOWER(cp.company_name))
            AND j.customer_tax_code IS NOT NULL AND j.deleted_at IS NULL
-         ORDER BY j.created_at DESC LIMIT 1) AS customer_tax_code
+         ORDER BY j.created_at DESC LIMIT 1) AS job_tax_code
       FROM customer_pipeline cp
       LEFT JOIN users u ON u.id = cp.sales_id
+      LEFT JOIN customers c ON c.id = cp.customer_id
       WHERE cp.stage = 'booked' AND cp.company_name ILIKE $1
       ORDER BY cp.company_name
       LIMIT 10
     `, [`%${q}%`]);
+    console.log('[customer-search] q=%s rows=%d sample=%s', q, rows.length, JSON.stringify(rows[0] || {}));
     res.json(rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
