@@ -203,3 +203,52 @@ railway up --detach
 ```
 
 Railway runs `start.js`: migrations → pipeline backfill → frontend build → Express server.
+
+---
+
+## 8. ECC Usage (Everything Claude Code)
+
+### Before building any new feature or module
+
+1. Run `/plan` to create an implementation blueprint
+2. Use the **architect** agent for new database schemas
+3. Use the **database-reviewer** agent to review schema before migration
+
+### After building any feature
+
+1. Run `/code-review` using the **typescript-reviewer** and **code-reviewer** agents
+2. Run `/security-scan` before every major deploy
+3. Run `/update-docs` to keep CLAUDE.md current
+4. Run `/learn` to extract patterns from the session
+
+### Skills — load when needed
+
+| Skill | When to load |
+|-------|-------------|
+| `postgres-patterns` | Writing complex queries or optimizations |
+| `api-design` | Adding new API endpoints |
+| `database-migrations` | Writing schema changes |
+| `backend-patterns` | Adding new backend routes |
+| `cost-aware-llm-pipeline` | Building AI automation features (Phase 2+) |
+| `continuous-learning-v2` | Ongoing pattern extraction |
+
+### Agents — always available
+
+| Agent | Purpose |
+|-------|---------|
+| `planner` | Feature planning |
+| `architect` | System design |
+| `database-reviewer` | Schema review |
+| `typescript-reviewer` | React component review |
+| `code-reviewer` | General code review |
+| `build-error-resolver` | Fix Railway deploy errors |
+| `security-reviewer` | Pre-deploy security audit |
+| `doc-updater` | Documentation sync |
+| `refactor-cleaner` | Dead code removal |
+
+### Token optimization
+
+- Keep under 10 MCPs enabled at a time
+- Run `/compact` at logical breakpoints
+- Use `/clear` between unrelated tasks
+- Run `/learn` at the end of each major session
