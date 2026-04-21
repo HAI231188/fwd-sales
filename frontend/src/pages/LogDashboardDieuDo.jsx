@@ -9,6 +9,23 @@ function fmtDate(val) {
   if (!val) return '—';
   return new Date(val).toLocaleDateString('vi-VN');
 }
+function fmtCargo(j) {
+  if (j.cargo_type === 'lcl') {
+    const parts = [];
+    if (j.so_kien) parts.push(`${j.so_kien} kiện`);
+    if (j.kg) parts.push(`${j.kg}kg`);
+    if (j.cbm) parts.push(`${j.cbm}CBM`);
+    return 'LCL' + (parts.length ? ' - ' + parts.join('/') : '');
+  }
+  const conts = Array.isArray(j.containers) ? j.containers : [];
+  if (conts.length) {
+    const grouped = {};
+    conts.forEach(c => { grouped[c.cont_type] = (grouped[c.cont_type] || 0) + 1; });
+    return Object.entries(grouped).map(([t, n]) => `${t} x${n}`).join(', ');
+  }
+  if (j.cont_number) return `${j.cont_number}${j.cont_type ? ' / ' + j.cont_type : ''}`;
+  return '—';
+}
 function toDatetimeLocal(val) {
   if (!val) return '';
   const d = new Date(val);
@@ -154,8 +171,7 @@ export default function LogDashboardDieuDo() {
                         </td>
                         <td style={{ padding: '8px 8px', maxWidth: 140 }}>{j.customer_name}</td>
                         <td style={{ padding: '8px 8px', whiteSpace: 'nowrap', fontSize: 12 }}>
-                          {j.cont_number || '—'}
-                          {j.cont_type && <span style={{ color: 'var(--text-2)' }}> / {j.cont_type}</span>}
+                          {fmtCargo(j)}
                           {j.tons && <div style={{ color: 'var(--text-3)' }}>{j.tons} tấn</div>}
                         </td>
                         <td style={{ padding: '8px 8px', whiteSpace: 'nowrap', color: 'var(--text-2)', fontSize: 12 }}>

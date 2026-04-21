@@ -18,6 +18,23 @@ function fmtDate(val) {
   if (!val) return '—';
   return new Date(val).toLocaleDateString('vi-VN');
 }
+function fmtCargo(j) {
+  if (j.cargo_type === 'lcl') {
+    const parts = [];
+    if (j.so_kien) parts.push(`${j.so_kien} kiện`);
+    if (j.kg) parts.push(`${j.kg}kg`);
+    if (j.cbm) parts.push(`${j.cbm}CBM`);
+    return 'LCL' + (parts.length ? ' - ' + parts.join('/') : '');
+  }
+  const conts = Array.isArray(j.containers) ? j.containers : [];
+  if (conts.length) {
+    const grouped = {};
+    conts.forEach(c => { grouped[c.cont_type] = (grouped[c.cont_type] || 0) + 1; });
+    return Object.entries(grouped).map(([t, n]) => `${t} x${n}`).join(', ');
+  }
+  if (j.cont_number) return `${j.cont_number}${j.cont_type ? ' / ' + j.cont_type : ''}`;
+  return '—';
+}
 function fmtDt(val) {
   if (!val) return '—';
   return new Date(val).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
@@ -144,7 +161,7 @@ export default function LogDashboardOps() {
                       <TD style={{ fontWeight: 600, color: 'var(--info)', whiteSpace: 'nowrap' }}>{j.job_code || `#${j.id}`}</TD>
                       <TD style={{ maxWidth: 140 }}>{j.customer_name}</TD>
                       <TD style={{ whiteSpace: 'nowrap', fontSize: 12 }}>
-                        {j.cont_number || '—'}{j.cont_type ? ` / ${j.cont_type}` : ''}
+                        {fmtCargo(j)}
                       </TD>
                       <TD style={{ whiteSpace: 'nowrap', color: 'var(--text-2)', fontSize: 12 }}>
                         {fmtDate(j.etd)}<br />{fmtDate(j.eta)}
@@ -194,7 +211,7 @@ export default function LogDashboardOps() {
                       <TD style={{ fontWeight: 600, color: 'var(--info)', whiteSpace: 'nowrap' }}>{j.job_code || `#${j.id}`}</TD>
                       <TD style={{ maxWidth: 140 }}>{j.customer_name}</TD>
                       <TD style={{ whiteSpace: 'nowrap', fontSize: 12 }}>
-                        {j.cont_number || '—'}{j.cont_type ? ` / ${j.cont_type}` : ''}
+                        {fmtCargo(j)}
                       </TD>
                       <TD style={{ whiteSpace: 'nowrap', ...deadlineStyle(j.deadline) }}>
                         {j.deadline ? fmtDt(j.deadline) : '—'}
@@ -234,7 +251,7 @@ export default function LogDashboardOps() {
                       <TD style={{ fontSize: 12 }}>{fmtDate(j.created_at)}</TD>
                       <TD style={{ fontWeight: 600, color: 'var(--primary)' }}>{j.job_code || `#${j.id}`}</TD>
                       <TD>{j.customer_name}</TD>
-                      <TD style={{ fontSize: 12 }}>{j.cont_number || '—'}</TD>
+                      <TD style={{ fontSize: 12 }}>{fmtCargo(j)}</TD>
                       <TD style={{ color: 'var(--text-2)', fontSize: 12 }}>{fmtDate(j.etd)} / {fmtDate(j.eta)}</TD>
                       <TD>
                         <span style={{ color: TK_STATUS_COLOR[j.tk_status] || 'var(--text-2)', fontWeight: 500, fontSize: 12 }}>

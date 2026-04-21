@@ -23,6 +23,23 @@ const OTHER_SVC_KEYS = ['ktcl','kiem_dich','hun_trung','co','khac'];
 const OTHER_SVC_LABEL = { ktcl:'KTCL', kiem_dich:'Kiểm dịch', hun_trung:'Hun trùng', co:'CO', khac:'Khác' };
 
 function fmtDate(val) { if (!val) return '—'; return new Date(val).toLocaleDateString('vi-VN'); }
+function fmtCargo(j) {
+  if (j.cargo_type === 'lcl') {
+    const parts = [];
+    if (j.so_kien) parts.push(`${j.so_kien} kiện`);
+    if (j.kg) parts.push(`${j.kg}kg`);
+    if (j.cbm) parts.push(`${j.cbm}CBM`);
+    return 'LCL' + (parts.length ? ' - ' + parts.join('/') : '');
+  }
+  const conts = Array.isArray(j.containers) ? j.containers : [];
+  if (conts.length) {
+    const grouped = {};
+    conts.forEach(c => { grouped[c.cont_type] = (grouped[c.cont_type] || 0) + 1; });
+    return Object.entries(grouped).map(([t, n]) => `${t} x${n}`).join(', ');
+  }
+  if (j.cont_number) return `${j.cont_number}${j.cont_type ? ' / ' + j.cont_type : ''}`;
+  return '—';
+}
 function fmtDt(val) {
   if (!val) return '—';
   return new Date(val).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
@@ -394,8 +411,7 @@ export default function LogDashboardTP() {
                           {j.pol || '—'} → {j.pod || '—'}
                         </td>
                         <td style={{ padding: '8px 8px', whiteSpace: 'nowrap', fontSize: 12 }}>
-                          {j.cont_number || '—'}
-                          {j.cont_type && <span style={{ color: 'var(--text-2)' }}> / {j.cont_type}</span>}
+                          {fmtCargo(j)}
                         </td>
                         <td style={{ padding: '8px 8px' }}>
                           <span className="badge badge-info" style={{ fontSize: 10 }}>{SVC_LABEL[j.service_type] || j.service_type}</span>

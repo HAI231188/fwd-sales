@@ -323,7 +323,14 @@ router.get('/', requireAuth, async (req, res) => {
         jtr.id AS truck_id, jtr.transport_name, jtr.planned_datetime, jtr.actual_datetime,
         jtr.vehicle_number, jtr.pickup_location,
         jtr.delivery_location AS truck_delivery_location,
-        jtr.cost, jtr.completed_at AS truck_completed_at, jtr.notes AS truck_notes
+        jtr.cost, jtr.completed_at AS truck_completed_at, jtr.notes AS truck_notes,
+        COALESCE((
+          SELECT json_agg(json_build_object(
+            'id', jc.id, 'cont_number', jc.cont_number,
+            'cont_type', jc.cont_type, 'seal_number', jc.seal_number
+          ) ORDER BY jc.id)
+          FROM job_containers jc WHERE jc.job_id = j.id
+        ), '[]'::json) AS containers
       FROM jobs j
       LEFT JOIN job_assignments ja ON ja.job_id = j.id
       LEFT JOIN users u_cus ON u_cus.id = ja.cus_id
@@ -347,7 +354,7 @@ router.post('/', requireAuth, async (req, res) => {
     job_code, customer_id, customer_name, customer_address, customer_tax_code,
     sales_id, pol, pod, bill_number, cont_number, cont_type, seal_number,
     etd, eta, tons, cbm, deadline, service_type, other_services, assignment_mode,
-    is_new_customer,
+    is_new_customer, cargo_type, so_kien, kg, containers,
   } = req.body;
 
   if (!customer_name || !service_type) {
@@ -363,8 +370,8 @@ router.post('/', requireAuth, async (req, res) => {
         job_code, customer_id, customer_name, customer_address, customer_tax_code,
         sales_id, pol, pod, bill_number, cont_number, cont_type, seal_number,
         etd, eta, tons, cbm, deadline, service_type, other_services,
-        assignment_mode, created_by
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
+        assignment_mode, cargo_type, so_kien, kg, created_by
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
       RETURNING *
     `, [
       job_code || null, customer_id || null, customer_name,
@@ -374,10 +381,21 @@ router.post('/', requireAuth, async (req, res) => {
       etd || null, eta || null, tons || null, cbm || null,
       deadline || null, service_type,
       JSON.stringify(other_services || {}),
-      assignment_mode || 'auto', req.user.id,
+      assignment_mode || 'auto', cargo_type || 'fcl', so_kien || null, kg || null,
+      req.user.id,
     ]);
 
     const job = rows[0];
+
+    if (Array.isArray(containers) && containers.length > 0) {
+      for (const c of containers) {
+        if (!c.cont_type) continue;
+        await client.query(
+          `INSERT INTO job_containers (job_id, cont_number, cont_type, seal_number) VALUES ($1,$2,$3,$4)`,
+          [job.id, c.cont_number || null, c.cont_type, c.seal_number || null]
+        );
+      }
+    }
 
     if (customer_id) {
       await client.query(`
@@ -445,14 +463,15 @@ router.get('/:id', requireAuth, async (req, res) => {
     `, [req.params.id]);
     if (!rows[0]) return res.status(404).json({ error: 'Không tìm thấy job' });
 
-    const [tkR, truckR, opsR, histR] = await Promise.all([
+    const [tkR, truckR, opsR, histR, contsR] = await Promise.all([
       db.query(`SELECT jt.*, u.name AS cus_name FROM job_tk jt LEFT JOIN users u ON u.id = jt.cus_id WHERE jt.job_id = $1`, [req.params.id]),
       db.query(`SELECT * FROM job_truck WHERE job_id = $1`, [req.params.id]),
       db.query(`SELECT jot.*, u.name AS ops_name FROM job_ops_task jot LEFT JOIN users u ON u.id = jot.ops_id WHERE jot.job_id = $1`, [req.params.id]),
       db.query(`SELECT jh.*, u.name AS changed_by_name FROM job_history jh LEFT JOIN users u ON u.id = jh.changed_by WHERE jh.job_id = $1 ORDER BY jh.changed_at DESC`, [req.params.id]),
+      db.query(`SELECT id, cont_number, cont_type, seal_number FROM job_containers WHERE job_id = $1 ORDER BY id`, [req.params.id]),
     ]);
 
-    res.json({ ...rows[0], tk: tkR.rows[0] || null, truck: truckR.rows[0] || null, ops_tasks: opsR.rows, history: histR.rows });
+    res.json({ ...rows[0], tk: tkR.rows[0] || null, truck: truckR.rows[0] || null, ops_tasks: opsR.rows, history: histR.rows, containers: contsR.rows });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -462,7 +481,8 @@ router.get('/:id', requireAuth, async (req, res) => {
 router.put('/:id', requireAuth, async (req, res) => {
   const FIELDS = ['job_code','customer_name','customer_address','customer_tax_code',
     'pol','pod','bill_number','cont_number','cont_type','seal_number',
-    'etd','eta','tons','cbm','deadline','service_type','other_services','assignment_mode','status'];
+    'etd','eta','tons','cbm','deadline','service_type','other_services','assignment_mode','status',
+    'cargo_type','so_kien','kg'];
 
   const client = await db.pool.connect();
   try {

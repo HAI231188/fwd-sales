@@ -109,12 +109,48 @@ export default function JobDetailModal({ jobId, onClose }) {
                   <Row label="POD" value={job.pod} />
                   <Row label="ETD" value={fmtDate(job.etd)} />
                   <Row label="ETA" value={fmtDate(job.eta)} />
-                  <Row label="Số cont" value={job.cont_number} />
-                  <Row label="Loại cont" value={job.cont_type} />
-                  <Row label="Số seal" value={job.seal_number} />
                   <Row label="Số B/L" value={job.bill_number} />
-                  <Row label="Tấn" value={job.tons} />
-                  <Row label="CBM" value={job.cbm} />
+                  {job.cargo_type === 'lcl' ? (
+                    <>
+                      <Row label="Loại hàng" value="LCL" />
+                      <Row label="Số kiện" value={job.so_kien} />
+                      <Row label="Kg" value={job.kg} />
+                      <Row label="CBM" value={job.cbm} />
+                    </>
+                  ) : (
+                    <>
+                      {Array.isArray(job.containers) && job.containers.length > 0 ? (
+                        <div style={{ padding: '4px 10px' }}>
+                          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                            <thead>
+                              <tr>
+                                <th style={{ textAlign: 'left', padding: '4px 6px', color: 'var(--text-2)', fontWeight: 600, borderBottom: '1px solid var(--border)' }}>Loại</th>
+                                <th style={{ textAlign: 'left', padding: '4px 6px', color: 'var(--text-2)', fontWeight: 600, borderBottom: '1px solid var(--border)' }}>Số cont</th>
+                                <th style={{ textAlign: 'left', padding: '4px 6px', color: 'var(--text-2)', fontWeight: 600, borderBottom: '1px solid var(--border)' }}>Số seal</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {job.containers.map((c, i) => (
+                                <tr key={i}>
+                                  <td style={{ padding: '4px 6px', fontWeight: 500 }}>{c.cont_type}</td>
+                                  <td style={{ padding: '4px 6px' }}>{c.cont_number || '—'}</td>
+                                  <td style={{ padding: '4px 6px', color: 'var(--text-2)' }}>{c.seal_number || '—'}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      ) : (
+                        <>
+                          <Row label="Số cont" value={job.cont_number} />
+                          <Row label="Loại cont" value={job.cont_type} />
+                          <Row label="Số seal" value={job.seal_number} />
+                        </>
+                      )}
+                      <Row label="Tấn" value={job.tons} />
+                      <Row label="CBM" value={job.cbm} />
+                    </>
+                  )}
                 </Section>
 
                 {job.cus_name && (

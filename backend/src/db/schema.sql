@@ -305,7 +305,20 @@ CREATE INDEX IF NOT EXISTS idx_job_ops_task_job_id    ON job_ops_task(job_id);
 CREATE INDEX IF NOT EXISTS idx_job_history_job_id     ON job_history(job_id);
 CREATE INDEX IF NOT EXISTS idx_job_dl_req_job_id      ON job_deadline_requests(job_id);
 
-ALTER TABLE jobs ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE;
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS deleted_at  TIMESTAMP WITH TIME ZONE;
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS cargo_type  VARCHAR(3) DEFAULT 'fcl';
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS so_kien     INTEGER;
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS kg          DECIMAL(10,2);
+
+CREATE TABLE IF NOT EXISTS job_containers (
+  id          SERIAL PRIMARY KEY,
+  job_id      INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+  cont_number VARCHAR(100),
+  cont_type   VARCHAR(10) NOT NULL,
+  seal_number VARCHAR(100),
+  created_at  TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_job_containers_job_id ON job_containers(job_id);
 
 CREATE TABLE IF NOT EXISTS job_delete_requests (
   id           SERIAL PRIMARY KEY,
