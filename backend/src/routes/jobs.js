@@ -236,11 +236,11 @@ router.get('/customer-search', requireAuth, async (req, res) => {
         cp.company_name AS customer_name, cp.contact_person, cp.phone,
         u.name AS sales_name,
         (SELECT j.customer_address FROM jobs j
-         WHERE (j.customer_id = cp.customer_id OR (cp.customer_id IS NULL AND LOWER(j.customer_name) = LOWER(cp.company_name)))
+         WHERE (j.customer_id = cp.customer_id OR LOWER(j.customer_name) = LOWER(cp.company_name))
            AND j.customer_address IS NOT NULL AND j.deleted_at IS NULL
          ORDER BY j.created_at DESC LIMIT 1) AS customer_address,
         (SELECT j.customer_tax_code FROM jobs j
-         WHERE (j.customer_id = cp.customer_id OR (cp.customer_id IS NULL AND LOWER(j.customer_name) = LOWER(cp.company_name)))
+         WHERE (j.customer_id = cp.customer_id OR LOWER(j.customer_name) = LOWER(cp.company_name))
            AND j.customer_tax_code IS NOT NULL AND j.deleted_at IS NULL
          ORDER BY j.created_at DESC LIMIT 1) AS customer_tax_code
       FROM customer_pipeline cp
