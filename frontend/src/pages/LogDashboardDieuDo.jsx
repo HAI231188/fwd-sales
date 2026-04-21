@@ -2,7 +2,7 @@ import { useState, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import Navbar from '../components/Navbar';
 import JobDetailModal from '../components/JobDetailModal';
-import { getJobStats, getJobs, updateJobTruck, completeJobTruck } from '../api';
+import { getJobStats, getJobs, updateJobTruck, completeJobTruck, requestJobDelete } from '../api';
 
 function fmtDate(val) {
   if (!val) return '—';
@@ -75,6 +75,10 @@ export default function LogDashboardDieuDo() {
   const completeMut = useMutation({
     mutationFn: id => completeJobTruck(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['jobs', 'jobStats'] }),
+  });
+  const deleteReqMut = useMutation({
+    mutationFn: ({ id, reason }) => requestJobDelete(id, reason),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['jobs'] }),
   });
 
   function canComplete(j) {
@@ -199,7 +203,16 @@ export default function LogDashboardDieuDo() {
                           <InlineInput value={j.truck_notes}
                             onSave={v => truckMut.mutate({ jobId: j.id, data: { notes: v } })} />
                         </td>
-                        <td style={{ padding: '8px 8px' }}>
+                        <td style={{ padding: '8px 8px', whiteSpace: 'nowrap' }}>
+                          {tab === 'pending' && (
+                            <button className="btn btn-ghost btn-sm btn-icon"
+                              title="Yêu cầu xóa job" style={{ color: 'var(--danger)' }}
+                              onClick={() => {
+                                if (window.confirm(`Gửi yêu cầu xóa job ${j.job_code || '#' + j.id}?`)) {
+                                  deleteReqMut.mutate({ id: j.id, reason: null });
+                                }
+                              }}>🗑</button>
+                          )}
                           <button className="btn btn-ghost btn-sm btn-icon" title="Chi tiết"
                             onClick={() => setDetailJobId(j.id)}>🔍</button>
                         </td>

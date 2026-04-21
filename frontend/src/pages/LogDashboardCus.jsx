@@ -4,6 +4,7 @@ import Navbar from '../components/Navbar';
 import JobDetailModal from '../components/JobDetailModal';
 import {
   getJobStats, getJobs, updateJobTk, confirmJob, requestDeadline, completeJob,
+  requestJobDelete,
 } from '../api';
 
 const TK_STATUS_OPTIONS = [
@@ -161,6 +162,10 @@ export default function LogDashboardCus() {
   const completeMut = useMutation({
     mutationFn: id => completeJob(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['jobs', 'jobStats'] }),
+  });
+  const deleteReqMut = useMutation({
+    mutationFn: ({ id, reason }) => requestJobDelete(id, reason),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['jobs'] }),
   });
 
   function canComplete(j) {
@@ -328,7 +333,16 @@ export default function LogDashboardCus() {
                           <InlineInput value={j.tk_notes}
                             onSave={v => tkMut.mutate({ jobId: j.id, data: { notes: v } })} />
                         </td>
-                        <td style={{ padding: '8px 8px' }}>
+                        <td style={{ padding: '8px 8px', whiteSpace: 'nowrap' }}>
+                          {tab === 'pending' && (
+                            <button className="btn btn-ghost btn-sm btn-icon"
+                              title="Yêu cầu xóa job" style={{ color: 'var(--danger)' }}
+                              onClick={() => {
+                                if (window.confirm(`Gửi yêu cầu xóa job ${j.job_code || '#' + j.id}?`)) {
+                                  deleteReqMut.mutate({ id: j.id, reason: null });
+                                }
+                              }}>🗑</button>
+                          )}
                           <button className="btn btn-ghost btn-sm btn-icon" title="Chi tiết"
                             onClick={() => setDetailJobId(j.id)}>🔍</button>
                         </td>

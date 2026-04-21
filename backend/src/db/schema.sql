@@ -305,6 +305,22 @@ CREATE INDEX IF NOT EXISTS idx_job_ops_task_job_id    ON job_ops_task(job_id);
 CREATE INDEX IF NOT EXISTS idx_job_history_job_id     ON job_history(job_id);
 CREATE INDEX IF NOT EXISTS idx_job_dl_req_job_id      ON job_deadline_requests(job_id);
 
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE;
+
+CREATE TABLE IF NOT EXISTS job_delete_requests (
+  id           SERIAL PRIMARY KEY,
+  job_id       INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+  requested_by INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  reason       TEXT,
+  status       VARCHAR(20) NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending','approved','rejected')),
+  reviewed_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  reviewed_at  TIMESTAMP WITH TIME ZONE,
+  created_at   TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_job_delete_req_job_id ON job_delete_requests(job_id);
+CREATE INDEX IF NOT EXISTS idx_job_delete_req_status ON job_delete_requests(status);
+
 -- ============================================================
 -- Seed: LOG module user accounts (idempotent)
 -- ============================================================

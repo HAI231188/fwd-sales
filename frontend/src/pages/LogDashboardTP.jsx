@@ -5,6 +5,7 @@ import JobDetailModal from '../components/JobDetailModal';
 import {
   getJobStats, getJobs, getDeadlineRequests, getLogStaff,
   assignJob, setJobDeadline, reviewDeadlineRequest, createJob,
+  deleteJob, reviewDeleteRequest,
 } from '../api';
 
 const SVC_LABEL = { tk: 'TK', truck: 'Xe', both: 'TK+Xe' };
@@ -293,9 +294,9 @@ function AssignModal({ job, staff, onClose, onSave }) {
 }
 
 // ─── Deadline Modal ───────────────────────────────────────────────────────────
-function DeadlineModal({ data, onClose, onReview, onSetDeadline }) {
+function DeadlineModal({ data, onClose, onReview, onSetDeadline, onReviewDelete }) {
   const [overrides, setOverrides] = useState({});
-  const { requests = [], no_deadline = [] } = data || {};
+  const { requests = [], no_deadline = [], delete_requests = [] } = data || {};
 
   return (
     <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
@@ -360,7 +361,35 @@ function DeadlineModal({ data, onClose, onReview, onSetDeadline }) {
               ))}
             </>
           )}
-          {!requests.length && !no_deadline.length && (
+          {delete_requests.length > 0 && (
+            <>
+              <div className="section-title" style={{ marginTop: 16, marginBottom: 10, color: 'var(--danger)' }}>
+                Yêu cầu xóa job ({delete_requests.length})
+              </div>
+              {delete_requests.map(r => (
+                <div key={r.id} className="card" style={{ marginBottom: 10, padding: 14, borderLeft: '3px solid var(--danger)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                    <span style={{ fontWeight: 600 }}>{r.job_code || `#${r.job_id}`} — {r.customer_name}</span>
+                    <span style={{ fontSize: 12, color: 'var(--text-3)' }}>by {r.requested_by_name}</span>
+                  </div>
+                  {r.reason && (
+                    <div style={{ fontSize: 13, color: 'var(--text-2)', marginBottom: 8 }}>Lý do: {r.reason}</div>
+                  )}
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button className="btn btn-danger btn-sm"
+                      onClick={() => onReviewDelete(r.id, 'approved')}>
+                      Duyệt xóa
+                    </button>
+                    <button className="btn btn-ghost btn-sm"
+                      onClick={() => onReviewDelete(r.id, 'rejected')}>
+                      Từ chối
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </>
+          )}
+          {!requests.length && !no_deadline.length && !delete_requests.length && (
             <div className="empty-state">
               <div className="icon">✅</div>
               <p>Không có yêu cầu pending</p>
@@ -407,6 +436,14 @@ export default function LogDashboardTP() {
     mutationFn: ({ rid, action, dl }) => reviewDeadlineRequest(rid, action, dl),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['jobs', 'deadlineRequests', 'jobStats'] }),
   });
+  const deleteMut = useMutation({
+    mutationFn: id => deleteJob(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['jobs', 'jobStats'] }),
+  });
+  const reviewDeleteMut = useMutation({
+    mutationFn: ({ rid, action }) => reviewDeleteRequest(rid, action),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['jobs', 'deadlineRequests', 'jobStats'] }),
+  });
 
   const waitingCount = jobs.filter(j => (j.service_type === 'tk' || j.service_type === 'both') && !j.cus_id).length;
 
@@ -425,6 +462,7 @@ export default function LogDashboardTP() {
           <StatCard label="Chờ phân việc" value={stats?.waiting_assign} color="var(--warning)"
             badge={stats?.waiting_assign > 0 ? 'Mới' : null} onClick={() => setTab('pending')} />
           <StatCard label="Chờ xác nhận deadline" value={stats?.deadline_pending} color="var(--warning)"
+            badge={stats?.delete_requests > 0 ? `${stats.delete_requests} xóa` : null}
             onClick={() => setShowDeadline(true)} />
           <StatCard label="Quá deadline" value={stats?.overdue} color="var(--danger)" />
           <StatCard label="Sắp hạn (48h)" value={stats?.warn_soon} color="var(--warning)" />
@@ -558,7 +596,16 @@ export default function LogDashboardTP() {
                             </button>
                           )}
                         </td>
-                        <td style={{ padding: '8px 8px' }}>
+                        <td style={{ padding: '8px 8px', whiteSpace: 'nowrap' }}>
+                          {tab === 'pending' && (
+                            <button className="btn btn-ghost btn-sm btn-icon"
+                              title="Xóa job" style={{ color: 'var(--danger)' }}
+                              onClick={() => {
+                                if (window.confirm(`Xóa job ${j.job_code || '#' + j.id}?`)) {
+                                  deleteMut.mutate(j.id);
+                                }
+                              }}>🗑</button>
+                          )}
                           <button className="btn btn-ghost btn-sm btn-icon" title="Chi tiết"
                             onClick={() => setDetailJobId(j.id)}>🔍</button>
                         </td>
@@ -582,6 +629,7 @@ export default function LogDashboardTP() {
           onClose={() => setShowDeadline(false)}
           onReview={(rid, action, dl) => reviewMut.mutate({ rid, action, dl })}
           onSetDeadline={(id, deadline) => setDlMut.mutate({ id, deadline })}
+          onReviewDelete={(rid, action) => reviewDeleteMut.mutate({ rid, action })}
         />
       )}
       {assigningJob && (

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import Navbar from '../components/Navbar';
 import JobDetailModal from '../components/JobDetailModal';
-import { getJobStats, getJobs, completeOpsTask, completeJob } from '../api';
+import { getJobStats, getJobs, completeOpsTask, completeJob, requestJobDelete } from '../api';
 
 const TK_STATUS_LABEL = {
   chua_truyen: 'Chưa truyền', dang_lam: 'Đang làm',
@@ -73,6 +73,10 @@ export default function LogDashboardOps() {
   const completeJobMut = useMutation({
     mutationFn: id => completeJob(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['jobs', 'jobStats'] }),
+  });
+  const deleteReqMut = useMutation({
+    mutationFn: ({ id, reason }) => requestJobDelete(id, reason),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['jobs'] }),
   });
 
   const displayJobs = tab === 'hoan_thanh' ? completedJobs : pendingJobs;
@@ -149,7 +153,14 @@ export default function LogDashboardOps() {
                       </TD>
                       <TD style={{ whiteSpace: 'nowrap', fontSize: 12 }}>{fmtDt(j.tq_datetime)}</TD>
                       <TD style={{ color: 'var(--text-2)', maxWidth: 160, fontSize: 12 }}>{j.tk_notes || '—'}</TD>
-                      <TD>
+                      <TD style={{ whiteSpace: 'nowrap' }}>
+                        <button className="btn btn-ghost btn-sm btn-icon"
+                          title="Yêu cầu xóa job" style={{ color: 'var(--danger)' }}
+                          onClick={() => {
+                            if (window.confirm(`Gửi yêu cầu xóa job ${j.job_code || '#' + j.id}?`)) {
+                              deleteReqMut.mutate({ id: j.id, reason: null });
+                            }
+                          }}>🗑</button>
                         <button className="btn btn-ghost btn-sm btn-icon" onClick={() => setDetailJobId(j.id)}>🔍</button>
                       </TD>
                     </tr>
@@ -184,7 +195,14 @@ export default function LogDashboardOps() {
                       <TD colSpan={5} style={{ color: 'var(--text-3)', fontSize: 12 }}>
                         Mở chi tiết để xem &amp; hoàn thành công việc OPS
                       </TD>
-                      <TD>
+                      <TD style={{ whiteSpace: 'nowrap' }}>
+                        <button className="btn btn-ghost btn-sm btn-icon"
+                          title="Yêu cầu xóa job" style={{ color: 'var(--danger)' }}
+                          onClick={() => {
+                            if (window.confirm(`Gửi yêu cầu xóa job ${j.job_code || '#' + j.id}?`)) {
+                              deleteReqMut.mutate({ id: j.id, reason: null });
+                            }
+                          }}>🗑</button>
                         <button className="btn btn-ghost btn-sm btn-icon" onClick={() => setDetailJobId(j.id)}>🔍</button>
                       </TD>
                     </tr>
@@ -217,7 +235,14 @@ export default function LogDashboardOps() {
                         </span>
                       </TD>
                       <TD style={{ fontSize: 12 }}>{fmtDt(j.tq_datetime)}</TD>
-                      <TD>
+                      <TD style={{ whiteSpace: 'nowrap' }}>
+                        <button className="btn btn-ghost btn-sm btn-icon"
+                          title="Yêu cầu xóa job" style={{ color: 'var(--danger)' }}
+                          onClick={() => {
+                            if (window.confirm(`Gửi yêu cầu xóa job ${j.job_code || '#' + j.id}?`)) {
+                              deleteReqMut.mutate({ id: j.id, reason: null });
+                            }
+                          }}>🗑</button>
                         <button className="btn btn-ghost btn-sm btn-icon" onClick={() => setDetailJobId(j.id)}>🔍</button>
                       </TD>
                     </tr>

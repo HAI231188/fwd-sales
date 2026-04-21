@@ -20,14 +20,14 @@ async function recordHistory(client, jobId, changedBy, fieldName, oldValue, newV
 async function autoAssignCus(client) {
   const { rows } = await client.query(`
     SELECT u.id, u.name,
-      COUNT(DISTINCT jt.job_id) FILTER (WHERE j.status = 'pending' AND jt.completed_at IS NULL) AS tk_count,
+      COUNT(DISTINCT jt.job_id) FILTER (WHERE j.status = 'pending' AND j.deleted_at IS NULL AND jt.completed_at IS NULL) AS tk_count,
       COALESCE(SUM(
         (CASE WHEN j2.other_services->>'ktcl' = 'true' THEN 1 ELSE 0 END) +
         (CASE WHEN j2.other_services->>'kiem_dich' = 'true' THEN 1 ELSE 0 END) +
         (CASE WHEN j2.other_services->>'hun_trung' = 'true' THEN 1 ELSE 0 END) +
         (CASE WHEN j2.other_services->>'co' = 'true' THEN 1 ELSE 0 END) +
         (CASE WHEN j2.other_services->>'khac' = 'true' THEN 1 ELSE 0 END)
-      ) FILTER (WHERE j2.status = 'pending'), 0) AS svc_count
+      ) FILTER (WHERE j2.status = 'pending' AND j2.deleted_at IS NULL), 0) AS svc_count
     FROM users u
     LEFT JOIN job_tk jt ON jt.cus_id = u.id
     LEFT JOIN jobs j ON j.id = jt.job_id
@@ -36,14 +36,14 @@ async function autoAssignCus(client) {
     WHERE u.role = ANY($1)
     GROUP BY u.id, u.name
     ORDER BY (
-      COUNT(DISTINCT jt.job_id) FILTER (WHERE j.status = 'pending' AND jt.completed_at IS NULL) +
+      COUNT(DISTINCT jt.job_id) FILTER (WHERE j.status = 'pending' AND j.deleted_at IS NULL AND jt.completed_at IS NULL) +
       COALESCE(SUM(
         (CASE WHEN j2.other_services->>'ktcl' = 'true' THEN 1 ELSE 0 END) +
         (CASE WHEN j2.other_services->>'kiem_dich' = 'true' THEN 1 ELSE 0 END) +
         (CASE WHEN j2.other_services->>'hun_trung' = 'true' THEN 1 ELSE 0 END) +
         (CASE WHEN j2.other_services->>'co' = 'true' THEN 1 ELSE 0 END) +
         (CASE WHEN j2.other_services->>'khac' = 'true' THEN 1 ELSE 0 END)
-      ) FILTER (WHERE j2.status = 'pending'), 0)
+      ) FILTER (WHERE j2.status = 'pending' AND j2.deleted_at IS NULL), 0)
     ) ASC
     LIMIT 1
   `, [AUTO_CUS_ROLES]);
@@ -55,11 +55,11 @@ router.get('/stats', requireAuth, async (req, res) => {
   const { role, id: userId } = req.user;
   try {
     if (role === 'truong_phong_log') {
-      const [total, waitingAssign, deadlinePending, overdue, warnSoon, missingInfo, staff] = await Promise.all([
-        db.query(`SELECT COUNT(*) AS v FROM jobs WHERE status = 'pending'`),
+      const [total, waitingAssign, deadlinePending, overdue, warnSoon, missingInfo, deleteReqs, staff] = await Promise.all([
+        db.query(`SELECT COUNT(*) AS v FROM jobs WHERE status = 'pending' AND deleted_at IS NULL`),
         db.query(`
           SELECT COUNT(*) AS v FROM jobs j
-          WHERE j.status = 'pending'
+          WHERE j.status = 'pending' AND j.deleted_at IS NULL
             AND j.service_type IN ('tk','both')
             AND (
               j.assignment_mode = 'manual'
@@ -69,18 +69,19 @@ router.get('/stats', requireAuth, async (req, res) => {
           SELECT COUNT(*) AS v FROM (
             SELECT j.id FROM jobs j
             LEFT JOIN job_assignments ja ON ja.job_id = j.id
-            WHERE j.status = 'pending'
+            WHERE j.status = 'pending' AND j.deleted_at IS NULL
               AND (ja.cus_confirm_status = 'adjustment_requested' OR j.deadline IS NULL)
           ) x`),
-        db.query(`SELECT COUNT(*) AS v FROM jobs WHERE status = 'pending' AND deadline < NOW()`),
-        db.query(`SELECT COUNT(*) AS v FROM jobs WHERE status = 'pending' AND deadline BETWEEN NOW() AND NOW() + INTERVAL '48 hours'`),
-        db.query(`SELECT COUNT(*) AS v FROM jobs WHERE status = 'pending' AND (pol IS NULL OR pod IS NULL OR cont_number IS NULL)`),
+        db.query(`SELECT COUNT(*) AS v FROM jobs WHERE status = 'pending' AND deleted_at IS NULL AND deadline < NOW()`),
+        db.query(`SELECT COUNT(*) AS v FROM jobs WHERE status = 'pending' AND deleted_at IS NULL AND deadline BETWEEN NOW() AND NOW() + INTERVAL '48 hours'`),
+        db.query(`SELECT COUNT(*) AS v FROM jobs WHERE status = 'pending' AND deleted_at IS NULL AND (pol IS NULL OR pod IS NULL OR cont_number IS NULL)`),
+        db.query(`SELECT COUNT(*) AS v FROM job_delete_requests WHERE status = 'pending'`),
         db.query(`
           SELECT u.id, u.name, u.role, u.code, u.avatar_color,
-            COUNT(ja.id) FILTER (WHERE j.status = 'pending') AS pending,
-            COUNT(ja.id) FILTER (WHERE j.status = 'pending' AND j.deadline < NOW()) AS overdue,
-            COUNT(ja.id) FILTER (WHERE j.status = 'pending' AND ja.cus_confirm_status = 'pending') AS awaiting_confirm,
-            COUNT(ja.id) FILTER (WHERE j.status = 'pending' AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '48 hours') AS warning
+            COUNT(ja.id) FILTER (WHERE j.status = 'pending' AND j.deleted_at IS NULL) AS pending,
+            COUNT(ja.id) FILTER (WHERE j.status = 'pending' AND j.deleted_at IS NULL AND j.deadline < NOW()) AS overdue,
+            COUNT(ja.id) FILTER (WHERE j.status = 'pending' AND j.deleted_at IS NULL AND ja.cus_confirm_status = 'pending') AS awaiting_confirm,
+            COUNT(ja.id) FILTER (WHERE j.status = 'pending' AND j.deleted_at IS NULL AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '48 hours') AS warning
           FROM users u
           LEFT JOIN job_assignments ja ON (ja.cus_id = u.id OR ja.ops_id = u.id)
           LEFT JOIN jobs j ON j.id = ja.job_id
@@ -96,14 +97,15 @@ router.get('/stats', requireAuth, async (req, res) => {
         overdue:          parseInt(overdue.rows[0].v),
         warn_soon:        parseInt(warnSoon.rows[0].v),
         missing_info:     parseInt(missingInfo.rows[0].v),
+        delete_requests:  parseInt(deleteReqs.rows[0].v),
         staff:            staff.rows,
       });
     } else if (role === 'dieu_do') {
       const [total, daDat, chuaDat, warnOverdue] = await Promise.all([
-        db.query(`SELECT COUNT(*) AS v FROM job_truck jt JOIN jobs j ON j.id = jt.job_id WHERE j.status = 'pending' AND jt.completed_at IS NULL`),
-        db.query(`SELECT COUNT(*) AS v FROM job_truck jt JOIN jobs j ON j.id = jt.job_id WHERE j.status = 'pending' AND jt.completed_at IS NULL AND jt.transport_name IS NOT NULL AND jt.vehicle_number IS NOT NULL`),
-        db.query(`SELECT COUNT(*) AS v FROM job_truck jt JOIN jobs j ON j.id = jt.job_id WHERE j.status = 'pending' AND jt.completed_at IS NULL AND jt.planned_datetime IS NOT NULL AND (jt.transport_name IS NULL OR jt.transport_name = '')`),
-        db.query(`SELECT COUNT(*) AS v FROM job_truck jt JOIN jobs j ON j.id = jt.job_id WHERE j.status = 'pending' AND jt.completed_at IS NULL AND jt.planned_datetime <= NOW() + INTERVAL '24 hours'`),
+        db.query(`SELECT COUNT(*) AS v FROM job_truck jt JOIN jobs j ON j.id = jt.job_id WHERE j.status = 'pending' AND j.deleted_at IS NULL AND jt.completed_at IS NULL`),
+        db.query(`SELECT COUNT(*) AS v FROM job_truck jt JOIN jobs j ON j.id = jt.job_id WHERE j.status = 'pending' AND j.deleted_at IS NULL AND jt.completed_at IS NULL AND jt.transport_name IS NOT NULL AND jt.vehicle_number IS NOT NULL`),
+        db.query(`SELECT COUNT(*) AS v FROM job_truck jt JOIN jobs j ON j.id = jt.job_id WHERE j.status = 'pending' AND j.deleted_at IS NULL AND jt.completed_at IS NULL AND jt.planned_datetime IS NOT NULL AND (jt.transport_name IS NULL OR jt.transport_name = '')`),
+        db.query(`SELECT COUNT(*) AS v FROM job_truck jt JOIN jobs j ON j.id = jt.job_id WHERE j.status = 'pending' AND j.deleted_at IS NULL AND jt.completed_at IS NULL AND jt.planned_datetime <= NOW() + INTERVAL '24 hours'`),
       ]);
       res.json({
         total_active:    parseInt(total.rows[0].v),
@@ -114,10 +116,10 @@ router.get('/stats', requireAuth, async (req, res) => {
       });
     } else if (CUS_ROLES.includes(role)) {
       const [total, choXacNhan, sapHan, quaHan] = await Promise.all([
-        db.query(`SELECT COUNT(*) AS v FROM job_assignments ja JOIN jobs j ON j.id = ja.job_id WHERE ja.cus_id = $1 AND j.status = 'pending'`, [userId]),
-        db.query(`SELECT COUNT(*) AS v FROM job_assignments ja WHERE ja.cus_id = $1 AND ja.cus_confirm_status = 'pending'`, [userId]),
-        db.query(`SELECT COUNT(*) AS v FROM job_assignments ja JOIN jobs j ON j.id = ja.job_id WHERE ja.cus_id = $1 AND j.status = 'pending' AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '24 hours'`, [userId]),
-        db.query(`SELECT COUNT(*) AS v FROM job_assignments ja JOIN jobs j ON j.id = ja.job_id WHERE ja.cus_id = $1 AND j.status = 'pending' AND j.deadline < NOW()`, [userId]),
+        db.query(`SELECT COUNT(*) AS v FROM job_assignments ja JOIN jobs j ON j.id = ja.job_id WHERE ja.cus_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL`, [userId]),
+        db.query(`SELECT COUNT(*) AS v FROM job_assignments ja JOIN jobs j ON j.id = ja.job_id WHERE ja.cus_id = $1 AND j.deleted_at IS NULL AND ja.cus_confirm_status = 'pending'`, [userId]),
+        db.query(`SELECT COUNT(*) AS v FROM job_assignments ja JOIN jobs j ON j.id = ja.job_id WHERE ja.cus_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '24 hours'`, [userId]),
+        db.query(`SELECT COUNT(*) AS v FROM job_assignments ja JOIN jobs j ON j.id = ja.job_id WHERE ja.cus_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL AND j.deadline < NOW()`, [userId]),
       ]);
       res.json({
         total_active:  parseInt(total.rows[0].v),
@@ -127,11 +129,11 @@ router.get('/stats', requireAuth, async (req, res) => {
       });
     } else if (role === 'ops') {
       const [total, choDoiLenh, choTQ, sapHan, quaHan] = await Promise.all([
-        db.query(`SELECT COUNT(*) AS v FROM job_assignments ja JOIN jobs j ON j.id = ja.job_id WHERE ja.ops_id = $1 AND j.status = 'pending'`, [userId]),
-        db.query(`SELECT COUNT(*) AS v FROM job_ops_task jot WHERE jot.ops_id = $1 AND jot.completed = FALSE`, [userId]),
-        db.query(`SELECT COUNT(*) AS v FROM job_assignments ja JOIN jobs j ON j.id = ja.job_id JOIN job_tk jt ON jt.job_id = j.id WHERE ja.ops_id = $1 AND j.status = 'pending' AND jt.tk_status = 'dang_lam'`, [userId]),
-        db.query(`SELECT COUNT(*) AS v FROM job_assignments ja JOIN jobs j ON j.id = ja.job_id WHERE ja.ops_id = $1 AND j.status = 'pending' AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '24 hours'`, [userId]),
-        db.query(`SELECT COUNT(*) AS v FROM job_assignments ja JOIN jobs j ON j.id = ja.job_id WHERE ja.ops_id = $1 AND j.status = 'pending' AND j.deadline < NOW()`, [userId]),
+        db.query(`SELECT COUNT(*) AS v FROM job_assignments ja JOIN jobs j ON j.id = ja.job_id WHERE ja.ops_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL`, [userId]),
+        db.query(`SELECT COUNT(*) AS v FROM job_ops_task jot JOIN jobs j ON j.id = jot.job_id WHERE jot.ops_id = $1 AND jot.completed = FALSE AND j.deleted_at IS NULL`, [userId]),
+        db.query(`SELECT COUNT(*) AS v FROM job_assignments ja JOIN jobs j ON j.id = ja.job_id JOIN job_tk jt ON jt.job_id = j.id WHERE ja.ops_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL AND jt.tk_status = 'dang_lam'`, [userId]),
+        db.query(`SELECT COUNT(*) AS v FROM job_assignments ja JOIN jobs j ON j.id = ja.job_id WHERE ja.ops_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '24 hours'`, [userId]),
+        db.query(`SELECT COUNT(*) AS v FROM job_assignments ja JOIN jobs j ON j.id = ja.job_id WHERE ja.ops_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL AND j.deadline < NOW()`, [userId]),
       ]);
       res.json({
         total_managing: parseInt(total.rows[0].v),
@@ -152,22 +154,30 @@ router.get('/stats', requireAuth, async (req, res) => {
 router.get('/deadline-requests', requireAuth, async (req, res) => {
   try {
     const { rows: requests } = await db.query(`
-      SELECT dr.*, j.job_code, j.customer_name, j.deadline AS job_deadline,
+      SELECT dr.*, j.job_code, j.customer_name, j.deadline AS current_deadline,
              u.name AS requested_by_name
       FROM job_deadline_requests dr
       JOIN jobs j ON j.id = dr.job_id
       JOIN users u ON u.id = dr.requested_by
-      WHERE dr.status = 'pending'
+      WHERE dr.status = 'pending' AND j.deleted_at IS NULL
       ORDER BY dr.id DESC
     `);
     const { rows: noDeadline } = await db.query(`
       SELECT j.id AS job_id, j.job_code, j.customer_name, j.created_at
       FROM jobs j
-      WHERE j.status = 'pending' AND j.deadline IS NULL
+      WHERE j.status = 'pending' AND j.deleted_at IS NULL AND j.deadline IS NULL
         AND NOT EXISTS (SELECT 1 FROM job_deadline_requests dr WHERE dr.job_id = j.id AND dr.status = 'pending')
       ORDER BY j.created_at DESC
     `);
-    res.json({ requests, no_deadline: noDeadline });
+    const { rows: deleteRequests } = await db.query(`
+      SELECT dr.*, j.job_code, j.customer_name, u.name AS requested_by_name
+      FROM job_delete_requests dr
+      JOIN jobs j ON j.id = dr.job_id
+      JOIN users u ON u.id = dr.requested_by
+      WHERE dr.status = 'pending' AND j.deleted_at IS NULL
+      ORDER BY dr.created_at DESC
+    `);
+    res.json({ requests, no_deadline: noDeadline, delete_requests: deleteRequests });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -178,14 +188,14 @@ router.get('/staff-workload', requireAuth, async (req, res) => {
   try {
     const { rows } = await db.query(`
       SELECT u.id, u.name, u.role, u.code, u.avatar_color,
-        COUNT(DISTINCT jt.job_id) FILTER (WHERE j.status = 'pending' AND jt.completed_at IS NULL) AS tk_active,
+        COUNT(DISTINCT jt.job_id) FILTER (WHERE j.status = 'pending' AND j.deleted_at IS NULL AND jt.completed_at IS NULL) AS tk_active,
         COALESCE(SUM(
           (CASE WHEN j2.other_services->>'ktcl' = 'true' THEN 1 ELSE 0 END) +
           (CASE WHEN j2.other_services->>'kiem_dich' = 'true' THEN 1 ELSE 0 END) +
           (CASE WHEN j2.other_services->>'hun_trung' = 'true' THEN 1 ELSE 0 END) +
           (CASE WHEN j2.other_services->>'co' = 'true' THEN 1 ELSE 0 END) +
           (CASE WHEN j2.other_services->>'khac' = 'true' THEN 1 ELSE 0 END)
-        ) FILTER (WHERE j2.status = 'pending'), 0) AS svc_load
+        ) FILTER (WHERE j2.status = 'pending' AND j2.deleted_at IS NULL), 0) AS svc_load
       FROM users u
       LEFT JOIN job_tk jt ON jt.cus_id = u.id
       LEFT JOIN jobs j ON j.id = jt.job_id
@@ -215,6 +225,24 @@ router.get('/users/log-staff', requireAuth, async (req, res) => {
   }
 });
 
+// GET /api/jobs/delete-requests  (truong_phong_log only — also returned inside /deadline-requests)
+router.get('/delete-requests', requireAuth, async (req, res) => {
+  if (req.user.role !== 'truong_phong_log') return res.status(403).json({ error: 'Không có quyền' });
+  try {
+    const { rows } = await db.query(`
+      SELECT dr.*, j.job_code, j.customer_name, u.name AS requested_by_name
+      FROM job_delete_requests dr
+      JOIN jobs j ON j.id = dr.job_id
+      JOIN users u ON u.id = dr.requested_by
+      WHERE dr.status = 'pending' AND j.deleted_at IS NULL
+      ORDER BY dr.created_at DESC
+    `);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/jobs/
 router.get('/', requireAuth, async (req, res) => {
   const { role, id: userId } = req.user;
@@ -225,6 +253,7 @@ router.get('/', requireAuth, async (req, res) => {
   const params = [];
   let idx = 1;
 
+  conditions.push(`j.deleted_at IS NULL`);
   conditions.push(`j.status = $${idx++}`);
   params.push(isCompleted ? 'completed' : 'pending');
   if (isCompleted) {
@@ -374,7 +403,7 @@ router.get('/:id', requireAuth, async (req, res) => {
       LEFT JOIN users u_ops ON u_ops.id = ja.ops_id
       LEFT JOIN users u_sales ON u_sales.id = j.sales_id
       LEFT JOIN users u_created ON u_created.id = j.created_by
-      WHERE j.id = $1
+      WHERE j.id = $1 AND j.deleted_at IS NULL
     `, [req.params.id]);
     if (!rows[0]) return res.status(404).json({ error: 'Không tìm thấy job' });
 
@@ -400,7 +429,7 @@ router.put('/:id', requireAuth, async (req, res) => {
   const client = await db.pool.connect();
   try {
     await client.query('BEGIN');
-    const { rows: cur } = await client.query(`SELECT * FROM jobs WHERE id = $1`, [req.params.id]);
+    const { rows: cur } = await client.query(`SELECT * FROM jobs WHERE id = $1 AND deleted_at IS NULL`, [req.params.id]);
     if (!cur[0]) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Không tìm thấy' }); }
 
     const sets = []; const params = []; let idx = 1;
@@ -417,6 +446,28 @@ router.put('/:id', requireAuth, async (req, res) => {
     const { rows } = await client.query(`UPDATE jobs SET ${sets.join(', ')} WHERE id = $${idx} RETURNING *`, params);
     await client.query('COMMIT');
     res.json(rows[0]);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// DELETE /api/jobs/:id  (truong_phong_log only — soft delete)
+router.delete('/:id', requireAuth, async (req, res) => {
+  if (req.user.role !== 'truong_phong_log') return res.status(403).json({ error: 'Không có quyền' });
+  const client = await db.pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query(
+      `UPDATE jobs SET deleted_at = NOW(), updated_at = NOW() WHERE id = $1 AND deleted_at IS NULL RETURNING id`,
+      [req.params.id]
+    );
+    if (!rows[0]) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Không tìm thấy job' }); }
+    await recordHistory(client, req.params.id, req.user.id, 'deleted', null, 'deleted');
+    await client.query('COMMIT');
+    res.json({ ok: true });
   } catch (err) {
     await client.query('ROLLBACK');
     res.status(500).json({ error: err.message });
@@ -498,7 +549,8 @@ router.patch('/:id/request-deadline', requireAuth, async (req, res) => {
   const client = await db.pool.connect();
   try {
     await client.query('BEGIN');
-    const { rows: job } = await client.query(`SELECT deadline FROM jobs WHERE id = $1`, [req.params.id]);
+    const { rows: job } = await client.query(`SELECT deadline FROM jobs WHERE id = $1 AND deleted_at IS NULL`, [req.params.id]);
+    if (!job[0]) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Không tìm thấy job' }); }
     await client.query(`
       INSERT INTO job_deadline_requests (job_id, requested_by, current_deadline, proposed_deadline, reason)
       VALUES ($1, $2, $3, $4, $5)
@@ -550,13 +602,46 @@ router.patch('/deadline-requests/:rid/review', requireAuth, async (req, res) => 
   }
 });
 
+// PATCH /api/jobs/delete-requests/:rid/review  (truong_phong_log only)
+router.patch('/delete-requests/:rid/review', requireAuth, async (req, res) => {
+  if (req.user.role !== 'truong_phong_log') return res.status(403).json({ error: 'Không có quyền' });
+  const { action } = req.body;
+  const client = await db.pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows: dr } = await client.query(`SELECT * FROM job_delete_requests WHERE id = $1`, [req.params.rid]);
+    if (!dr[0]) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Không tìm thấy' }); }
+
+    await client.query(
+      `UPDATE job_delete_requests SET status = $1, reviewed_by = $2, reviewed_at = NOW() WHERE id = $3`,
+      [action, req.user.id, req.params.rid]
+    );
+
+    if (action === 'approved') {
+      await client.query(
+        `UPDATE jobs SET deleted_at = NOW(), updated_at = NOW() WHERE id = $1`,
+        [dr[0].job_id]
+      );
+      await recordHistory(client, dr[0].job_id, req.user.id, 'deleted', null, 'approved_delete_request');
+    }
+    await client.query('COMMIT');
+    res.json({ ok: true });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
 // PATCH /api/jobs/:id/set-deadline
 router.patch('/:id/set-deadline', requireAuth, async (req, res) => {
   const { deadline } = req.body;
   const client = await db.pool.connect();
   try {
     await client.query('BEGIN');
-    const { rows: cur } = await client.query(`SELECT deadline FROM jobs WHERE id = $1`, [req.params.id]);
+    const { rows: cur } = await client.query(`SELECT deadline FROM jobs WHERE id = $1 AND deleted_at IS NULL`, [req.params.id]);
+    if (!cur[0]) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Không tìm thấy' }); }
     await client.query(`UPDATE jobs SET deadline = $1, updated_at = NOW() WHERE id = $2`, [deadline, req.params.id]);
     await recordHistory(client, req.params.id, req.user.id, 'deadline', cur[0]?.deadline, deadline);
     await client.query('COMMIT');
@@ -711,12 +796,35 @@ router.patch('/ops-task/:tid/complete', requireAuth, async (req, res) => {
   }
 });
 
+// POST /api/jobs/:id/delete-request
+router.post('/:id/delete-request', requireAuth, async (req, res) => {
+  const { reason } = req.body;
+  const client = await db.pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows: job } = await client.query(`SELECT id FROM jobs WHERE id = $1 AND deleted_at IS NULL`, [req.params.id]);
+    if (!job[0]) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Không tìm thấy job' }); }
+    await client.query(
+      `INSERT INTO job_delete_requests (job_id, requested_by, reason) VALUES ($1, $2, $3)`,
+      [req.params.id, req.user.id, reason || null]
+    );
+    await recordHistory(client, req.params.id, req.user.id, 'delete_requested', null, String(req.user.id));
+    await client.query('COMMIT');
+    res.status(201).json({ ok: true });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
 // PATCH /api/jobs/:id/complete
 router.patch('/:id/complete', requireAuth, async (req, res) => {
   const client = await db.pool.connect();
   try {
     await client.query('BEGIN');
-    await client.query(`UPDATE jobs SET status = 'completed', updated_at = NOW() WHERE id = $1`, [req.params.id]);
+    await client.query(`UPDATE jobs SET status = 'completed', updated_at = NOW() WHERE id = $1 AND deleted_at IS NULL`, [req.params.id]);
     await recordHistory(client, req.params.id, req.user.id, 'status', 'pending', 'completed');
     await client.query('COMMIT');
     res.json({ ok: true });
