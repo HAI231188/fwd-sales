@@ -67,4 +67,26 @@ export const markUpdateComplete = (updateId, completionNote) => api.patch(`/pipe
 export const undoUpdateComplete = (updateId) => api.patch(`/pipeline/customers/updates/${updateId}/uncomplete`, {});
 export const markCustomerFollowUpComplete = (customerId, completed, resultNote) => api.patch(`/pipeline/customers/${customerId}/follow-up-complete`, { completed, result_note: resultNote });
 
+// LOG — Jobs
+export const getJobStats = () => api.get('/jobs/stats');
+export const getJobs = (params) => api.get('/jobs', { params });
+export const createJob = (data) => api.post('/jobs', data);
+export const getJob = (id) => api.get(`/jobs/${id}`);
+export const updateJob = (id, data) => api.put(`/jobs/${id}`, data);
+export const assignJob = (id, data) => api.post(`/jobs/${id}/assign`, data);
+export const confirmJob = (id) => api.patch(`/jobs/${id}/confirm`, {});
+export const requestDeadline = (id, data) => api.patch(`/jobs/${id}/request-deadline`, data);
+export const setJobDeadline = (id, deadline) => api.patch(`/jobs/${id}/set-deadline`, { deadline });
+export const reviewDeadlineRequest = (rid, action, new_deadline) =>
+  api.patch(`/jobs/deadline-requests/${rid}/review`, { action, new_deadline });
+export const getDeadlineRequests = () => api.get('/jobs/deadline-requests');
+export const updateJobTk = (jobId, data) => api.patch(`/jobs/${jobId}/tk`, data);
+export const updateJobTruck = (jobId, data) => api.patch(`/jobs/${jobId}/truck`, data);
+export const completeJobTruck = (jobId) => api.patch(`/jobs/${jobId}/truck/complete`, {});
+export const createOpsTask = (jobId, data) => api.post(`/jobs/${jobId}/ops-task`, data);
+export const completeOpsTask = (tid, notes) => api.patch(`/jobs/ops-task/${tid}/complete`, { notes });
+export const completeJob = (id) => api.patch(`/jobs/${id}/complete`, {});
+export const getLogStaff = () => api.get('/jobs/users/log-staff');
+export const getStaffWorkload = () => api.get('/jobs/staff-workload');
+
 export default api;

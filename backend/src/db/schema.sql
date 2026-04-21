@@ -172,3 +172,135 @@ CREATE TABLE IF NOT EXISTS pipeline_delete_requests (
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_pipeline_delete_requests_pending
   ON pipeline_delete_requests(pipeline_id) WHERE status = 'pending';
+
+-- ============================================================
+-- LOG Module
+-- ============================================================
+
+-- Expand role check to include LOG roles
+ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check;
+ALTER TABLE users ADD CONSTRAINT users_role_check
+  CHECK (role IN ('sales', 'lead', 'truong_phong_log', 'dieu_do', 'cus', 'cus1', 'cus2', 'cus3', 'ops'));
+
+CREATE TABLE IF NOT EXISTS jobs (
+  id                SERIAL PRIMARY KEY,
+  job_code          VARCHAR(50),
+  customer_id       INTEGER REFERENCES customers(id) ON DELETE SET NULL,
+  customer_name     VARCHAR(200) NOT NULL,
+  customer_address  TEXT,
+  customer_tax_code VARCHAR(30),
+  sales_id          INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  pol               VARCHAR(100),
+  pod               VARCHAR(100),
+  bill_number       VARCHAR(100),
+  cont_number       VARCHAR(100),
+  cont_type         VARCHAR(50),
+  seal_number       VARCHAR(100),
+  etd               DATE,
+  eta               DATE,
+  tons              DECIMAL(10,2),
+  cbm               DECIMAL(10,2),
+  deadline          TIMESTAMP WITH TIME ZONE,
+  service_type      VARCHAR(10) CHECK (service_type IN ('tk', 'truck', 'both')),
+  other_services    JSONB DEFAULT '{}',
+  assignment_mode   VARCHAR(10) DEFAULT 'auto' CHECK (assignment_mode IN ('auto', 'manual')),
+  status            VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'completed')),
+  created_by        INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at        TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at        TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS job_assignments (
+  id                           SERIAL PRIMARY KEY,
+  job_id                       INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+  cus_id                       INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  ops_id                       INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  assigned_by                  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  assigned_at                  TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  assignment_mode              VARCHAR(10) CHECK (assignment_mode IN ('auto', 'manual')),
+  cus_confirm_status           VARCHAR(30) DEFAULT 'pending'
+    CHECK (cus_confirm_status IN ('pending', 'confirmed', 'adjustment_requested')),
+  cus_confirmed_at             TIMESTAMP WITH TIME ZONE,
+  adjustment_reason            TEXT,
+  adjustment_deadline_proposed TIMESTAMP WITH TIME ZONE
+);
+
+CREATE TABLE IF NOT EXISTS job_deadline_requests (
+  id                SERIAL PRIMARY KEY,
+  job_id            INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+  requested_by      INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  current_deadline  TIMESTAMP WITH TIME ZONE,
+  proposed_deadline TIMESTAMP WITH TIME ZONE,
+  reason            TEXT,
+  status            VARCHAR(10) DEFAULT 'pending'
+    CHECK (status IN ('pending', 'approved', 'rejected')),
+  reviewed_by       INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  reviewed_at       TIMESTAMP WITH TIME ZONE
+);
+
+CREATE TABLE IF NOT EXISTS job_tk (
+  id                 SERIAL PRIMARY KEY,
+  job_id             INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+  cus_id             INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  tk_datetime        TIMESTAMP WITH TIME ZONE,
+  tk_number          VARCHAR(100),
+  tk_flow            VARCHAR(50),
+  tk_status          VARCHAR(20) DEFAULT 'chua_truyen'
+    CHECK (tk_status IN ('chua_truyen', 'dang_lam', 'thong_quan', 'giai_phong', 'bao_quan')),
+  tq_datetime        TIMESTAMP WITH TIME ZONE,
+  services_completed JSONB DEFAULT '{}',
+  delivery_datetime  TIMESTAMP WITH TIME ZONE,
+  delivery_location  TEXT,
+  truck_booked       BOOLEAN DEFAULT FALSE,
+  completed_at       TIMESTAMP WITH TIME ZONE,
+  notes              TEXT
+);
+
+CREATE TABLE IF NOT EXISTS job_truck (
+  id                SERIAL PRIMARY KEY,
+  job_id            INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+  transport_name    VARCHAR(200),
+  planned_datetime  TIMESTAMP WITH TIME ZONE,
+  actual_datetime   TIMESTAMP WITH TIME ZONE,
+  vehicle_number    VARCHAR(50),
+  pickup_location   TEXT,
+  delivery_location TEXT,
+  cost              DECIMAL(15,2),
+  completed_at      TIMESTAMP WITH TIME ZONE,
+  notes             TEXT
+);
+
+CREATE TABLE IF NOT EXISTS job_ops_task (
+  id           SERIAL PRIMARY KEY,
+  job_id       INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+  ops_id       INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  content      TEXT,
+  port         VARCHAR(100),
+  deadline     TIMESTAMP WITH TIME ZONE,
+  completed    BOOLEAN DEFAULT FALSE,
+  completed_at TIMESTAMP WITH TIME ZONE,
+  notes        TEXT
+);
+
+CREATE TABLE IF NOT EXISTS job_history (
+  id         SERIAL PRIMARY KEY,
+  job_id     INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+  changed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  field_name VARCHAR(100),
+  old_value  TEXT,
+  new_value  TEXT,
+  changed_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_jobs_status            ON jobs(status);
+CREATE INDEX IF NOT EXISTS idx_jobs_created_at        ON jobs(created_at);
+CREATE INDEX IF NOT EXISTS idx_jobs_deadline          ON jobs(deadline);
+CREATE INDEX IF NOT EXISTS idx_jobs_sales_id          ON jobs(sales_id);
+CREATE INDEX IF NOT EXISTS idx_job_assignments_job_id ON job_assignments(job_id);
+CREATE INDEX IF NOT EXISTS idx_job_assignments_cus_id ON job_assignments(cus_id);
+CREATE INDEX IF NOT EXISTS idx_job_assignments_ops_id ON job_assignments(ops_id);
+CREATE INDEX IF NOT EXISTS idx_job_tk_job_id          ON job_tk(job_id);
+CREATE INDEX IF NOT EXISTS idx_job_truck_job_id       ON job_truck(job_id);
+CREATE INDEX IF NOT EXISTS idx_job_ops_task_job_id    ON job_ops_task(job_id);
+CREATE INDEX IF NOT EXISTS idx_job_history_job_id     ON job_history(job_id);
+CREATE INDEX IF NOT EXISTS idx_job_dl_req_job_id      ON job_deadline_requests(job_id);
