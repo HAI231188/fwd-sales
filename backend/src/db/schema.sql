@@ -308,13 +308,23 @@ CREATE INDEX IF NOT EXISTS idx_job_dl_req_job_id      ON job_deadline_requests(j
 -- ============================================================
 -- Seed: LOG module user accounts (idempotent)
 -- ============================================================
-INSERT INTO users (name, code, role, avatar_color, password_hash) VALUES
-  ('Trưởng Phòng LOG', 'TPL', 'truong_phong_log', '#7c3aed', '$2b$10$U0IzDXeiRB2oEqzvmWvmquE89tDB2MgT.hECmSnvcAWSWFrAbkM82'),
-  ('CUS',              'CUS', 'cus',              '#0891b2', '$2b$10$kRy0tAQAX5TuE.P8ddXZS.e5SpLjnEEKlD.9reRQ.zCyPt/q5rPPi'),
-  ('CUS 1',            'C1',  'cus1',             '#0e7490', '$2b$10$mmTJ8rONGtiIQt8S7FJHjeYIMT3fZX.JTfloLbkIMPvkQum1aMIBq'),
-  ('CUS 2',            'C2',  'cus2',             '#155e75', '$2b$10$zChgZeM15xuN/QPTi1W1OusTyO/KSw6deuoJ0h1YCBpcm8g99Iix.'),
-  ('CUS 3',            'C3',  'cus3',             '#164e63', '$2b$10$FuH1N6BDemLWxRlI9XlvFOw.A/sbYmbld6jmSgZnqg/G8P66SLNKa'),
-  ('Điều Độ',          'DD',  'dieu_do',          '#3b82f6', '$2b$10$bk1oLqZU9fPimlswTltyveTUUtBcXJ3BEbMkDIuhjaOWKY20Tmb9G'),
-  ('OPS 1',            'O1',  'ops',              '#16a34a', '$2b$10$rJ.h73GY2s6TyngycrHNsuUJMAjQZh935nrdH1.I0pIqz5PGvnCSa'),
-  ('OPS 2',            'O2',  'ops',              '#15803d', '$2b$10$3R8RWPwhY3s7TBasctdv6.7DnfNqWHY.mSXXjoIAWLl466uvXbu3.')
+INSERT INTO users (name, code, role, avatar_color, username, password_hash) VALUES
+  ('Trưởng Phòng LOG', 'TPL', 'truong_phong_log', '#7c3aed', 'tpl',   '$2b$10$U0IzDXeiRB2oEqzvmWvmquE89tDB2MgT.hECmSnvcAWSWFrAbkM82'),
+  ('CUS',              'CUS', 'cus',              '#0891b2', 'cus',   '$2b$10$kRy0tAQAX5TuE.P8ddXZS.e5SpLjnEEKlD.9reRQ.zCyPt/q5rPPi'),
+  ('CUS 1',            'C1',  'cus1',             '#0e7490', 'cus1',  '$2b$10$mmTJ8rONGtiIQt8S7FJHjeYIMT3fZX.JTfloLbkIMPvkQum1aMIBq'),
+  ('CUS 2',            'C2',  'cus2',             '#155e75', 'cus2',  '$2b$10$zChgZeM15xuN/QPTi1W1OusTyO/KSw6deuoJ0h1YCBpcm8g99Iix.'),
+  ('CUS 3',            'C3',  'cus3',             '#164e63', 'cus3',  '$2b$10$FuH1N6BDemLWxRlI9XlvFOw.A/sbYmbld6jmSgZnqg/G8P66SLNKa'),
+  ('Điều Độ',          'DD',  'dieu_do',          '#3b82f6', 'dd',    '$2b$10$bk1oLqZU9fPimlswTltyveTUUtBcXJ3BEbMkDIuhjaOWKY20Tmb9G'),
+  ('OPS 1',            'O1',  'ops',              '#16a34a', 'ops1',  '$2b$10$rJ.h73GY2s6TyngycrHNsuUJMAjQZh935nrdH1.I0pIqz5PGvnCSa'),
+  ('OPS 2',            'O2',  'ops',              '#15803d', 'ops2',  '$2b$10$3R8RWPwhY3s7TBasctdv6.7DnfNqWHY.mSXXjoIAWLl466uvXbu3.')
 ON CONFLICT (code) DO NOTHING;
+
+-- Backfill username for LOG users already inserted without it
+UPDATE users SET username = 'tpl'  WHERE code = 'TPL' AND username IS NULL;
+UPDATE users SET username = 'cus'  WHERE code = 'CUS' AND username IS NULL;
+UPDATE users SET username = 'cus1' WHERE code = 'C1'  AND username IS NULL;
+UPDATE users SET username = 'cus2' WHERE code = 'C2'  AND username IS NULL;
+UPDATE users SET username = 'cus3' WHERE code = 'C3'  AND username IS NULL;
+UPDATE users SET username = 'dd'   WHERE code = 'DD'  AND username IS NULL;
+UPDATE users SET username = 'ops1' WHERE code = 'O1'  AND username IS NULL;
+UPDATE users SET username = 'ops2' WHERE code = 'O2'  AND username IS NULL;
