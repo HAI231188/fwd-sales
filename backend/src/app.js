@@ -79,6 +79,38 @@ app.get('/api/debug/followup', async (req, res) => {
   }
 });
 
+// Temporary debug: test AI assignment module end-to-end — remove after verification
+app.get('/api/debug/test-ai-assignment', async (req, res) => {
+  const db = require('./db');
+  const { assignCus, assignOps } = require('./services/ai-assignment');
+
+  const dummyJob = {
+    id: null,
+    customer_name: 'Công ty TNHH TEST ABC',
+    service_type: 'both',
+    pol: 'HAN',
+    pod: 'SIN',
+    destination: 'hai_phong',
+    other_services: { kiem_dich: true },
+  };
+
+  const results = {};
+
+  try {
+    results.assignCus = await assignCus(dummyJob, db.pool);
+  } catch (err) {
+    results.assignCus = { error: err.message };
+  }
+
+  try {
+    results.assignOps = await assignOps(dummyJob, db.pool);
+  } catch (err) {
+    results.assignOps = { error: err.message };
+  }
+
+  res.json({ job: dummyJob, results });
+});
+
 // Serve frontend — always, whenever the dist folder exists
 if (hasFrontend) {
   app.use(express.static(frontendPath));
