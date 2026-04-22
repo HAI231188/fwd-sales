@@ -4,7 +4,9 @@ require('dotenv').config();
 const { Pool } = require('pg');
 const { assignCus, assignOps } = require('./src/services/ai-assignment');
 
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+// DATABASE_PUBLIC_URL is required when running via `railway run` locally
+// (DATABASE_URL uses the internal Railway hostname, unreachable outside Railway network)
+const pool = new Pool({ connectionString: process.env.DATABASE_PUBLIC_URL || process.env.DATABASE_URL });
 
 const dummyJob = {
   id: null,
