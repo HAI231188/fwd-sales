@@ -357,3 +357,49 @@ UPDATE users SET username = 'cus3' WHERE code = 'C3'  AND username IS NULL;
 UPDATE users SET username = 'dd'   WHERE code = 'DD'  AND username IS NULL;
 UPDATE users SET username = 'ops1' WHERE code = 'O1'  AND username IS NULL;
 UPDATE users SET username = 'ops2' WHERE code = 'O2'  AND username IS NULL;
+
+-- ============================================================
+-- Assignment system v2
+-- ============================================================
+
+-- Drop old per-job assignment_mode (replaced by global log_settings table)
+ALTER TABLE jobs DROP COLUMN IF EXISTS assignment_mode;
+
+-- Destination field: 'hai_phong' triggers OPS auto-assign, NULL = no OPS routing
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS destination VARCHAR(20);
+
+-- Global LOG department settings (single-row config, id=1 always)
+CREATE TABLE IF NOT EXISTS log_settings (
+  id              SERIAL PRIMARY KEY,
+  assignment_mode VARCHAR(10) DEFAULT 'auto' CHECK (assignment_mode IN ('auto', 'manual')),
+  updated_by      INTEGER REFERENCES users(id),
+  updated_at      TIMESTAMPTZ DEFAULT NOW()
+);
+INSERT INTO log_settings (id, assignment_mode) VALUES (1, 'auto') ON CONFLICT (id) DO NOTHING;
+
+-- AI assignment audit log
+CREATE TABLE IF NOT EXISTS ai_assignment_logs (
+  id               SERIAL PRIMARY KEY,
+  job_id           INTEGER REFERENCES jobs(id),
+  assigned_user_id INTEGER REFERENCES users(id),
+  role             VARCHAR(10),
+  reason           TEXT,
+  ai_cost_usd      NUMERIC(10,6),
+  fallback_used    BOOLEAN DEFAULT FALSE,
+  created_at       TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_ai_logs_job_id ON ai_assignment_logs(job_id);
+
+-- In-app notifications
+CREATE TABLE IF NOT EXISTS notifications (
+  id         SERIAL PRIMARY KEY,
+  user_id    INTEGER,
+  type       VARCHAR(30),
+  title      TEXT,
+  body       TEXT,
+  job_id     INTEGER NULL,
+  read       BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_notifications_user_id ON notifications(user_id);
+CREATE INDEX IF NOT EXISTS idx_notifications_unread  ON notifications(user_id, read);

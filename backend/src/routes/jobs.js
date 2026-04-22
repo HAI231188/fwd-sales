@@ -61,10 +61,7 @@ router.get('/stats', requireAuth, async (req, res) => {
           SELECT COUNT(*) AS v FROM jobs j
           WHERE j.status = 'pending' AND j.deleted_at IS NULL
             AND j.service_type IN ('tk','both')
-            AND (
-              j.assignment_mode = 'manual'
-              OR NOT EXISTS (SELECT 1 FROM job_assignments ja WHERE ja.job_id = j.id AND ja.cus_id IS NOT NULL)
-            )`),
+            AND NOT EXISTS (SELECT 1 FROM job_assignments ja WHERE ja.job_id = j.id AND ja.cus_id IS NOT NULL)`),
         db.query(`
           SELECT COUNT(*) AS v FROM (
             SELECT j.id FROM jobs j
@@ -353,8 +350,8 @@ router.post('/', requireAuth, async (req, res) => {
   const {
     job_code, customer_id, customer_name, customer_address, customer_tax_code,
     sales_id, pol, pod, bill_number, cont_number, cont_type, seal_number,
-    etd, eta, tons, cbm, deadline, service_type, other_services, assignment_mode,
-    is_new_customer, cargo_type, so_kien, kg, containers,
+    etd, eta, tons, cbm, deadline, service_type, other_services,
+    is_new_customer, cargo_type, so_kien, kg, containers, destination,
   } = req.body;
 
   if (!customer_name || !service_type) {
@@ -370,7 +367,7 @@ router.post('/', requireAuth, async (req, res) => {
         job_code, customer_id, customer_name, customer_address, customer_tax_code,
         sales_id, pol, pod, bill_number, cont_number, cont_type, seal_number,
         etd, eta, tons, cbm, deadline, service_type, other_services,
-        assignment_mode, cargo_type, so_kien, kg, created_by
+        cargo_type, so_kien, kg, destination, created_by
       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
       RETURNING *
     `, [
@@ -381,8 +378,8 @@ router.post('/', requireAuth, async (req, res) => {
       etd || null, eta || null, tons || null, cbm || null,
       deadline || null, service_type,
       JSON.stringify(other_services || {}),
-      assignment_mode || 'auto', cargo_type || 'fcl', so_kien || null, kg || null,
-      req.user.id,
+      cargo_type || 'fcl', so_kien || null, kg || null,
+      destination || null, req.user.id,
     ]);
 
     const job = rows[0];
@@ -415,7 +412,7 @@ router.post('/', requireAuth, async (req, res) => {
     }
 
     const isTk = service_type === 'tk' || service_type === 'both';
-    const mode = assignment_mode || 'auto';
+    const mode = 'auto';
 
     if (isTk && mode === 'auto') {
       const cus = await autoAssignCus(client);
@@ -481,8 +478,8 @@ router.get('/:id', requireAuth, async (req, res) => {
 router.put('/:id', requireAuth, async (req, res) => {
   const FIELDS = ['job_code','customer_name','customer_address','customer_tax_code',
     'pol','pod','bill_number','cont_number','cont_type','seal_number',
-    'etd','eta','tons','cbm','deadline','service_type','other_services','assignment_mode','status',
-    'cargo_type','so_kien','kg'];
+    'etd','eta','tons','cbm','deadline','service_type','other_services','status',
+    'cargo_type','so_kien','kg','destination'];
 
   const client = await db.pool.connect();
   try {

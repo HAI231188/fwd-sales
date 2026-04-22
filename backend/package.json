@@ -13,6 +13,7 @@
     "db:backfill-pipeline": "node src/db/backfill_pipeline.js"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.90.0",
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
