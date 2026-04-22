@@ -92,5 +92,9 @@ export const getStaffWorkload = () => api.get('/jobs/staff-workload');
 export const deleteJob = (id) => api.delete(`/jobs/${id}`);
 export const requestJobDelete = (id, reason) => api.post(`/jobs/${id}/delete-request`, { reason });
 export const reviewDeleteRequest = (rid, action) => api.patch(`/jobs/delete-requests/${rid}/review`, { action });
+export const getJobSettings = () => api.get('/jobs/settings');
+export const updateAssignmentMode = (assignment_mode) => api.patch('/jobs/settings/assignment-mode', { assignment_mode });
+export const getWaitingAssignments = () => api.get('/jobs/waiting-assignments');
+export const manualAssignJob = (id, data) => api.post(`/jobs/${id}/manual-assign`, data);
 
 export default api;

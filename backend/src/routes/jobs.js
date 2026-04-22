@@ -1,6 +1,10 @@
 const router = require('express').Router();
 const db = require('../db');
 const { requireAuth } = require('../middleware/auth');
+const { suggestCus, suggestOps } = require('../services/ai-assignment');
+
+// In-memory suggestion cache (60s TTL) — invalidated on manual assignment
+let suggestionCache = { data: null, ts: 0 };
 
 const CUS_ROLES = ['cus', 'cus1', 'cus2', 'cus3'];
 const AUTO_CUS_ROLES = ['cus1', 'cus2', 'cus3'];
@@ -17,51 +21,27 @@ async function recordHistory(client, jobId, changedBy, fieldName, oldValue, newV
   );
 }
 
-async function autoAssignCus(client) {
-  const { rows } = await client.query(`
-    SELECT u.id, u.name,
-      COUNT(DISTINCT jt.job_id) FILTER (WHERE j.status = 'pending' AND j.deleted_at IS NULL AND jt.completed_at IS NULL) AS tk_count,
-      COALESCE(SUM(
-        (CASE WHEN j2.other_services->>'ktcl' = 'true' THEN 1 ELSE 0 END) +
-        (CASE WHEN j2.other_services->>'kiem_dich' = 'true' THEN 1 ELSE 0 END) +
-        (CASE WHEN j2.other_services->>'hun_trung' = 'true' THEN 1 ELSE 0 END) +
-        (CASE WHEN j2.other_services->>'co' = 'true' THEN 1 ELSE 0 END) +
-        (CASE WHEN j2.other_services->>'khac' = 'true' THEN 1 ELSE 0 END)
-      ) FILTER (WHERE j2.status = 'pending' AND j2.deleted_at IS NULL), 0) AS svc_count
-    FROM users u
-    LEFT JOIN job_tk jt ON jt.cus_id = u.id
-    LEFT JOIN jobs j ON j.id = jt.job_id
-    LEFT JOIN job_assignments ja2 ON ja2.cus_id = u.id
-    LEFT JOIN jobs j2 ON j2.id = ja2.job_id
-    WHERE u.role = ANY($1)
-    GROUP BY u.id, u.name
-    ORDER BY (
-      COUNT(DISTINCT jt.job_id) FILTER (WHERE j.status = 'pending' AND j.deleted_at IS NULL AND jt.completed_at IS NULL) +
-      COALESCE(SUM(
-        (CASE WHEN j2.other_services->>'ktcl' = 'true' THEN 1 ELSE 0 END) +
-        (CASE WHEN j2.other_services->>'kiem_dich' = 'true' THEN 1 ELSE 0 END) +
-        (CASE WHEN j2.other_services->>'hun_trung' = 'true' THEN 1 ELSE 0 END) +
-        (CASE WHEN j2.other_services->>'co' = 'true' THEN 1 ELSE 0 END) +
-        (CASE WHEN j2.other_services->>'khac' = 'true' THEN 1 ELSE 0 END)
-      ) FILTER (WHERE j2.status = 'pending' AND j2.deleted_at IS NULL), 0)
-    ) ASC
-    LIMIT 1
-  `, [AUTO_CUS_ROLES]);
-  return rows[0] || null;
-}
 
 // GET /api/jobs/stats
 router.get('/stats', requireAuth, async (req, res) => {
   const { role, id: userId } = req.user;
   try {
     if (role === 'truong_phong_log') {
-      const [total, waitingAssign, deadlinePending, overdue, warnSoon, missingInfo, deleteReqs, staff] = await Promise.all([
+      const [total, waitingCus, waitingOps, deadlinePending, overdue, warnSoon, missingInfo, deleteReqs, staff] = await Promise.all([
         db.query(`SELECT COUNT(*) AS v FROM jobs WHERE status = 'pending' AND deleted_at IS NULL`),
         db.query(`
           SELECT COUNT(*) AS v FROM jobs j
+          LEFT JOIN job_assignments ja ON ja.job_id = j.id
           WHERE j.status = 'pending' AND j.deleted_at IS NULL
             AND j.service_type IN ('tk','both')
-            AND NOT EXISTS (SELECT 1 FROM job_assignments ja WHERE ja.job_id = j.id AND ja.cus_id IS NOT NULL)`),
+            AND (ja.cus_id IS NULL OR ja.id IS NULL)`),
+        db.query(`
+          SELECT COUNT(*) AS v FROM jobs j
+          LEFT JOIN job_assignments ja ON ja.job_id = j.id
+          WHERE j.status = 'pending' AND j.deleted_at IS NULL
+            AND j.destination = 'hai_phong'
+            AND j.service_type IN ('truck','both')
+            AND (ja.ops_id IS NULL OR ja.id IS NULL)`),
         db.query(`
           SELECT COUNT(*) AS v FROM (
             SELECT j.id FROM jobs j
@@ -89,7 +69,8 @@ router.get('/stats', requireAuth, async (req, res) => {
       ]);
       res.json({
         total_pending:    parseInt(total.rows[0].v),
-        waiting_assign:   parseInt(waitingAssign.rows[0].v),
+        waiting_cus:      parseInt(waitingCus.rows[0].v),
+        waiting_ops:      parseInt(waitingOps.rows[0].v),
         deadline_pending: parseInt(deadlinePending.rows[0].v),
         overdue:          parseInt(overdue.rows[0].v),
         warn_soon:        parseInt(warnSoon.rows[0].v),
@@ -271,6 +252,92 @@ router.get('/delete-requests', requireAuth, async (req, res) => {
   }
 });
 
+// GET /api/jobs/settings  (truong_phong_log only)
+router.get('/settings', requireAuth, async (req, res) => {
+  if (req.user.role !== 'truong_phong_log') return res.status(403).json({ error: 'Không có quyền' });
+  try {
+    const { rows } = await db.query(`SELECT * FROM log_settings WHERE id = 1`);
+    res.json(rows[0] || { id: 1, assignment_mode: 'auto' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PATCH /api/jobs/settings/assignment-mode  (truong_phong_log only)
+router.patch('/settings/assignment-mode', requireAuth, async (req, res) => {
+  if (req.user.role !== 'truong_phong_log') return res.status(403).json({ error: 'Không có quyền' });
+  const { assignment_mode } = req.body;
+  if (!['auto', 'manual'].includes(assignment_mode)) return res.status(400).json({ error: 'Chế độ không hợp lệ' });
+  try {
+    await db.query(
+      `UPDATE log_settings SET assignment_mode = $1, updated_by = $2, updated_at = NOW() WHERE id = 1`,
+      [assignment_mode, req.user.id]
+    );
+    res.json({ ok: true, assignment_mode });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/jobs/waiting-assignments  (truong_phong_log only)
+// Returns waiting_cus and waiting_ops with AI suggestions per job (60s in-memory cache)
+router.get('/waiting-assignments', requireAuth, async (req, res) => {
+  if (req.user.role !== 'truong_phong_log') return res.status(403).json({ error: 'Không có quyền' });
+  try {
+    const now = Date.now();
+    if (suggestionCache.data && now - suggestionCache.ts < 60000) {
+      return res.json(suggestionCache.data);
+    }
+
+    const [cusJobs, opsJobs] = await Promise.all([
+      db.query(`
+        SELECT j.id, j.job_code, j.customer_name, j.service_type, j.etd, j.eta,
+               j.deadline, j.created_at, j.pol, j.pod, j.destination, j.other_services
+        FROM jobs j
+        LEFT JOIN job_assignments ja ON ja.job_id = j.id
+        WHERE j.status = 'pending' AND j.deleted_at IS NULL
+          AND j.service_type IN ('tk','both')
+          AND (ja.cus_id IS NULL OR ja.id IS NULL)
+        ORDER BY j.created_at ASC
+        LIMIT 10
+      `),
+      db.query(`
+        SELECT j.id, j.job_code, j.customer_name, j.service_type, j.etd, j.eta,
+               j.deadline, j.created_at, j.pol, j.pod, j.destination, j.other_services
+        FROM jobs j
+        LEFT JOIN job_assignments ja ON ja.job_id = j.id
+        WHERE j.status = 'pending' AND j.deleted_at IS NULL
+          AND j.destination = 'hai_phong'
+          AND j.service_type IN ('truck','both')
+          AND (ja.ops_id IS NULL OR ja.id IS NULL)
+        ORDER BY j.created_at ASC
+        LIMIT 10
+      `),
+    ]);
+
+    const [cusWithAI, opsWithAI] = await Promise.all([
+      Promise.all(cusJobs.rows.map(async job => {
+        try {
+          const s = await suggestCus(job, db.pool);
+          return { ...job, ai_suggestion: s };
+        } catch { return { ...job, ai_suggestion: null }; }
+      })),
+      Promise.all(opsJobs.rows.map(async job => {
+        try {
+          const s = await suggestOps(job, db.pool);
+          return { ...job, ai_suggestion: s };
+        } catch { return { ...job, ai_suggestion: null }; }
+      })),
+    ]);
+
+    const result = { waiting_cus: cusWithAI, waiting_ops: opsWithAI };
+    suggestionCache = { data: result, ts: Date.now() };
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/jobs/
 router.get('/', requireAuth, async (req, res) => {
   const { role, id: userId } = req.user;
@@ -358,6 +425,27 @@ router.post('/', requireAuth, async (req, res) => {
     return res.status(400).json({ error: 'Tên khách hàng và loại dịch vụ là bắt buộc' });
   }
 
+  try {
+    // Read assignment mode from DB before starting transaction
+    const settingsRes = await db.query(`SELECT assignment_mode FROM log_settings WHERE id = 1`);
+    const mode = settingsRes.rows[0]?.assignment_mode || 'auto';
+    const isTk = service_type === 'tk' || service_type === 'both';
+    const needsOps = destination === 'hai_phong' && (service_type === 'truck' || service_type === 'both');
+
+    let cusSuggestion = null;
+    let opsSuggestion = null;
+
+    if (mode === 'auto') {
+      await Promise.all([
+        isTk ? suggestCus({ customer_name, service_type, pol, pod, other_services, destination }, db.pool)
+                 .then(r => { cusSuggestion = r; }).catch(e => console.error('suggestCus:', e.message))
+             : Promise.resolve(),
+        needsOps ? suggestOps({ customer_name, service_type, destination }, db.pool)
+                     .then(r => { opsSuggestion = r; }).catch(e => console.error('suggestOps:', e.message))
+                 : Promise.resolve(),
+      ]);
+    }
+
   const client = await db.pool.connect();
   try {
     await client.query('BEGIN');
@@ -411,31 +499,67 @@ router.post('/', requireAuth, async (req, res) => {
       await client.query(`INSERT INTO job_truck (job_id) VALUES ($1)`, [job.id]);
     }
 
-    const isTk = service_type === 'tk' || service_type === 'both';
-    const mode = 'auto';
-
-    if (isTk && mode === 'auto') {
-      const cus = await autoAssignCus(client);
-      if (cus) {
+    // TK / CUS assignment
+    if (isTk) {
+      if (mode === 'auto' && cusSuggestion) {
         await client.query(`
-          INSERT INTO job_assignments (job_id, cus_id, assigned_by, assignment_mode)
-          VALUES ($1, $2, $3, 'auto')
-        `, [job.id, cus.id, req.user.id]);
-        await client.query(`INSERT INTO job_tk (job_id, cus_id) VALUES ($1, $2)`, [job.id, cus.id]);
-        await recordHistory(client, job.id, req.user.id, 'cus_assigned', null, cus.name);
+          INSERT INTO job_assignments (job_id, cus_id, assigned_by, assignment_mode, cus_confirm_status)
+          VALUES ($1, $2, $3, 'auto', 'confirmed')
+        `, [job.id, cusSuggestion.user_id, req.user.id]);
+        await client.query(`INSERT INTO job_tk (job_id, cus_id) VALUES ($1, $2)`, [job.id, cusSuggestion.user_id]);
+        await client.query(`
+          INSERT INTO notifications (user_id, type, title, body, job_id)
+          VALUES ($1, 'job_assigned', 'Phân công TK mới', $2, $3)
+        `, [cusSuggestion.user_id, `Bạn được phân công TK cho ${customer_name} (AI tự động)`, job.id]);
+        await recordHistory(client, job.id, req.user.id, 'cus_assigned', null, cusSuggestion.user_name || String(cusSuggestion.user_id));
+      } else {
+        // Manual mode or AI failed — leave unassigned, appears in "Chờ phân CUS"
+        await client.query(`INSERT INTO job_tk (job_id) VALUES ($1)`, [job.id]);
       }
-    } else if (isTk) {
-      await client.query(`INSERT INTO job_tk (job_id) VALUES ($1)`, [job.id]);
+    }
+
+    // OPS assignment for Hải Phòng truck jobs
+    if (needsOps && mode === 'auto' && opsSuggestion) {
+      const { rows: jaEx } = await client.query(`SELECT id FROM job_assignments WHERE job_id = $1`, [job.id]);
+      if (jaEx[0]) {
+        await client.query(`UPDATE job_assignments SET ops_id = $1 WHERE job_id = $2`, [opsSuggestion.user_id, job.id]);
+      } else {
+        await client.query(`
+          INSERT INTO job_assignments (job_id, ops_id, assigned_by, assignment_mode)
+          VALUES ($1, $2, $3, 'auto')
+        `, [job.id, opsSuggestion.user_id, req.user.id]);
+      }
+      await client.query(`
+        INSERT INTO notifications (user_id, type, title, body, job_id)
+        VALUES ($1, 'job_assigned', 'Phân công OPS mới', $2, $3)
+      `, [opsSuggestion.user_id, `Bạn được phân công OPS cho ${customer_name} tại Hải Phòng`, job.id]);
+      await recordHistory(client, job.id, req.user.id, 'ops_assigned', null, opsSuggestion.user_name || String(opsSuggestion.user_id));
     }
 
     await recordHistory(client, job.id, req.user.id, 'job_created', null, customer_name);
     await client.query('COMMIT');
+
+    // Log AI assignments after commit so FK is satisfied
+    const logPs = [];
+    if (cusSuggestion) logPs.push(
+      db.query(`INSERT INTO ai_assignment_logs (job_id, assigned_user_id, role, reason, ai_cost_usd, fallback_used) VALUES ($1,$2,'cus',$3,$4,$5)`,
+        [job.id, cusSuggestion.user_id, cusSuggestion.reason, cusSuggestion.cost || 0, cusSuggestion.fallback || false])
+    );
+    if (opsSuggestion) logPs.push(
+      db.query(`INSERT INTO ai_assignment_logs (job_id, assigned_user_id, role, reason, ai_cost_usd, fallback_used) VALUES ($1,$2,'ops',$3,$4,$5)`,
+        [job.id, opsSuggestion.user_id, opsSuggestion.reason, opsSuggestion.cost || 0, opsSuggestion.fallback || false])
+    );
+    await Promise.all(logPs).catch(e => console.error('AI log failed:', e.message));
+
     res.status(201).json(job);
   } catch (err) {
     await client.query('ROLLBACK');
     res.status(500).json({ error: err.message });
   } finally {
     client.release();
+  }
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -626,14 +750,86 @@ router.patch('/:id/request-deadline', requireAuth, async (req, res) => {
   }
 });
 
+// POST /api/jobs/:id/manual-assign  (truong_phong_log only)
+router.post('/:id/manual-assign', requireAuth, async (req, res) => {
+  if (req.user.role !== 'truong_phong_log') return res.status(403).json({ error: 'Không có quyền' });
+  const { cus_id, ops_id } = req.body;
+  if (!cus_id && !ops_id) return res.status(400).json({ error: 'Cần cus_id hoặc ops_id' });
+
+  const client = await db.pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows: job } = await client.query(`SELECT * FROM jobs WHERE id = $1 AND deleted_at IS NULL`, [req.params.id]);
+    if (!job[0]) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Không tìm thấy job' }); }
+
+    const { rows: existing } = await client.query(`SELECT * FROM job_assignments WHERE job_id = $1`, [req.params.id]);
+    if (existing[0]) {
+      const sets = []; const params = []; let idx = 1;
+      if (cus_id !== undefined) { sets.push(`cus_id = $${idx++}`); params.push(cus_id); }
+      if (ops_id !== undefined) { sets.push(`ops_id = $${idx++}`); params.push(ops_id); }
+      sets.push(`assigned_by = $${idx++}`, `assigned_at = NOW()`, `assignment_mode = 'manual'`, `cus_confirm_status = 'confirmed'`);
+      params.push(req.user.id, req.params.id);
+      await client.query(`UPDATE job_assignments SET ${sets.join(', ')} WHERE job_id = $${idx}`, params);
+    } else {
+      await client.query(`
+        INSERT INTO job_assignments (job_id, cus_id, ops_id, assigned_by, assignment_mode, cus_confirm_status)
+        VALUES ($1, $2, $3, $4, 'manual', 'confirmed')
+      `, [req.params.id, cus_id || null, ops_id || null, req.user.id]);
+    }
+
+    if (cus_id) {
+      const { rows: tkEx } = await client.query(`SELECT id FROM job_tk WHERE job_id = $1`, [req.params.id]);
+      if (tkEx[0]) {
+        await client.query(`UPDATE job_tk SET cus_id = $1 WHERE job_id = $2`, [cus_id, req.params.id]);
+      } else {
+        await client.query(`INSERT INTO job_tk (job_id, cus_id) VALUES ($1, $2)`, [req.params.id, cus_id]);
+      }
+      await client.query(`
+        INSERT INTO notifications (user_id, type, title, body, job_id)
+        VALUES ($1, 'job_assigned', 'Phân công TK mới', $2, $3)
+      `, [cus_id, `Bạn được phân công TK cho ${job[0].customer_name} (TP phân công)`, req.params.id]);
+      await client.query(`
+        INSERT INTO ai_assignment_logs (job_id, assigned_user_id, role, reason, ai_cost_usd, fallback_used)
+        VALUES ($1, $2, 'cus', 'Manual assignment by TP', 0, true)
+      `, [req.params.id, cus_id]);
+      await recordHistory(client, req.params.id, req.user.id, 'cus_assigned', null, String(cus_id));
+    }
+
+    if (ops_id) {
+      await client.query(`
+        INSERT INTO notifications (user_id, type, title, body, job_id)
+        VALUES ($1, 'job_assigned', 'Phân công OPS mới', $2, $3)
+      `, [ops_id, `Bạn được phân công OPS cho ${job[0].customer_name} (TP phân công)`, req.params.id]);
+      await client.query(`
+        INSERT INTO ai_assignment_logs (job_id, assigned_user_id, role, reason, ai_cost_usd, fallback_used)
+        VALUES ($1, $2, 'ops', 'Manual assignment by TP', 0, true)
+      `, [req.params.id, ops_id]);
+      await recordHistory(client, req.params.id, req.user.id, 'ops_assigned', null, String(ops_id));
+    }
+
+    await client.query('COMMIT');
+    suggestionCache = { data: null, ts: 0 }; // invalidate cache
+    res.json({ ok: true });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
 // PATCH /api/jobs/deadline-requests/:rid/review
 router.patch('/deadline-requests/:rid/review', requireAuth, async (req, res) => {
   const { action, new_deadline } = req.body;
   const client = await db.pool.connect();
+  let drJobId;
+  let existingCusId;
+
   try {
     await client.query('BEGIN');
     const { rows: dr } = await client.query(`SELECT * FROM job_deadline_requests WHERE id = $1`, [req.params.rid]);
     if (!dr[0]) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Không tìm thấy' }); }
+    drJobId = dr[0].job_id;
 
     await client.query(`
       UPDATE job_deadline_requests SET status = $1, reviewed_by = $2, reviewed_at = NOW() WHERE id = $3
@@ -642,18 +838,72 @@ router.patch('/deadline-requests/:rid/review', requireAuth, async (req, res) => 
     if (action === 'approved') {
       const dl = new_deadline || dr[0].proposed_deadline;
       await client.query(`UPDATE jobs SET deadline = $1, updated_at = NOW() WHERE id = $2`, [dl, dr[0].job_id]);
-      await client.query(`UPDATE job_assignments SET cus_confirm_status = 'confirmed' WHERE job_id = $1`, [dr[0].job_id]);
       await recordHistory(client, dr[0].job_id, req.user.id, 'deadline', dr[0].current_deadline, dl);
-    } else {
-      await client.query(`UPDATE job_assignments SET cus_confirm_status = 'pending' WHERE job_id = $1`, [dr[0].job_id]);
     }
+
+    // Always set confirmed — TP review replaces CUS re-confirmation
+    await client.query(`UPDATE job_assignments SET cus_confirm_status = 'confirmed' WHERE job_id = $1`, [dr[0].job_id]);
+    const { rows: ja } = await client.query(`SELECT cus_id FROM job_assignments WHERE job_id = $1`, [dr[0].job_id]);
+    existingCusId = ja[0]?.cus_id || null;
+
     await client.query('COMMIT');
-    res.json({ ok: true });
   } catch (err) {
     await client.query('ROLLBACK');
-    res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
   } finally {
     client.release();
+  }
+
+  // After commit: assign CUS if missing, then notify
+  try {
+    let notifyUserId = existingCusId;
+
+    if (!existingCusId) {
+      const { rows: jobRows } = await db.query(`SELECT * FROM jobs WHERE id = $1`, [drJobId]);
+      if (jobRows[0]) {
+        const suggestion = await suggestCus(jobRows[0], db.pool).catch(() => null);
+        if (suggestion) {
+          const ac = await db.pool.connect();
+          try {
+            await ac.query('BEGIN');
+            const { rows: jaEx } = await ac.query(`SELECT id FROM job_assignments WHERE job_id = $1`, [drJobId]);
+            if (jaEx[0]) {
+              await ac.query(`UPDATE job_assignments SET cus_id = $1, assignment_mode = 'auto', cus_confirm_status = 'confirmed' WHERE job_id = $2`, [suggestion.user_id, drJobId]);
+            } else {
+              await ac.query(`INSERT INTO job_assignments (job_id, cus_id, assigned_by, assignment_mode, cus_confirm_status) VALUES ($1,$2,$3,'auto','confirmed')`, [drJobId, suggestion.user_id, req.user.id]);
+            }
+            const { rows: tkEx } = await ac.query(`SELECT id FROM job_tk WHERE job_id = $1`, [drJobId]);
+            if (tkEx[0]) {
+              await ac.query(`UPDATE job_tk SET cus_id = $1 WHERE job_id = $2`, [suggestion.user_id, drJobId]);
+            } else {
+              await ac.query(`INSERT INTO job_tk (job_id, cus_id) VALUES ($1,$2)`, [drJobId, suggestion.user_id]);
+            }
+            await ac.query('COMMIT');
+            notifyUserId = suggestion.user_id;
+            await db.query(`INSERT INTO ai_assignment_logs (job_id, assigned_user_id, role, reason, ai_cost_usd, fallback_used) VALUES ($1,$2,'cus',$3,$4,$5)`,
+              [drJobId, suggestion.user_id, suggestion.reason, suggestion.cost || 0, suggestion.fallback || false]);
+          } catch (e) {
+            await ac.query('ROLLBACK');
+            console.error('CUS auto-assign after review failed:', e.message);
+          } finally {
+            ac.release();
+          }
+        }
+      }
+    }
+
+    if (notifyUserId) {
+      const body = action === 'approved'
+        ? 'Trưởng phòng đã duyệt yêu cầu điều chỉnh deadline'
+        : 'Trưởng phòng đã từ chối yêu cầu điều chỉnh deadline. Tiếp tục theo deadline ban đầu.';
+      await db.query(`INSERT INTO notifications (user_id, type, title, body, job_id) VALUES ($1,'deadline_reviewed','Deadline được xem xét',$2,$3)`,
+        [notifyUserId, body, drJobId]);
+    }
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Post-review handling failed:', err.message);
+    res.json({ ok: true }); // main update already committed
   }
 });
 

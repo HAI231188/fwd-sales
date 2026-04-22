@@ -1,12 +1,13 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import Navbar from '../components/Navbar';
 import JobDetailModal from '../components/JobDetailModal';
 import CreateJobModal from '../components/CreateJobModal';
+import AssignmentModal from '../components/AssignmentModal';
 import {
   getJobStats, getJobs, getDeadlineRequests, getLogStaff,
   assignJob, setJobDeadline, reviewDeadlineRequest, createJob,
-  deleteJob, reviewDeleteRequest,
+  deleteJob, reviewDeleteRequest, getJobSettings,
 } from '../api';
 
 const SVC_LABEL = { tk: 'TK', truck: 'Xe', both: 'TK+Xe' };
@@ -263,10 +264,22 @@ export default function LogDashboardTP() {
   const [showCreate, setShowCreate] = useState(false);
   const [showDeadline, setShowDeadline] = useState(false);
   const [assigningJob, setAssigningJob] = useState(null);
+  const [showAssignment, setShowAssignment] = useState(null); // 'cus' | 'ops' | null
+  const [filterAssignee, setFilterAssignee] = useState('');
+  const [isVisible, setIsVisible] = useState(!document.hidden);
 
-  const { data: stats } = useQuery({ queryKey: ['jobStats'], queryFn: getJobStats, refetchInterval: 30000 });
+  useEffect(() => {
+    const handler = () => setIsVisible(!document.hidden);
+    document.addEventListener('visibilitychange', handler);
+    return () => document.removeEventListener('visibilitychange', handler);
+  }, []);
+
+  const pollInterval = isVisible ? 5000 : 30000;
+
+  const { data: stats } = useQuery({ queryKey: ['jobStats'], queryFn: getJobStats, refetchInterval: pollInterval });
+  const { data: settings } = useQuery({ queryKey: ['jobSettings'], queryFn: getJobSettings, refetchInterval: pollInterval });
   const { data: jobs = [], isLoading } = useQuery({
-    queryKey: ['jobs', tab], queryFn: () => getJobs({ tab }), refetchInterval: 30000,
+    queryKey: ['jobs', tab], queryFn: () => getJobs({ tab }), refetchInterval: pollInterval,
   });
   const { data: dlData } = useQuery({
     queryKey: ['deadlineRequests'], queryFn: getDeadlineRequests,
@@ -299,7 +312,13 @@ export default function LogDashboardTP() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['jobs', 'deadlineRequests', 'jobStats'] }),
   });
 
-  const waitingCount = jobs.filter(j => (j.service_type === 'tk' || j.service_type === 'both') && !j.cus_id).length;
+  const modeLabel = settings?.assignment_mode === 'manual' ? 'Bán tự động' : 'Tự động';
+  const cusStaff = (qc.getQueryData(['logStaff']) || []).filter(s => ['cus','cus1','cus2','cus3'].includes(s.role));
+  const opsStaff = (qc.getQueryData(['logStaff']) || []).filter(s => s.role === 'ops');
+  const allAssignees = [...cusStaff, ...opsStaff];
+  const filteredJobs = filterAssignee
+    ? jobs.filter(j => String(j.cus_id) === filterAssignee || String(j.ops_id) === filterAssignee)
+    : jobs;
 
   return (
     <div className="page">
@@ -311,10 +330,14 @@ export default function LogDashboardTP() {
         </div>
 
         {/* Stat cards */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 12, marginBottom: 24 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 12, marginBottom: 24 }}>
           <StatCard label="Tổng job pending" value={stats?.total_pending} color="var(--info)" />
-          <StatCard label="Chờ phân việc" value={stats?.waiting_assign} color="var(--warning)"
-            badge={stats?.waiting_assign > 0 ? 'Mới' : null} onClick={() => setTab('pending')} />
+          <StatCard label="Chờ phân CUS" value={stats?.waiting_cus} color="var(--warning)"
+            badge={modeLabel}
+            onClick={() => setShowAssignment('cus')} />
+          <StatCard label="Chờ phân OPS" value={stats?.waiting_ops} color="var(--purple)"
+            badge={modeLabel}
+            onClick={() => setShowAssignment('ops')} />
           <StatCard label="Chờ xác nhận deadline" value={stats?.deadline_pending} color="var(--warning)"
             badge={stats?.delete_requests > 0 ? `${stats.delete_requests} xóa` : null}
             onClick={() => setShowDeadline(true)} />
@@ -360,20 +383,29 @@ export default function LogDashboardTP() {
 
         {/* Jobs grid */}
         <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-          <div style={{ padding: '0 20px', borderBottom: '1px solid var(--border)' }}>
+          <div style={{ padding: '0 20px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <div className="tabs" style={{ marginBottom: 0 }}>
               <button className={`tab ${tab === 'pending' ? 'active' : ''}`} onClick={() => setTab('pending')}>
                 CV Pending
-                {waitingCount > 0 && (
-                  <span style={{ marginLeft: 6, background: 'var(--warning)', color: '#fff', borderRadius: 10, fontSize: 10, padding: '1px 6px' }}>
-                    {waitingCount} chờ phân
-                  </span>
-                )}
               </button>
               <button className={`tab ${tab === 'completed' ? 'active' : ''}`} onClick={() => setTab('completed')}>
                 CV Hoàn thành (3 ngày)
               </button>
             </div>
+            {tab === 'pending' && (
+              <select
+                className="form-select"
+                style={{ fontSize: 12, padding: '4px 8px', width: 'auto', minWidth: 140, marginRight: 8 }}
+                value={filterAssignee}
+                onChange={e => setFilterAssignee(e.target.value)}
+              >
+                <option value="">Tất cả nhân viên</option>
+                {cusStaff.length > 0 && <option disabled>── CUS ──</option>}
+                {cusStaff.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                {opsStaff.length > 0 && <option disabled>── OPS ──</option>}
+                {opsStaff.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            )}
           </div>
 
           <div style={{ overflowX: 'auto' }}>
@@ -390,10 +422,10 @@ export default function LogDashboardTP() {
                   </tr>
                 </thead>
                 <tbody>
-                  {jobs.length === 0 && (
+                  {filteredJobs.length === 0 && (
                     <tr><td colSpan={14} style={{ textAlign: 'center', padding: 40, color: 'var(--text-3)' }}>Không có job nào</td></tr>
                   )}
-                  {jobs.map((j, i) => {
+                  {filteredJobs.map((j, i) => {
                     const waitingAssign = (j.service_type === 'tk' || j.service_type === 'both') && !j.cus_id;
                     const rowBg = waitingAssign ? 'rgba(217,119,6,0.04)'
                       : j.deadline && new Date(j.deadline) < Date.now() ? 'rgba(239,68,68,0.04)' : '';
@@ -491,6 +523,12 @@ export default function LogDashboardTP() {
           onSave={data => assignMut.mutate({ id: assigningJob.id, data })} />
       )}
       {detailJobId && <JobDetailModal jobId={detailJobId} onClose={() => setDetailJobId(null)} />}
+      {showAssignment && (
+        <AssignmentModal
+          initialTab={showAssignment}
+          onClose={() => setShowAssignment(null)}
+        />
+      )}
     </div>
   );
 }

@@ -137,7 +137,8 @@ async function getOpsContext(pool, candidateIds) {
   }));
 }
 
-async function assignCus(jobData, pool) {
+// Returns { user_id, user_name, reason, cost, fallback } — no DB writes
+async function suggestCus(jobData, pool) {
   const { rows: candidates } = await pool.query(
     `SELECT id FROM users WHERE username IN ('cus1','cus2','cus3')`
   );
@@ -170,7 +171,6 @@ Assignment criteria (in order of priority):
 Respond ONLY with valid JSON, no text outside the JSON object:
 {"user_id": <number>, "reason": "<brief reason in Vietnamese, max 100 chars>"}`;
 
-  let cost = 0;
   try {
     const client = getClient();
     const response = await client.messages.create({
@@ -178,32 +178,39 @@ Respond ONLY with valid JSON, no text outside the JSON object:
       max_tokens: 1000,
       messages: [{ role: 'user', content: prompt }],
     });
-
-    cost = calcCost(response.usage);
+    const cost = calcCost(response.usage);
     const text = response.content[0].text.trim();
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (!jsonMatch) throw new Error('No JSON object found in AI response');
     const parsed = JSON.parse(jsonMatch[0]);
-
     if (!parsed.user_id || !candidateIds.includes(Number(parsed.user_id))) {
       throw new Error(`AI returned invalid user_id: ${parsed.user_id}`);
     }
-
-    const result = { user_id: Number(parsed.user_id), reason: parsed.reason, cost, fallback: false };
-    await logAssignment(pool, { jobId: jobData.id, assignedUserId: result.user_id, role: 'cus', reason: result.reason, cost, fallback: false });
-    return result;
+    const user = context.find(c => c.id === Number(parsed.user_id));
+    return { user_id: Number(parsed.user_id), user_name: user?.name, reason: parsed.reason, cost, fallback: false };
   } catch (err) {
     const sorted = [...context].sort((a, b) =>
       (a.pending_jobs + a.other_services_month) - (b.pending_jobs + b.other_services_month)
     );
     const best = sorted[0];
     const reason = `Fallback (lỗi AI: ${err.message.slice(0, 60)}): chọn người ít việc nhất`;
-    await logAssignment(pool, { jobId: jobData.id, assignedUserId: best.id, role: 'cus', reason, cost: 0, fallback: true });
-    return { user_id: best.id, reason, cost: 0, fallback: true };
+    return { user_id: best.id, user_name: best.name, reason, cost: 0, fallback: true };
   }
 }
 
-async function assignOps(jobData, pool) {
+// assignCus = suggestCus + log to ai_assignment_logs
+async function assignCus(jobData, pool) {
+  const result = await suggestCus(jobData, pool);
+  try {
+    await logAssignment(pool, { jobId: jobData.id, assignedUserId: result.user_id, role: 'cus', reason: result.reason, cost: result.cost, fallback: result.fallback });
+  } catch (e) {
+    console.error('assignCus log failed:', e.message);
+  }
+  return result;
+}
+
+// Returns { user_id, user_name, reason, cost, fallback } or null if conditions not met — no DB writes
+async function suggestOps(jobData, pool) {
   if (jobData.destination !== 'hai_phong' || !['truck', 'both'].includes(jobData.service_type)) {
     return null;
   }
@@ -240,7 +247,6 @@ Assignment criteria (in order of priority):
 Respond ONLY with valid JSON, no text outside the JSON object:
 {"user_id": <number>, "reason": "<brief reason in Vietnamese, max 100 chars>"}`;
 
-  let cost = 0;
   try {
     const client = getClient();
     const response = await client.messages.create({
@@ -248,27 +254,34 @@ Respond ONLY with valid JSON, no text outside the JSON object:
       max_tokens: 1000,
       messages: [{ role: 'user', content: prompt }],
     });
-
-    cost = calcCost(response.usage);
+    const cost = calcCost(response.usage);
     const text = response.content[0].text.trim();
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (!jsonMatch) throw new Error('No JSON object found in AI response');
     const parsed = JSON.parse(jsonMatch[0]);
-
     if (!parsed.user_id || !candidateIds.includes(Number(parsed.user_id))) {
       throw new Error(`AI returned invalid user_id: ${parsed.user_id}`);
     }
-
-    const result = { user_id: Number(parsed.user_id), reason: parsed.reason, cost, fallback: false };
-    await logAssignment(pool, { jobId: jobData.id, assignedUserId: result.user_id, role: 'ops', reason: result.reason, cost, fallback: false });
-    return result;
+    const user = context.find(c => c.id === Number(parsed.user_id));
+    return { user_id: Number(parsed.user_id), user_name: user?.name, reason: parsed.reason, cost, fallback: false };
   } catch (err) {
     const sorted = [...context].sort((a, b) => a.this_month_jobs - b.this_month_jobs);
     const best = sorted[0];
     const reason = `Fallback (lỗi AI: ${err.message.slice(0, 60)}): chọn người ít việc nhất tháng này`;
-    await logAssignment(pool, { jobId: jobData.id, assignedUserId: best.id, role: 'ops', reason, cost: 0, fallback: true });
-    return { user_id: best.id, reason, cost: 0, fallback: true };
+    return { user_id: best.id, user_name: best.name, reason, cost: 0, fallback: true };
   }
 }
 
-module.exports = { assignCus, assignOps };
+// assignOps = suggestOps + log to ai_assignment_logs
+async function assignOps(jobData, pool) {
+  const result = await suggestOps(jobData, pool);
+  if (!result) return null;
+  try {
+    await logAssignment(pool, { jobId: jobData.id, assignedUserId: result.user_id, role: 'ops', reason: result.reason, cost: result.cost, fallback: result.fallback });
+  } catch (e) {
+    console.error('assignOps log failed:', e.message);
+  }
+  return result;
+}
+
+module.exports = { assignCus, assignOps, suggestCus, suggestOps };
