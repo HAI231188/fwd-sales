@@ -4,9 +4,11 @@ require('dotenv').config();
 const { Pool } = require('pg');
 const { assignCus, assignOps } = require('./src/services/ai-assignment');
 
-// DATABASE_PUBLIC_URL is required when running via `railway run` locally
-// (DATABASE_URL uses the internal Railway hostname, unreachable outside Railway network)
-const pool = new Pool({ connectionString: process.env.DATABASE_PUBLIC_URL || process.env.DATABASE_URL });
+// Accept public DB URL as CLI arg: node test-ai-assignment.js postgresql://...
+// Required when running locally — Railway's DATABASE_URL uses internal hostname unreachable outside their network
+const dbUrl = process.argv[2] || process.env.DATABASE_PUBLIC_URL || process.env.DATABASE_URL;
+if (!dbUrl) { console.error('No database URL. Pass it as first argument or set DATABASE_PUBLIC_URL'); process.exit(1); }
+const pool = new Pool({ connectionString: dbUrl });
 
 const dummyJob = {
   id: null,
