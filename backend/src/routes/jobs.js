@@ -196,6 +196,19 @@ router.get('/deadline-requests', requireAuth, async (req, res) => {
   }
 });
 
+// GET /api/jobs/debug-assignment  — TEMPORARY DEBUG, remove after investigation
+router.get('/debug-assignment', requireAuth, async (req, res) => {
+  if (req.user.role !== 'truong_phong_log') return res.status(403).json({ error: 'Forbidden' });
+  try {
+    const [cusUsers, recentJA, recentJobs] = await Promise.all([
+      db.query(`SELECT id, name, username, role FROM users WHERE role IN ('cus','cus1','cus2','cus3','ops') ORDER BY role, name`),
+      db.query(`SELECT ja.job_id, ja.cus_id, ja.ops_id, ja.cus_confirm_status, ja.assignment_mode, u1.name AS cus_name, u2.name AS ops_name FROM job_assignments ja LEFT JOIN users u1 ON u1.id = ja.cus_id LEFT JOIN users u2 ON u2.id = ja.ops_id ORDER BY ja.id DESC LIMIT 15`),
+      db.query(`SELECT j.id, j.job_code, j.service_type, j.status, j.created_at FROM jobs j ORDER BY j.id DESC LIMIT 10`),
+    ]);
+    res.json({ cus_ops_users: cusUsers.rows, recent_assignments: recentJA.rows, recent_jobs: recentJobs.rows });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // GET /api/jobs/staff-workload
 router.get('/staff-workload', requireAuth, async (req, res) => {
   try {
