@@ -229,6 +229,35 @@ Also applies to `CustomerDetailModal` in the Sales module.
 
 ---
 
+### L9 — Full-system audit required before every commit
+
+**Root cause pattern:** When adding or modifying database fields, API endpoints, or shared components, changes often only cover the primary touch points. Related queries, UI components, and modal displays get missed, causing inconsistency bugs (e.g. field saved but not displayed anywhere, API returns field but frontend ignores it, modal shows field but list view doesn't).
+
+**Rules (mandatory before every commit):**
+
+1. **When modifying a database field (add/rename/drop column):**
+   - Audit ALL SQL queries in `backend/src/routes/` that touch that table — confirm the field is in SELECT, INSERT, UPDATE, DELETE as needed
+   - Audit ALL frontend components that destructure objects from that table — confirm the new field is rendered or at least not breaking
+
+2. **When adding a new API endpoint or modifying an existing one:**
+   - List all frontend callers using grep (`api/index.js`, component files)
+   - Confirm all callers handle the new response shape
+
+3. **When modifying shared components (e.g. JobDetailModal, CustomerDetailModal):**
+   - List all pages that import and use the component
+   - Confirm prop changes don't break any caller
+
+4. **Before running `git commit`:**
+   - Produce a summary table: "Files touched | Related files checked | Gaps found"
+   - If any gap found, fix in the same commit
+   - Never commit with known gaps
+
+5. Apply to both frontend and backend changes equally.
+
+Also applies to all modules: Sales, LOG, and future (OVS, PRI, ACCOUNTING).
+
+---
+
 ## 6. Session Start Checklist
 
 1. Read this file.
