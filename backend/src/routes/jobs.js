@@ -51,7 +51,7 @@ router.get('/stats', requireAuth, async (req, res) => {
           SELECT COUNT(*) AS v FROM job_assignments ja
           JOIN jobs j ON j.id = ja.job_id
           WHERE j.status = 'pending' AND j.deleted_at IS NULL
-            AND ja.cus_confirm_status = 'pending'`),
+            AND ja.cus_id IS NOT NULL AND ja.cus_confirm_status = 'pending'`),
         db.query(`
           SELECT COUNT(*) AS v FROM job_assignments ja
           JOIN jobs j ON j.id = ja.job_id
@@ -66,7 +66,7 @@ router.get('/stats', requireAuth, async (req, res) => {
           SELECT u.id, u.name, u.role, u.code, u.avatar_color,
             COUNT(ja.id) FILTER (WHERE j.status = 'pending' AND j.deleted_at IS NULL) AS pending,
             COUNT(ja.id) FILTER (WHERE j.status = 'pending' AND j.deleted_at IS NULL AND j.deadline < NOW()) AS overdue,
-            COUNT(ja.id) FILTER (WHERE j.status = 'pending' AND j.deleted_at IS NULL AND ja.cus_confirm_status = 'pending') AS awaiting_confirm,
+            COUNT(ja.id) FILTER (WHERE j.status = 'pending' AND j.deleted_at IS NULL AND ja.cus_id IS NOT NULL AND ja.cus_confirm_status = 'pending') AS awaiting_confirm,
             COUNT(ja.id) FILTER (WHERE j.status = 'pending' AND j.deleted_at IS NULL AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '48 hours') AS warning
           FROM users u
           LEFT JOIN job_assignments ja ON (ja.cus_id = u.id OR ja.ops_id = u.id)
@@ -157,7 +157,7 @@ router.get('/deadline-requests', requireAuth, async (req, res) => {
           WHERE job_id = ja.job_id AND role = 'cus'
           ORDER BY id DESC LIMIT 1
         ) al ON true
-        WHERE ja.cus_confirm_status = 'pending' AND j.status = 'pending' AND j.deleted_at IS NULL
+        WHERE ja.cus_id IS NOT NULL AND ja.cus_confirm_status = 'pending' AND j.status = 'pending' AND j.deleted_at IS NULL
         ORDER BY j.created_at DESC
       `),
       db.query(`
@@ -399,7 +399,7 @@ router.get('/filtered', requireAuth, async (req, res) => {
     case 'missing':   extraWhere = `AND (j.pol IS NULL OR j.pod IS NULL OR j.cont_number IS NULL OR j.han_lenh IS NULL)`; break;
     case 'overdue':   extraWhere = `AND j.deadline < NOW()`; break;
     // CUS filters
-    case 'cus_waiting_confirm': extraWhere = `AND ja.cus_confirm_status = 'pending'`; break;
+    case 'cus_waiting_confirm': extraWhere = `AND ja.cus_id IS NOT NULL AND ja.cus_confirm_status = 'pending'`; break;
     case 'cus_near_deadline':   extraWhere = `AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '24 hours'`; break;
     case 'cus_overdue':         extraWhere = `AND j.deadline < NOW()`; break;
     // DieuDo filters
