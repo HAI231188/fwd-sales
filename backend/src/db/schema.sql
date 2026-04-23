@@ -371,6 +371,11 @@ ALTER TABLE jobs ADD COLUMN IF NOT EXISTS destination VARCHAR(20);
 -- Hạn lệnh: customs clearance deadline (datetime)
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS han_lenh TIMESTAMPTZ;
 
+-- Document numbers
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS si_number VARCHAR(100);
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS mbl_no VARCHAR(100);
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS hbl_no VARCHAR(100);
+
 -- Global LOG department settings (single-row config, id=1 always)
 CREATE TABLE IF NOT EXISTS log_settings (
   id              SERIAL PRIMARY KEY,

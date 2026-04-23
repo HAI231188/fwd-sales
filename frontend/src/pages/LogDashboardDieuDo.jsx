@@ -109,7 +109,7 @@ export default function LogDashboardDieuDo() {
   }
 
   const HEADERS = [
-    'Ngày', 'Job', 'Khách hàng', 'Cont / Tons',
+    'Ngày', 'Job', 'Mã SI', 'Khách hàng', 'Cont / Tons',
     'ETD / ETA', 'Hạn lệnh',
     'Tên vận tải', 'KH ngày giờ', 'TH ngày giờ',
     'Số xe', 'Địa điểm lấy', 'Địa điểm giao', 'Cước', 'HT', 'Ghi chú', '',
@@ -169,6 +169,7 @@ export default function LogDashboardDieuDo() {
                         <td style={{ padding: '8px 8px', whiteSpace: 'nowrap', fontWeight: 600, color: 'var(--info)' }}>
                           {j.job_code || `#${j.id}`}
                         </td>
+                        <td style={{ padding: '8px 8px', whiteSpace: 'nowrap', fontSize: 12, color: 'var(--text-2)' }}>{j.si_number || '—'}</td>
                         <td style={{ padding: '8px 8px', maxWidth: 140 }}>{j.customer_name}</td>
                         <td style={{ padding: '8px 8px', whiteSpace: 'nowrap', fontSize: 12 }}>
                           {fmtCargo(j)}

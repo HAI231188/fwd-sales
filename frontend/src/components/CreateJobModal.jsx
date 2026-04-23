@@ -9,8 +9,8 @@ const OTHER_SVC_LABEL = { ktcl:'KTCL', kiem_dich:'Kiểm dịch', hun_trung:'Hun
 const EMPTY_CONT = () => ({ cont_type: '40DC', cont_number: '', seal_number: '' });
 
 const INIT_FORM = {
-  job_code: '', customer_name: '', customer_address: '', customer_tax_code: '',
-  sales_id: '', pol: '', pod: '', bill_number: '',
+  job_code: '', si_number: '', customer_name: '', customer_address: '', customer_tax_code: '',
+  sales_id: '', pol: '', pod: '', bill_number: '', mbl_no: '', hbl_no: '',
   etd: '', eta: '', tons: '', cbm: '', kg: '', so_kien: '', deadline: '', han_lenh: '',
   service_type: 'tk', other_services: {},
 };
@@ -102,6 +102,9 @@ export default function CreateJobModal({ onClose, onCreated }) {
         so_kien: form.so_kien ? Number(form.so_kien) : null,
         deadline: form.deadline || null,
         han_lenh: form.han_lenh || null,
+        si_number: form.si_number || null,
+        mbl_no: form.mbl_no || null,
+        hbl_no: form.hbl_no || null,
         etd: form.etd || null,
         eta: form.eta || null,
         cargo_type: cargoType,
@@ -122,10 +125,14 @@ export default function CreateJobModal({ onClose, onCreated }) {
         <div className="modal-body">
 
           {/* Service + Cargo type */}
-          <div className="grid-2" style={{ gap: 12 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
             <div className="form-group">
               <label className="form-label">Mã Job</label>
               <input className="form-input" value={form.job_code} onChange={e => set('job_code', e.target.value)} placeholder="VD: SLB-2024-001" />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Mã SI</label>
+              <input className="form-input" value={form.si_number} onChange={e => set('si_number', e.target.value)} placeholder="Số SI" />
             </div>
             <div className="form-group">
               <label className="form-label">Loại dịch vụ *</label>
@@ -247,20 +254,28 @@ export default function CreateJobModal({ onClose, onCreated }) {
               <input className="form-input" value={form.pod} onChange={e => set('pod', e.target.value)} placeholder="Cảng dỡ hàng" />
             </div>
           </div>
-          <div className="grid-2" style={{ gap: 12, marginTop: 12 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginTop: 12 }}>
             <div className="form-group">
               <label className="form-label">Số B/L</label>
               <input className="form-input" value={form.bill_number} onChange={e => set('bill_number', e.target.value)} />
             </div>
-            <div className="grid-2" style={{ gap: 12 }}>
-              <div className="form-group">
-                <label className="form-label">ETD</label>
-                <input type="date" className="form-input" value={form.etd} onChange={e => set('etd', e.target.value)} />
-              </div>
-              <div className="form-group">
-                <label className="form-label">ETA</label>
-                <input type="date" className="form-input" value={form.eta} onChange={e => set('eta', e.target.value)} />
-              </div>
+            <div className="form-group">
+              <label className="form-label">MBL No</label>
+              <input className="form-input" value={form.mbl_no} onChange={e => set('mbl_no', e.target.value)} />
+            </div>
+            <div className="form-group">
+              <label className="form-label">HBL No</label>
+              <input className="form-input" value={form.hbl_no} onChange={e => set('hbl_no', e.target.value)} />
+            </div>
+          </div>
+          <div className="grid-2" style={{ gap: 12, marginTop: 12 }}>
+            <div className="form-group">
+              <label className="form-label">ETD</label>
+              <input type="date" className="form-input" value={form.etd} onChange={e => set('etd', e.target.value)} />
+            </div>
+            <div className="form-group">
+              <label className="form-label">ETA</label>
+              <input type="date" className="form-input" value={form.eta} onChange={e => set('eta', e.target.value)} />
             </div>
           </div>
 

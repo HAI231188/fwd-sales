@@ -145,7 +145,7 @@ export default function LogDashboardOps() {
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead>
                   <tr>
-                    <TH>Ngày</TH><TH>Job</TH><TH>Khách hàng</TH>
+                    <TH>Ngày</TH><TH>Job</TH><TH>Mã SI</TH><TH>Khách hàng</TH>
                     <TH>Số cont / Loại cont</TH><TH>ETD / ETA</TH>
                     <TH>Hạn lệnh</TH><TH>Luồng TK</TH><TH>Trạng thái TK</TH>
                     <TH>Ngày giờ TQ</TH><TH>Ghi chú</TH><TH></TH>
@@ -153,12 +153,13 @@ export default function LogDashboardOps() {
                 </thead>
                 <tbody>
                   {displayJobs.length === 0 && (
-                    <tr><td colSpan={11} style={{ textAlign: 'center', padding: 40, color: 'var(--text-3)' }}>Không có job nào</td></tr>
+                    <tr><td colSpan={12} style={{ textAlign: 'center', padding: 40, color: 'var(--text-3)' }}>Không có job nào</td></tr>
                   )}
                   {displayJobs.map(j => (
                     <tr key={j.id} style={{ background: rowBg(j) }} onDoubleClick={() => setDetailJobId(j.id)}>
                       <TD style={{ whiteSpace: 'nowrap', fontSize: 12 }}>{fmtDate(j.created_at)}</TD>
                       <TD style={{ fontWeight: 600, color: 'var(--info)', whiteSpace: 'nowrap' }}>{j.job_code || `#${j.id}`}</TD>
+                      <TD style={{ whiteSpace: 'nowrap', fontSize: 12, color: 'var(--text-2)' }}>{j.si_number || '—'}</TD>
                       <TD style={{ maxWidth: 140 }}>{j.customer_name}</TD>
                       <TD style={{ whiteSpace: 'nowrap', fontSize: 12 }}>
                         {fmtCargo(j)}
@@ -195,7 +196,7 @@ export default function LogDashboardOps() {
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead>
                   <tr>
-                    <TH>Ngày</TH><TH>Job</TH><TH>Khách hàng</TH>
+                    <TH>Ngày</TH><TH>Job</TH><TH>Mã SI</TH><TH>Khách hàng</TH>
                     <TH>Số cont / Loại cont</TH><TH>Hạn lệnh</TH>
                     <TH>Cảng đổi lệnh</TH><TH>Nội dung CV</TH>
                     <TH>Deadline task</TH><TH>Hoàn thành</TH><TH>Ghi chú</TH><TH></TH>
@@ -203,12 +204,13 @@ export default function LogDashboardOps() {
                 </thead>
                 <tbody>
                   {displayJobs.length === 0 && (
-                    <tr><td colSpan={11} style={{ textAlign: 'center', padding: 40, color: 'var(--text-3)' }}>Không có job nào</td></tr>
+                    <tr><td colSpan={12} style={{ textAlign: 'center', padding: 40, color: 'var(--text-3)' }}>Không có job nào</td></tr>
                   )}
                   {displayJobs.map(j => (
                     <tr key={j.id} style={{ background: rowBg(j) }} onDoubleClick={() => setDetailJobId(j.id)}>
                       <TD style={{ whiteSpace: 'nowrap', fontSize: 12 }}>{fmtDate(j.created_at)}</TD>
                       <TD style={{ fontWeight: 600, color: 'var(--info)', whiteSpace: 'nowrap' }}>{j.job_code || `#${j.id}`}</TD>
+                      <TD style={{ whiteSpace: 'nowrap', fontSize: 12, color: 'var(--text-2)' }}>{j.si_number || '—'}</TD>
                       <TD style={{ maxWidth: 140 }}>{j.customer_name}</TD>
                       <TD style={{ whiteSpace: 'nowrap', fontSize: 12 }}>
                         {fmtCargo(j)}
@@ -237,19 +239,20 @@ export default function LogDashboardOps() {
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead>
                   <tr>
-                    <TH>Ngày</TH><TH>Job</TH><TH>Khách hàng</TH>
+                    <TH>Ngày</TH><TH>Job</TH><TH>Mã SI</TH><TH>Khách hàng</TH>
                     <TH>Số cont</TH><TH>ETD / ETA</TH>
                     <TH>Trạng thái TK</TH><TH>Ngày TQ</TH><TH></TH>
                   </tr>
                 </thead>
                 <tbody>
                   {completedJobs.length === 0 && (
-                    <tr><td colSpan={8} style={{ textAlign: 'center', padding: 40, color: 'var(--text-3)' }}>Không có job hoàn thành trong 3 ngày qua</td></tr>
+                    <tr><td colSpan={9} style={{ textAlign: 'center', padding: 40, color: 'var(--text-3)' }}>Không có job hoàn thành trong 3 ngày qua</td></tr>
                   )}
                   {completedJobs.map(j => (
                     <tr key={j.id} style={{ borderBottom: '1px solid var(--border)' }} onDoubleClick={() => setDetailJobId(j.id)}>
                       <TD style={{ fontSize: 12 }}>{fmtDate(j.created_at)}</TD>
                       <TD style={{ fontWeight: 600, color: 'var(--primary)' }}>{j.job_code || `#${j.id}`}</TD>
+                      <TD style={{ whiteSpace: 'nowrap', fontSize: 12, color: 'var(--text-2)' }}>{j.si_number || '—'}</TD>
                       <TD>{j.customer_name}</TD>
                       <TD style={{ fontSize: 12 }}>{fmtCargo(j)}</TD>
                       <TD style={{ color: 'var(--text-2)', fontSize: 12 }}>{fmtDate(j.etd)} / {fmtDate(j.eta)}</TD>

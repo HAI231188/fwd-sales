@@ -94,6 +94,9 @@ export default function JobDetailModal({ jobId, onClose }) {
               <div style={{ padding: '20px 24px', borderRight: '1px solid var(--border)', overflowY: 'auto' }}>
                 <Section title="Thông tin chung">
                   <Row label="Mã job" value={job.job_code} />
+                  <Row label="Mã SI" value={job.si_number || '—'} />
+                  <Row label="MBL No" value={job.mbl_no || '—'} />
+                  <Row label="HBL No" value={job.hbl_no || '—'} />
                   <Row label="Khách hàng" value={job.customer_name} />
                   <Row label="Địa chỉ" value={job.customer_address} />
                   <Row label="MST" value={job.customer_tax_code} />

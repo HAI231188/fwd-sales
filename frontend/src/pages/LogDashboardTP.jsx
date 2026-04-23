@@ -62,6 +62,7 @@ function deadlineStyle(dl) {
 const ALL_COLS = [
   { key: 'stt',          label: '#' },
   { key: 'job_code',     label: 'Số job' },
+  { key: 'si_number',    label: 'Mã SI' },
   { key: 'created_at',   label: 'Ngày tạo' },
   { key: 'customer',     label: 'Tên khách' },
   { key: 'han_lenh',     label: 'Hạn lệnh' },
@@ -500,6 +501,7 @@ export default function LogDashboardTP() {
                       switch (key) {
                         case 'stt':         return <td key={key} style={{ ...cs, color: 'var(--text-3)' }}>{i + 1}</td>;
                         case 'job_code':    return <td key={key} style={{ ...cs, whiteSpace: 'nowrap', fontSize: 12, color: 'var(--info)' }}>{j.job_code || '—'}</td>;
+                        case 'si_number':   return <td key={key} style={{ ...cs, whiteSpace: 'nowrap', fontSize: 12, color: 'var(--text-2)' }}>{j.si_number || '—'}</td>;
                         case 'created_at':  return <td key={key} style={{ ...cs, whiteSpace: 'nowrap', fontSize: 12 }}>{fmtDate(j.created_at)}</td>;
                         case 'customer':    return <td key={key} style={{ ...cs, maxWidth: 150 }}><div style={{ fontWeight: 500, fontSize: 13 }}>{j.customer_name}</div></td>;
                         case 'han_lenh':    return <td key={key} style={{ ...cs, whiteSpace: 'nowrap', fontSize: 12 }}>{j.han_lenh ? <span style={deadlineStyle(j.han_lenh)}>{fmtDt(j.han_lenh)}</span> : <span style={{ color: 'var(--text-3)' }}>—</span>}</td>;

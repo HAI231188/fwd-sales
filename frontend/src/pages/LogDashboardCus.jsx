@@ -182,7 +182,7 @@ export default function LogDashboardCus() {
   }
 
   const HEADERS = [
-    'STT','Ngày','Job','Khách hàng','ETD / ETA','Deadline',
+    'STT','Ngày','Job','Mã SI','Khách hàng','ETD / ETA','Deadline',
     'Ngày giờ TK','Số TK','Luồng TK','Trạng thái TK','Ngày giờ TQ',
     'Dịch vụ khác','Ngày giao hàng','Địa điểm giao','Đặt xe','HT','Ghi chú','',
   ];
@@ -247,6 +247,7 @@ export default function LogDashboardCus() {
                         <td style={{ padding: '8px 8px', whiteSpace: 'nowrap', fontWeight: 600, color: 'var(--info)' }}>
                           {j.job_code || `#${j.id}`}
                         </td>
+                        <td style={{ padding: '8px 8px', whiteSpace: 'nowrap', fontSize: 12, color: 'var(--text-2)' }}>{j.si_number || '—'}</td>
                         <td style={{ padding: '8px 8px', maxWidth: 140 }}>{j.customer_name}</td>
                         <td style={{ padding: '8px 8px', whiteSpace: 'nowrap', color: 'var(--text-2)', fontSize: 12 }}>
                           {fmtDate(j.etd)}<br />{fmtDate(j.eta)}
