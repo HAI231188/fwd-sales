@@ -196,6 +196,19 @@ router.get('/deadline-requests', requireAuth, async (req, res) => {
   }
 });
 
+// GET /api/jobs/debug-dieu-do — TEMPORARY, remove after investigation
+router.get('/debug-dieu-do', requireAuth, async (req, res) => {
+  if (!['truong_phong_log','lead'].includes(req.user.role)) return res.status(403).json({ error: 'Forbidden' });
+  try {
+    const [dieuDoUsers, truckJobs, jaColumns] = await Promise.all([
+      db.query(`SELECT id, username, role, name FROM users WHERE role = 'dieu_do'`),
+      db.query(`SELECT j.id, j.job_code, j.service_type, j.status, ja.cus_id, ja.ops_id, ja.cus_confirm_status FROM jobs j LEFT JOIN job_assignments ja ON ja.job_id = j.id WHERE j.service_type IN ('truck','both') ORDER BY j.id DESC LIMIT 10`),
+      db.query(`SELECT column_name FROM information_schema.columns WHERE table_name = 'job_assignments' ORDER BY ordinal_position`),
+    ]);
+    res.json({ dieu_do_users: dieuDoUsers.rows, truck_jobs: truckJobs.rows, job_assignments_columns: jaColumns.rows.map(r => r.column_name) });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // GET /api/jobs/staff-workload
 router.get('/staff-workload', requireAuth, async (req, res) => {
   try {
