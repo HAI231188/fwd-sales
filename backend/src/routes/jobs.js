@@ -142,31 +142,53 @@ router.get('/stats', requireAuth, async (req, res) => {
 // GET /api/jobs/deadline-requests
 router.get('/deadline-requests', requireAuth, async (req, res) => {
   try {
-    const { rows: requests } = await db.query(`
-      SELECT dr.*, j.job_code, j.customer_name, j.deadline AS current_deadline,
-             u.name AS requested_by_name
-      FROM job_deadline_requests dr
-      JOIN jobs j ON j.id = dr.job_id
-      JOIN users u ON u.id = dr.requested_by
-      WHERE dr.status = 'pending' AND j.deleted_at IS NULL
-      ORDER BY dr.id DESC
-    `);
-    const { rows: noDeadline } = await db.query(`
-      SELECT j.id AS job_id, j.job_code, j.customer_name, j.created_at
-      FROM jobs j
-      WHERE j.status = 'pending' AND j.deleted_at IS NULL AND j.deadline IS NULL
-        AND NOT EXISTS (SELECT 1 FROM job_deadline_requests dr WHERE dr.job_id = j.id AND dr.status = 'pending')
-      ORDER BY j.created_at DESC
-    `);
-    const { rows: deleteRequests } = await db.query(`
-      SELECT dr.*, j.job_code, j.customer_name, u.name AS requested_by_name
-      FROM job_delete_requests dr
-      JOIN jobs j ON j.id = dr.job_id
-      JOIN users u ON u.id = dr.requested_by
-      WHERE dr.status = 'pending' AND j.deleted_at IS NULL
-      ORDER BY dr.created_at DESC
-    `);
-    res.json({ requests, no_deadline: noDeadline, delete_requests: deleteRequests });
+    const [pendingConf, requests, noDeadline, deleteRequests] = await Promise.all([
+      db.query(`
+        SELECT ja.job_id, j.job_code, j.customer_name, j.deadline, j.created_at,
+               u_cus.name AS cus_name,
+               al.reason AS ai_reason
+        FROM job_assignments ja
+        JOIN jobs j ON j.id = ja.job_id
+        LEFT JOIN users u_cus ON u_cus.id = ja.cus_id
+        LEFT JOIN LATERAL (
+          SELECT reason FROM ai_assignment_logs
+          WHERE job_id = ja.job_id AND role = 'cus'
+          ORDER BY id DESC LIMIT 1
+        ) al ON true
+        WHERE ja.cus_confirm_status = 'pending' AND j.status = 'pending' AND j.deleted_at IS NULL
+        ORDER BY j.created_at DESC
+      `),
+      db.query(`
+        SELECT dr.*, j.job_code, j.customer_name, j.deadline AS current_deadline,
+               u.name AS requested_by_name
+        FROM job_deadline_requests dr
+        JOIN jobs j ON j.id = dr.job_id
+        JOIN users u ON u.id = dr.requested_by
+        WHERE dr.status = 'pending' AND j.deleted_at IS NULL
+        ORDER BY dr.id DESC
+      `),
+      db.query(`
+        SELECT j.id AS job_id, j.job_code, j.customer_name, j.created_at
+        FROM jobs j
+        WHERE j.status = 'pending' AND j.deleted_at IS NULL AND j.deadline IS NULL
+          AND NOT EXISTS (SELECT 1 FROM job_deadline_requests dr WHERE dr.job_id = j.id AND dr.status = 'pending')
+        ORDER BY j.created_at DESC
+      `),
+      db.query(`
+        SELECT dr.*, j.job_code, j.customer_name, u.name AS requested_by_name
+        FROM job_delete_requests dr
+        JOIN jobs j ON j.id = dr.job_id
+        JOIN users u ON u.id = dr.requested_by
+        WHERE dr.status = 'pending' AND j.deleted_at IS NULL
+        ORDER BY dr.created_at DESC
+      `),
+    ]);
+    res.json({
+      pending_confirmations: pendingConf.rows,
+      requests:              requests.rows,
+      no_deadline:           noDeadline.rows,
+      delete_requests:       deleteRequests.rows,
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
