@@ -21,12 +21,11 @@ async function seedUsers() {
 
     const hash = await bcrypt.hash(DEFAULT_PASSWORD, 10);
 
-    // Remove all legacy demo users (with or without username)
-    // ON DELETE CASCADE will clean up their reports/customers/quotes
-    await client.query(`DELETE FROM users WHERE username IS NULL`);
-    // Also remove any users whose code doesn't match the real team
+    // Only touch sales/lead users — LOG staff (cus*, ops, dieu_do, etc.) are managed separately
+    // and may have FK references in ai_assignment_logs that prevent deletion
+    await client.query(`DELETE FROM users WHERE username IS NULL AND role IN ('sales','lead')`);
     const realCodes = USERS.map(u => u.code);
-    await client.query(`DELETE FROM users WHERE code != ALL($1::text[])`, [realCodes]);
+    await client.query(`DELETE FROM users WHERE code != ALL($1::text[]) AND role IN ('sales','lead')`, [realCodes]);
 
     for (const user of USERS) {
       await client.query(`
