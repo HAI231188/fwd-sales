@@ -202,6 +202,21 @@ This codebase has no TypeScript, no API schema validation, no serializers. The S
 - `GET /api/jobs/stats` → `total_pending`, `warn_soon`, `delete_requests`, `total_managing`, `sap_han`, `qua_han`
 - `GET /api/jobs/customer-search` → `customer_address`, `customer_tax_code`, `pipeline_id`, `sales_id`, `sales_name`
 
+### L8 — Detail modals must display ALL database fields comprehensively
+
+**Root cause pattern:** When adding new fields to jobs/job_tk/job_truck/job_ops_task tables, developers often update only the form and grid but forget the detail modal. Over time the modal falls behind schema by 10+ fields, forcing users to dig through multiple UIs to see full info.
+
+**Rules:**
+1. If a field exists in the database and the user fills it in, the detail modal must display it. No exceptions.
+2. Whenever adding a new column to `jobs`/`job_tk`/`job_truck`/`job_ops_task`/`job_containers`/`job_assignments`, update `JobDetailModal.jsx` in the **same commit**.
+3. Detail modals show ALL fields in readonly form — editing happens in dashboards, not in the modal.
+4. Format convention: empty/null fields show `—` (em dash), not blank. Timestamps use `vi-VN` locale.
+5. Logical sections: Thông tin chung / Lô hàng / Phân công / Tờ khai / Vận chuyển / Công việc OPS / Lịch sử thay đổi.
+
+Also applies to `CustomerDetailModal` in the Sales module.
+
+---
+
 ### L7 — Seed scripts must never DELETE users outside their own scope
 
 **Root cause pattern:** `seed_users.js` had a broad `DELETE FROM users WHERE code != ALL(sales_codes)` that deleted any user not in the sales list. When the LOG module added cus/ops users with FK references (`ai_assignment_logs.assigned_user_id`), the DELETE failed with a FK constraint violation, crashed `npm run db:seed`, and Railway entered a restart loop ("Application failed to respond").
