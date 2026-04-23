@@ -32,14 +32,14 @@ router.get('/stats', requireAuth, async (req, res) => {
   const { role, id: userId } = req.user;
   try {
     if (role === 'truong_phong_log') {
-      const [total, waitingCus, waitingOps, deadlinePending, overdue, warnSoon, missingInfo, deleteReqs, staff] = await Promise.all([
+      const [total, waitingCus, waitingOps, cusConfirmPend, deadlineAdj, noDeadline, overdue, warnSoon, missingInfo, deleteReqs, staff] = await Promise.all([
         db.query(`SELECT COUNT(*) AS v FROM jobs WHERE status = 'pending' AND deleted_at IS NULL`),
         db.query(`
           SELECT COUNT(*) AS v FROM jobs j
           LEFT JOIN job_assignments ja ON ja.job_id = j.id
           WHERE j.status = 'pending' AND j.deleted_at IS NULL
             AND j.service_type IN ('tk','both')
-            AND (ja.cus_id IS NULL OR ja.id IS NULL)`),
+            AND (ja.cus_id IS NULL OR ja.id IS NULL OR ja.cus_confirm_status = 'pending')`),
         db.query(`
           SELECT COUNT(*) AS v FROM jobs j
           LEFT JOIN job_assignments ja ON ja.job_id = j.id
@@ -48,12 +48,16 @@ router.get('/stats', requireAuth, async (req, res) => {
             AND j.service_type IN ('truck','both')
             AND (ja.ops_id IS NULL OR ja.id IS NULL)`),
         db.query(`
-          SELECT COUNT(*) AS v FROM (
-            SELECT j.id FROM jobs j
-            LEFT JOIN job_assignments ja ON ja.job_id = j.id
-            WHERE j.status = 'pending' AND j.deleted_at IS NULL
-              AND (ja.cus_confirm_status = 'adjustment_requested' OR j.deadline IS NULL)
-          ) x`),
+          SELECT COUNT(*) AS v FROM job_assignments ja
+          JOIN jobs j ON j.id = ja.job_id
+          WHERE j.status = 'pending' AND j.deleted_at IS NULL
+            AND ja.cus_confirm_status = 'pending'`),
+        db.query(`
+          SELECT COUNT(*) AS v FROM job_assignments ja
+          JOIN jobs j ON j.id = ja.job_id
+          WHERE j.status = 'pending' AND j.deleted_at IS NULL
+            AND ja.cus_confirm_status = 'adjustment_requested'`),
+        db.query(`SELECT COUNT(*) AS v FROM jobs WHERE status = 'pending' AND deleted_at IS NULL AND deadline IS NULL`),
         db.query(`SELECT COUNT(*) AS v FROM jobs WHERE status = 'pending' AND deleted_at IS NULL AND deadline < NOW()`),
         db.query(`SELECT COUNT(*) AS v FROM jobs WHERE status = 'pending' AND deleted_at IS NULL AND deadline BETWEEN NOW() AND NOW() + INTERVAL '48 hours'`),
         db.query(`SELECT COUNT(*) AS v FROM jobs WHERE status = 'pending' AND deleted_at IS NULL AND (pol IS NULL OR pod IS NULL OR cont_number IS NULL OR han_lenh IS NULL)`),
@@ -73,15 +77,17 @@ router.get('/stats', requireAuth, async (req, res) => {
         `, [['cus','cus1','cus2','cus3','ops','dieu_do']]),
       ]);
       res.json({
-        total_pending:    parseInt(total.rows[0].v),
-        waiting_cus:      parseInt(waitingCus.rows[0].v),
-        waiting_ops:      parseInt(waitingOps.rows[0].v),
-        deadline_pending: parseInt(deadlinePending.rows[0].v),
-        overdue:          parseInt(overdue.rows[0].v),
-        warn_soon:        parseInt(warnSoon.rows[0].v),
-        missing_info:     parseInt(missingInfo.rows[0].v),
-        delete_requests:  parseInt(deleteReqs.rows[0].v),
-        staff:            staff.rows,
+        total_pending:         parseInt(total.rows[0].v),
+        waiting_cus:           parseInt(waitingCus.rows[0].v),
+        waiting_ops:           parseInt(waitingOps.rows[0].v),
+        cus_confirm_pending:   parseInt(cusConfirmPend.rows[0].v),
+        deadline_adj_requests: parseInt(deadlineAdj.rows[0].v),
+        no_deadline:           parseInt(noDeadline.rows[0].v),
+        overdue:               parseInt(overdue.rows[0].v),
+        warn_soon:             parseInt(warnSoon.rows[0].v),
+        missing_info:          parseInt(missingInfo.rows[0].v),
+        delete_requests:       parseInt(deleteReqs.rows[0].v),
+        staff:                 staff.rows,
       });
     } else if (role === 'dieu_do') {
       const [total, daDat, chuaDat, warnOverdue] = await Promise.all([
@@ -591,7 +597,7 @@ router.post('/', requireAuth, async (req, res) => {
       if (mode === 'auto' && cusSuggestion) {
         await client.query(`
           INSERT INTO job_assignments (job_id, cus_id, assigned_by, assignment_mode, cus_confirm_status)
-          VALUES ($1, $2, $3, 'auto', 'confirmed')
+          VALUES ($1, $2, $3, 'auto', 'pending')
         `, [job.id, cusSuggestion.user_id, req.user.id]);
         await client.query(`INSERT INTO job_tk (job_id, cus_id) VALUES ($1, $2)`, [job.id, cusSuggestion.user_id]);
         await client.query(`
@@ -998,9 +1004,9 @@ router.patch('/deadline-requests/:rid/review', requireAuth, async (req, res) => 
             await ac.query('BEGIN');
             const { rows: jaEx } = await ac.query(`SELECT id FROM job_assignments WHERE job_id = $1`, [drJobId]);
             if (jaEx[0]) {
-              await ac.query(`UPDATE job_assignments SET cus_id = $1, assignment_mode = 'auto', cus_confirm_status = 'confirmed' WHERE job_id = $2`, [suggestion.user_id, drJobId]);
+              await ac.query(`UPDATE job_assignments SET cus_id = $1, assignment_mode = 'auto', cus_confirm_status = 'pending' WHERE job_id = $2`, [suggestion.user_id, drJobId]);
             } else {
-              await ac.query(`INSERT INTO job_assignments (job_id, cus_id, assigned_by, assignment_mode, cus_confirm_status) VALUES ($1,$2,$3,'auto','confirmed')`, [drJobId, suggestion.user_id, req.user.id]);
+              await ac.query(`INSERT INTO job_assignments (job_id, cus_id, assigned_by, assignment_mode, cus_confirm_status) VALUES ($1,$2,$3,'auto','pending')`, [drJobId, suggestion.user_id, req.user.id]);
             }
             const { rows: tkEx } = await ac.query(`SELECT id FROM job_tk WHERE job_id = $1`, [drJobId]);
             if (tkEx[0]) {

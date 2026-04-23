@@ -92,7 +92,23 @@ function loadVisibleCols() {
   return ALL_COLS.map(c => c.key);
 }
 
-function StatCard({ label, value, color, onClick, badge }) {
+function StatCard({ label, value, color, onClick, badge, rows }) {
+  if (rows) {
+    return (
+      <div className="card" onClick={onClick}
+        style={{ cursor: onClick ? 'pointer' : 'default', padding: '14px 16px' }}>
+        <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-2)', marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.5px' }}>{label}</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {rows.map((r, i) => (
+            <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: 12, color: 'var(--text-2)' }}>{r.label}</span>
+              <span style={{ fontSize: 20, fontWeight: 700, color: r.color || 'var(--text)', fontFamily: 'var(--font-display)' }}>{r.value ?? '—'}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="card" onClick={onClick}
       style={{ cursor: onClick ? 'pointer' : 'default', padding: '14px 16px', position: 'relative' }}>
@@ -383,9 +399,14 @@ export default function LogDashboardTP() {
           <StatCard label="Chờ phân OPS" value={stats?.waiting_ops} color="var(--purple)"
             badge={modeLabel}
             onClick={() => setShowAssignment('ops')} />
-          <StatCard label="Chờ xác nhận deadline" value={stats?.deadline_pending} color="var(--warning)"
+          <StatCard label="Chờ xác nhận"
             badge={stats?.delete_requests > 0 ? `${stats.delete_requests} xóa` : null}
-            onClick={() => setShowDeadline(true)} />
+            onClick={() => setShowDeadline(true)}
+            rows={[
+              { label: 'CUS chưa nhận', value: stats?.cus_confirm_pending, color: 'var(--warning)' },
+              { label: 'Điều chỉnh deadline', value: stats?.deadline_adj_requests, color: 'var(--danger)' },
+              { label: 'Chưa có deadline', value: stats?.no_deadline, color: 'var(--text-2)' },
+            ]} />
           <StatCard label="Quá deadline" value={stats?.overdue} color="var(--danger)"
             onClick={() => setJobListFilter('overdue')} />
           <StatCard label="Sắp hạn (48h)" value={stats?.warn_soon} color="var(--warning)"
