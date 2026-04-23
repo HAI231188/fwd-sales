@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import Navbar from '../components/Navbar';
 import JobDetailModal from '../components/JobDetailModal';
 import CreateJobModal from '../components/CreateJobModal';
+import JobListModal from '../components/JobListModal';
 import { getJobStats, getJobs, updateJobTruck, completeJobTruck, requestJobDelete, createJob } from '../api';
 
 function fmtDate(val) {
@@ -40,9 +41,10 @@ function deadlineStyle(dl) {
   return {};
 }
 
-function StatCard({ label, value, color }) {
+function StatCard({ label, value, color, onClick }) {
   return (
-    <div className="card" style={{ textAlign: 'center', padding: '16px 12px' }}>
+    <div className="card" onClick={onClick}
+      style={{ textAlign: 'center', padding: '16px 12px', cursor: onClick ? 'pointer' : 'default' }}>
       <div style={{ fontSize: 28, fontWeight: 700, color: color || 'var(--text)', fontFamily: 'var(--font-display)' }}>
         {value ?? '—'}
       </div>
@@ -79,6 +81,7 @@ export default function LogDashboardDieuDo() {
   const [tab, setTab] = useState('pending');
   const [detailJobId, setDetailJobId] = useState(null);
   const [showCreate, setShowCreate] = useState(false);
+  const [jobListFilter, setJobListFilter] = useState(null);
 
   const { data: stats } = useQuery({ queryKey: ['jobStats'], queryFn: getJobStats, refetchInterval: 30000 });
   const { data: jobs = [], isLoading } = useQuery({
@@ -125,11 +128,11 @@ export default function LogDashboardDieuDo() {
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12, marginBottom: 24 }}>
-          <StatCard label="Tổng job truck đang xử lý" value={stats?.total_active} color="var(--info)" />
-          <StatCard label="Đã đặt xe" value={stats?.da_dat_xe} color="var(--primary)" />
-          <StatCard label="Chưa đặt xe" value={stats?.chua_dat_xe} color="var(--warning)" />
-          <StatCard label="Cảnh báo quá hạn" value={stats?.warn_overdue} color="var(--danger)" />
-          <StatCard label="Chưa hoàn thành" value={stats?.chua_hoan_thanh} color="var(--text-2)" />
+          <StatCard label="Tổng job truck đang xử lý" value={stats?.total_active} color="var(--info)" onClick={() => setJobListFilter('truck_total')} />
+          <StatCard label="Đã đặt xe" value={stats?.da_dat_xe} color="var(--primary)" onClick={() => setJobListFilter('truck_booked')} />
+          <StatCard label="Chưa đặt xe" value={stats?.chua_dat_xe} color="var(--warning)" onClick={() => setJobListFilter('truck_not_booked')} />
+          <StatCard label="Cảnh báo quá hạn" value={stats?.warn_overdue} color="var(--danger)" onClick={() => setJobListFilter('truck_warning')} />
+          <StatCard label="Chưa hoàn thành" value={stats?.chua_hoan_thanh} color="var(--text-2)" onClick={() => setJobListFilter('truck_pending')} />
         </div>
 
         <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
@@ -252,6 +255,7 @@ export default function LogDashboardDieuDo() {
 
       {detailJobId && <JobDetailModal jobId={detailJobId} onClose={() => setDetailJobId(null)} />}
       {showCreate && <CreateJobModal onClose={() => setShowCreate(false)} onCreated={data => createMut.mutateAsync(data)} />}
+      {jobListFilter && <JobListModal filterType={jobListFilter} onClose={() => setJobListFilter(null)} />}
     </div>
   );
 }

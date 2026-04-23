@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import Navbar from '../components/Navbar';
 import JobDetailModal from '../components/JobDetailModal';
+import JobListModal from '../components/JobListModal';
 import { getJobStats, getJobs, completeOpsTask, completeJob, requestJobDelete } from '../api';
 
 const TK_STATUS_LABEL = {
@@ -46,9 +47,10 @@ function deadlineStyle(dl) {
   return {};
 }
 
-function StatCard({ label, value, color }) {
+function StatCard({ label, value, color, onClick }) {
   return (
-    <div className="card" style={{ textAlign: 'center', padding: '16px 12px' }}>
+    <div className="card" onClick={onClick}
+      style={{ textAlign: 'center', padding: '16px 12px', cursor: onClick ? 'pointer' : 'default' }}>
       <div style={{ fontSize: 28, fontWeight: 700, color: color || 'var(--text)', fontFamily: 'var(--font-display)' }}>
         {value ?? '—'}
       </div>
@@ -70,6 +72,7 @@ export default function LogDashboardOps() {
   const qc = useQueryClient();
   const [tab, setTab] = useState('follow_tq');
   const [detailJobId, setDetailJobId] = useState(null);
+  const [jobListFilter, setJobListFilter] = useState(null);
 
   const { data: stats } = useQuery({ queryKey: ['jobStats'], queryFn: getJobStats, refetchInterval: 30000 });
   const { data: pendingJobs = [], isLoading } = useQuery({
@@ -119,11 +122,11 @@ export default function LogDashboardOps() {
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12, marginBottom: 24 }}>
-          <StatCard label="Tổng job đang quản lý" value={stats?.total_managing} color="var(--info)" />
-          <StatCard label="Chờ xử lý đổi lệnh" value={stats?.cho_doi_lenh} color="var(--warning)" />
-          <StatCard label="Chờ thông quan" value={stats?.cho_thong_quan} color="var(--purple)" />
-          <StatCard label="Sắp hạn (24h)" value={stats?.sap_han} color="var(--warning)" />
-          <StatCard label="Quá hạn" value={stats?.qua_han} color="var(--danger)" />
+          <StatCard label="Tổng job đang quản lý" value={stats?.total_managing} color="var(--info)" onClick={() => setJobListFilter('ops_total')} />
+          <StatCard label="Chờ xử lý đổi lệnh" value={stats?.cho_doi_lenh} color="var(--warning)" onClick={() => setJobListFilter('ops_waiting_doilenh')} />
+          <StatCard label="Chờ thông quan" value={stats?.cho_thong_quan} color="var(--purple)" onClick={() => setJobListFilter('ops_waiting_tq_doilenh')} />
+          <StatCard label="Sắp hạn (24h)" value={stats?.sap_han} color="var(--warning)" onClick={() => setJobListFilter('ops_near_deadline')} />
+          <StatCard label="Quá hạn" value={stats?.qua_han} color="var(--danger)" onClick={() => setJobListFilter('ops_overdue')} />
         </div>
 
         <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
@@ -279,6 +282,7 @@ export default function LogDashboardOps() {
       </div>
 
       {detailJobId && <JobDetailModal jobId={detailJobId} onClose={() => setDetailJobId(null)} />}
+      {jobListFilter && <JobListModal filterType={jobListFilter} onClose={() => setJobListFilter(null)} />}
     </div>
   );
 }

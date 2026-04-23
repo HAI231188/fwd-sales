@@ -339,21 +339,68 @@ router.get('/waiting-assignments', requireAuth, async (req, res) => {
   }
 });
 
-// GET /api/jobs/filtered?type=pending|warning|missing|overdue  (truong_phong_log only)
+// GET /api/jobs/filtered?type=...  — all LOG roles
 router.get('/filtered', requireAuth, async (req, res) => {
-  if (req.user.role !== 'truong_phong_log') return res.status(403).json({ error: 'Không có quyền' });
+  const { role, id: userId } = req.user;
   const { type } = req.query;
+
+  const params = [];
+  let idx = 1;
+  let baseWhere = '';
   let extraWhere = '';
-  if (type === 'warning') extraWhere = `AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '48 hours'`;
-  else if (type === 'missing') extraWhere = `AND (j.pol IS NULL OR j.pod IS NULL OR j.cont_number IS NULL OR j.han_lenh IS NULL)`;
-  else if (type === 'overdue') extraWhere = `AND j.deadline < NOW()`;
+
+  if (role === 'truong_phong_log') {
+    // no base restriction
+  } else if (CUS_ROLES.includes(role)) {
+    baseWhere = `AND ja.cus_id = $${idx++}`;
+    params.push(userId);
+  } else if (role === 'dieu_do') {
+    baseWhere = `AND j.service_type IN ('truck','both')`;
+  } else if (role === 'ops') {
+    baseWhere = `AND ja.ops_id = $${idx++}`;
+    params.push(userId);
+  } else {
+    return res.status(403).json({ error: 'Không có quyền' });
+  }
+
+  switch (type) {
+    // TP filters
+    case 'warning':   extraWhere = `AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '48 hours'`; break;
+    case 'missing':   extraWhere = `AND (j.pol IS NULL OR j.pod IS NULL OR j.cont_number IS NULL OR j.han_lenh IS NULL)`; break;
+    case 'overdue':   extraWhere = `AND j.deadline < NOW()`; break;
+    // CUS filters
+    case 'cus_waiting_confirm': extraWhere = `AND ja.cus_confirm_status = 'pending'`; break;
+    case 'cus_near_deadline':   extraWhere = `AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '24 hours'`; break;
+    case 'cus_overdue':         extraWhere = `AND j.deadline < NOW()`; break;
+    // DieuDo filters
+    case 'truck_total':
+    case 'truck_pending':    extraWhere = `AND jtr.completed_at IS NULL`; break;
+    case 'truck_booked':     extraWhere = `AND jtr.transport_name IS NOT NULL AND jtr.vehicle_number IS NOT NULL`; break;
+    case 'truck_not_booked': extraWhere = `AND jtr.planned_datetime IS NOT NULL AND (jtr.transport_name IS NULL OR jtr.transport_name = '')`; break;
+    case 'truck_warning':    extraWhere = `AND jtr.completed_at IS NULL AND jtr.planned_datetime <= NOW() + INTERVAL '24 hours'`; break;
+    // OPS filters
+    case 'ops_waiting_tq_doilenh': extraWhere = `AND jt.tk_status = 'dang_lam'`; break;
+    case 'ops_waiting_doilenh':
+      extraWhere = `AND EXISTS (SELECT 1 FROM job_ops_task jot WHERE jot.job_id = j.id AND jot.ops_id = $1 AND jot.completed = FALSE)`;
+      break;
+    case 'ops_near_deadline': extraWhere = `AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '24 hours'`; break;
+    case 'ops_overdue':       extraWhere = `AND j.deadline < NOW()`; break;
+    // default: no extra filter (pending, cus_active, ops_total, etc.)
+  }
+
   try {
     const { rows } = await db.query(`
       SELECT j.id, j.job_code, j.created_at, j.customer_name, j.deadline, j.han_lenh,
-             j.pol, j.pod, j.cont_number, j.service_type,
+             j.pol, j.pod, j.cont_number, j.service_type, j.si_number,
              ja.cus_id, cus.name AS cus_name,
              ja.ops_id, ops.name AS ops_name,
-             jt.tk_status,
+             ja.cus_confirm_status,
+             jt.tk_status, jt.tk_flow, jt.tq_datetime, jt.tk_number, jt.tk_datetime, jt.notes AS tk_notes,
+             jtr.transport_name, jtr.vehicle_number, jtr.planned_datetime,
+             jtr.delivery_location AS truck_delivery_location, jtr.cost,
+             jtr.completed_at AS truck_completed_at,
+             (SELECT string_agg(jot.content, '; ' ORDER BY jot.id)
+              FROM job_ops_task jot WHERE jot.job_id = j.id AND jot.completed = FALSE) AS ops_tasks_pending,
              TRIM(
                CASE WHEN j.pol IS NULL THEN 'POL ' ELSE '' END ||
                CASE WHEN j.pod IS NULL THEN 'POD ' ELSE '' END ||
@@ -365,9 +412,10 @@ router.get('/filtered', requireAuth, async (req, res) => {
       LEFT JOIN users cus ON cus.id = ja.cus_id
       LEFT JOIN users ops ON ops.id = ja.ops_id
       LEFT JOIN job_tk jt ON jt.job_id = j.id
-      WHERE j.status = 'pending' AND j.deleted_at IS NULL ${extraWhere}
+      LEFT JOIN job_truck jtr ON jtr.job_id = j.id
+      WHERE j.status = 'pending' AND j.deleted_at IS NULL ${baseWhere} ${extraWhere}
       ORDER BY j.deadline ASC NULLS LAST, j.created_at DESC
-    `);
+    `, params);
     res.json(rows);
   } catch (err) {
     res.status(500).json({ error: err.message });

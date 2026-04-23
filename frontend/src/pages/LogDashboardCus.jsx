@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import Navbar from '../components/Navbar';
 import JobDetailModal from '../components/JobDetailModal';
 import CreateJobModal from '../components/CreateJobModal';
+import JobListModal from '../components/JobListModal';
 import {
   getJobStats, getJobs, updateJobTk, updateJob, confirmJob, requestDeadline, completeJob,
   requestJobDelete, createJob,
@@ -47,9 +48,10 @@ function parseJson(val) {
   try { return JSON.parse(val); } catch { return {}; }
 }
 
-function StatCard({ label, value, color }) {
+function StatCard({ label, value, color, onClick }) {
   return (
-    <div className="card" style={{ textAlign: 'center', padding: '16px 12px' }}>
+    <div className="card" onClick={onClick}
+      style={{ textAlign: 'center', padding: '16px 12px', cursor: onClick ? 'pointer' : 'default' }}>
       <div style={{ fontSize: 28, fontWeight: 700, color: color || 'var(--text)', fontFamily: 'var(--font-display)' }}>{value ?? '—'}</div>
       <div style={{ fontSize: 12, color: 'var(--text-2)', marginTop: 4 }}>{label}</div>
     </div>
@@ -231,6 +233,7 @@ export default function LogDashboardCus() {
   const [detailJobId, setDetailJobId] = useState(null);
   const [deadlineReqJob, setDeadlineReqJob] = useState(null);
   const [showCreate, setShowCreate] = useState(false);
+  const [jobListFilter, setJobListFilter] = useState(null);
 
   const { data: stats } = useQuery({ queryKey: ['jobStats'], queryFn: getJobStats, refetchInterval: 30000 });
   const { data: jobs = [], isLoading } = useQuery({
@@ -292,10 +295,10 @@ export default function LogDashboardCus() {
 
         {/* Stat cards */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 24 }}>
-          <StatCard label="Tổng job đang làm" value={stats?.total_active} color="var(--info)" />
-          <StatCard label="Chờ xác nhận" value={stats?.cho_xac_nhan} color="var(--warning)" />
-          <StatCard label="Sắp hạn (24h)" value={stats?.sap_han} color="var(--warning)" />
-          <StatCard label="Quá hạn" value={stats?.qua_han} color="var(--danger)" />
+          <StatCard label="Tổng job đang làm" value={stats?.total_active} color="var(--info)" onClick={() => setJobListFilter('cus_active')} />
+          <StatCard label="Chờ xác nhận" value={stats?.cho_xac_nhan} color="var(--warning)" onClick={() => setJobListFilter('cus_waiting_confirm')} />
+          <StatCard label="Sắp hạn (24h)" value={stats?.sap_han} color="var(--warning)" onClick={() => setJobListFilter('cus_near_deadline')} />
+          <StatCard label="Quá hạn" value={stats?.qua_han} color="var(--danger)" onClick={() => setJobListFilter('cus_overdue')} />
         </div>
 
         {/* Job grid */}
@@ -462,6 +465,7 @@ export default function LogDashboardCus() {
 
       {detailJobId && <JobDetailModal jobId={detailJobId} onClose={() => setDetailJobId(null)} />}
       {showCreate && <CreateJobModal onClose={() => setShowCreate(false)} onCreated={data => createMut.mutateAsync(data)} />}
+      {jobListFilter && <JobListModal filterType={jobListFilter} onClose={() => setJobListFilter(null)} />}
       {deadlineReqJob && (
         <DeadlineRequestModal
           job={deadlineReqJob}
