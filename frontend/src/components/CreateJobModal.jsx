@@ -12,7 +12,7 @@ const INIT_FORM = {
   job_code: '', si_number: '', customer_name: '', customer_address: '', customer_tax_code: '',
   sales_id: '', pol: '', pod: '', mbl_no: '', hbl_no: '',
   etd: '', eta: '', tons: '', cbm: '', kg: '', so_kien: '', deadline: '', han_lenh: '',
-  service_type: 'tk', other_services: {},
+  service_type: 'tk', other_services: {}, destination: '',
 };
 
 export default function CreateJobModal({ onClose, onCreated }) {
@@ -125,7 +125,7 @@ export default function CreateJobModal({ onClose, onCreated }) {
         <div className="modal-body">
 
           {/* Service + Cargo type */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 12 }}>
             <div className="form-group">
               <label className="form-label">Mã Job</label>
               <input className="form-input" value={form.job_code} onChange={e => set('job_code', e.target.value)} placeholder="VD: SLB-2024-001" />
@@ -141,6 +141,17 @@ export default function CreateJobModal({ onClose, onCreated }) {
                 <option value="truck">Vận chuyển (Truck)</option>
                 <option value="both">TK + Vận chuyển</option>
               </select>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Điểm đến</label>
+              <select className="form-select" value={form.destination || ''} onChange={e => set('destination', e.target.value || null)}>
+                <option value="">— Chọn —</option>
+                <option value="hai_phong">Hải Phòng</option>
+                <option value="other">Khác</option>
+              </select>
+              {(form.service_type === 'truck' || form.service_type === 'both') && !form.destination && (
+                <div style={{ fontSize: 11, color: 'var(--warning)', marginTop: 4 }}>⚠ Vận chuyển cần chọn điểm đến</div>
+              )}
             </div>
           </div>
 

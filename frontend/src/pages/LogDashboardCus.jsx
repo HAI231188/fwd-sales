@@ -4,7 +4,7 @@ import Navbar from '../components/Navbar';
 import JobDetailModal from '../components/JobDetailModal';
 import CreateJobModal from '../components/CreateJobModal';
 import {
-  getJobStats, getJobs, updateJobTk, confirmJob, requestDeadline, completeJob,
+  getJobStats, getJobs, updateJobTk, updateJob, confirmJob, requestDeadline, completeJob,
   requestJobDelete, createJob,
 } from '../api';
 
@@ -102,6 +102,60 @@ function InlineSelect({ value, options, onSave }) {
   );
 }
 
+const OPS_PARTNER_OPTIONS = ['OPS 1', 'OPS 2', 'TTN', 'CDK', 'CTX'];
+
+function tkFlowRowBg(j) {
+  if (j.tk_flow === 'xanh') return 'rgba(34,197,94,0.06)';
+  if (j.tk_flow === 'vang') return 'rgba(217,119,6,0.06)';
+  if (j.tk_flow === 'do') return 'rgba(239,68,68,0.06)';
+  if (j.tk_status === 'chua_truyen') return 'rgba(239,68,68,0.04)';
+  return '';
+}
+
+function OpsPartnerCell({ job, onSave }) {
+  const [mode, setMode] = useState('view');
+  const [custom, setCustom] = useState('');
+  const inputRef = useRef();
+
+  if (job.ops_id) {
+    return <span style={{ fontSize: 12 }}>{job.ops_name || '—'}</span>;
+  }
+  if (mode === 'input') {
+    return (
+      <input ref={inputRef} autoFocus value={custom}
+        onChange={e => setCustom(e.target.value)}
+        onBlur={() => { onSave(custom || null); setMode('view'); }}
+        onKeyDown={e => {
+          if (e.key === 'Enter') { onSave(custom || null); setMode('view'); }
+          if (e.key === 'Escape') setMode('view');
+        }}
+        style={{ width: 80, padding: '2px 6px', border: '1px solid var(--primary)', borderRadius: 4, fontSize: 12 }} />
+    );
+  }
+  if (mode === 'select') {
+    return (
+      <select autoFocus value=""
+        onChange={e => {
+          if (e.target.value === '__custom__') { setCustom(job.ops_partner || ''); setMode('input'); }
+          else { onSave(e.target.value || null); setMode('view'); }
+        }}
+        onBlur={() => setMode('view')}
+        style={{ padding: '2px 4px', border: '1px solid var(--primary)', borderRadius: 4, fontSize: 12 }}>
+        <option value="">— Bỏ chọn —</option>
+        {OPS_PARTNER_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+        <option value="__custom__">Tự điền...</option>
+      </select>
+    );
+  }
+  return (
+    <span onClick={() => setMode('select')} title="Click để chọn"
+      style={{ cursor: 'pointer', borderBottom: '1px dashed var(--border)', fontSize: 12,
+        color: job.ops_partner ? 'var(--text)' : 'var(--text-3)', display: 'inline-block', minWidth: 30 }}>
+      {job.ops_partner || '—'}
+    </span>
+  );
+}
+
 function DeadlineRequestModal({ job, onClose, onSubmit }) {
   const [proposed, setProposed] = useState('');
   const [reason, setReason] = useState('');
@@ -173,6 +227,10 @@ export default function LogDashboardCus() {
     mutationFn: data => createJob(data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['jobs', 'jobStats'] }),
   });
+  const opsMut = useMutation({
+    mutationFn: ({ id, data }) => updateJob(id, data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['jobs'] }),
+  });
 
   function canComplete(j) {
     const terminal = ['thong_quan', 'giai_phong', 'bao_quan'];
@@ -182,7 +240,7 @@ export default function LogDashboardCus() {
   }
 
   const HEADERS = [
-    'STT','Ngày','Job','Mã SI','Khách hàng','ETD / ETA','Deadline',
+    'STT','Ngày','Job','Mã SI','Khách hàng','Tên OPS','ETD / ETA','Deadline',
     'Ngày giờ TK','Số TK','Luồng TK','Trạng thái TK','Ngày giờ TQ',
     'Dịch vụ khác','Ngày giao hàng','Địa điểm giao','Đặt xe','HT','Ghi chú','',
   ];
@@ -234,10 +292,9 @@ export default function LogDashboardCus() {
                     const os = parseJson(j.other_services);
                     const isTk = j.service_type === 'tk' || j.service_type === 'both';
                     const isConfirmPending = j.cus_confirm_status === 'pending';
-                    const rowBg = j.deadline && new Date(j.deadline) < Date.now()
-                      ? 'rgba(239,68,68,0.04)'
-                      : j.deadline && (new Date(j.deadline) - Date.now()) < 24*3600*1000
-                      ? 'rgba(217,119,6,0.04)' : '';
+                    const rowBg = tkFlowRowBg(j) ||
+                      (j.deadline && new Date(j.deadline) < Date.now() ? 'rgba(239,68,68,0.04)' :
+                      j.deadline && (new Date(j.deadline) - Date.now()) < 24*3600*1000 ? 'rgba(217,119,6,0.04)' : '');
 
                     return (
                       <tr key={j.id} style={{ borderBottom: '1px solid var(--border)', background: rowBg }}
@@ -249,6 +306,9 @@ export default function LogDashboardCus() {
                         </td>
                         <td style={{ padding: '8px 8px', whiteSpace: 'nowrap', fontSize: 12, color: 'var(--text-2)' }}>{j.si_number || '—'}</td>
                         <td style={{ padding: '8px 8px', maxWidth: 140 }}>{j.customer_name}</td>
+                        <td style={{ padding: '8px 6px', minWidth: 80 }}>
+                          <OpsPartnerCell job={j} onSave={v => opsMut.mutate({ id: j.id, data: { ops_partner: v } })} />
+                        </td>
                         <td style={{ padding: '8px 8px', whiteSpace: 'nowrap', color: 'var(--text-2)', fontSize: 12 }}>
                           {fmtDate(j.etd)}<br />{fmtDate(j.eta)}
                         </td>

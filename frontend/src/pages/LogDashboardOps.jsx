@@ -105,6 +105,10 @@ export default function LogDashboardOps() {
   const displayJobs = tab === 'hoan_thanh' ? completedJobs : pendingJobs;
 
   function rowBg(j) {
+    if (j.tk_flow === 'xanh') return 'rgba(34,197,94,0.06)';
+    if (j.tk_flow === 'vang') return 'rgba(217,119,6,0.06)';
+    if (j.tk_flow === 'do') return 'rgba(239,68,68,0.06)';
+    if (j.tk_status === 'chua_truyen') return 'rgba(239,68,68,0.04)';
     if (!j.deadline) return '';
     const ms = new Date(j.deadline) - Date.now();
     if (ms < 0) return 'rgba(239,68,68,0.04)';

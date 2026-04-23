@@ -499,8 +499,12 @@ export default function LogDashboardTP() {
                   )}
                   {filteredJobs.map((j, i) => {
                     const waitingAssign = (j.service_type === 'tk' || j.service_type === 'both') && !j.cus_id;
-                    const rowBg = waitingAssign ? 'rgba(217,119,6,0.04)'
-                      : j.deadline && new Date(j.deadline) < Date.now() ? 'rgba(239,68,68,0.04)' : '';
+                    const tkBg = j.tk_flow === 'xanh' ? 'rgba(34,197,94,0.06)' :
+                                 j.tk_flow === 'vang' ? 'rgba(217,119,6,0.06)' :
+                                 j.tk_flow === 'do'   ? 'rgba(239,68,68,0.06)' :
+                                 j.tk_status === 'chua_truyen' ? 'rgba(239,68,68,0.04)' : '';
+                    const rowBg = tkBg || (waitingAssign ? 'rgba(217,119,6,0.04)'
+                      : j.deadline && new Date(j.deadline) < Date.now() ? 'rgba(239,68,68,0.04)' : '');
                     const cs = { padding: '8px 8px' };
 
                     const cell = (key) => {

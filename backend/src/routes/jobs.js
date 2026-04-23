@@ -642,7 +642,8 @@ router.put('/:id', requireAuth, async (req, res) => {
   const FIELDS = ['job_code','customer_name','customer_address','customer_tax_code',
     'pol','pod','cont_number','cont_type','seal_number',
     'etd','eta','tons','cbm','deadline','service_type','other_services','status',
-    'cargo_type','so_kien','kg','destination','han_lenh','si_number','mbl_no','hbl_no'];
+    'cargo_type','so_kien','kg','destination','han_lenh','si_number','mbl_no','hbl_no',
+  'ops_partner'];
 
   const client = await db.pool.connect();
   try {

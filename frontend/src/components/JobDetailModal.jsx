@@ -1,6 +1,15 @@
-import { useQuery } from '@tanstack/react-query';
-import { getJob } from '../api';
+import { useState, useRef } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { getJob, updateJobTk, updateJobTruck } from '../api';
+import { useAuth } from '../App';
 
+const TK_STATUS_OPTIONS = [
+  { value: 'chua_truyen', label: 'Chưa truyền' },
+  { value: 'dang_lam',    label: 'Đang làm' },
+  { value: 'thong_quan',  label: 'Thông quan' },
+  { value: 'giai_phong',  label: 'Giải phóng' },
+  { value: 'bao_quan',    label: 'Bảo quan' },
+];
 const TK_STATUS_LABEL = {
   chua_truyen: 'Chưa truyền', dang_lam: 'Đang làm',
   thong_quan: 'Thông quan', giai_phong: 'Giải phóng', bao_quan: 'Bảo quan',
@@ -13,14 +22,11 @@ const SVC_LABEL = { tk: 'Tờ khai', truck: 'Vận chuyển', both: 'TK + Vận 
 const OTHER_SVC_KEYS = ['ktcl', 'kiem_dich', 'hun_trung', 'co', 'khac'];
 const OTHER_SVC_LABEL = { ktcl: 'KTCL', kiem_dich: 'Kiểm dịch', hun_trung: 'Hun trùng', co: 'CO', khac: 'Khác' };
 const CUS_CONFIRM_LABEL = {
-  pending: 'Chờ xác nhận',
-  confirmed: 'Đã xác nhận',
+  pending: 'Chờ xác nhận', confirmed: 'Đã xác nhận',
   adjustment_requested: 'Yêu cầu điều chỉnh deadline',
 };
 const CUS_CONFIRM_COLOR = {
-  pending: 'var(--text-2)',
-  confirmed: 'var(--primary)',
-  adjustment_requested: 'var(--warning)',
+  pending: 'var(--text-2)', confirmed: 'var(--primary)', adjustment_requested: 'var(--warning)',
 };
 
 function fmtDt(val) {
@@ -42,12 +48,31 @@ function fmtDest(d) {
   if (d === 'hai_phong') return 'Hải Phòng';
   return d || '—';
 }
+function toDatetimeLocal(val) {
+  if (!val) return '';
+  const d = new Date(val);
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+function parseJson(val) {
+  if (!val) return {};
+  if (typeof val === 'object') return val;
+  try { return JSON.parse(val); } catch { return {}; }
+}
+function tkFlowAccent(tk) {
+  if (!tk) return undefined;
+  if (tk.tk_flow === 'xanh') return 'rgba(34,197,94,0.06)';
+  if (tk.tk_flow === 'vang') return 'rgba(217,119,6,0.06)';
+  if (tk.tk_flow === 'do') return 'rgba(239,68,68,0.06)';
+  if (tk.tk_status === 'chua_truyen') return 'rgba(239,68,68,0.04)';
+  return undefined;
+}
 
-function Section({ title, children }) {
+function Section({ title, children, accent }) {
   return (
     <div style={{ marginBottom: 20 }}>
       <div className="section-title" style={{ marginBottom: 8 }}>{title}</div>
-      <div style={{ background: 'var(--bg)', borderRadius: 8, padding: '4px 0' }}>{children}</div>
+      <div style={{ background: accent || 'var(--bg)', borderRadius: 8, padding: '4px 0' }}>{children}</div>
     </div>
   );
 }
@@ -62,6 +87,59 @@ function Row({ label, value, color }) {
   );
 }
 
+function ERow({ label, children }) {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '5px 10px', fontSize: 13 }}>
+      <span style={{ color: 'var(--text-2)', flexShrink: 0, marginRight: 8, fontSize: 12 }}>{label}</span>
+      <span style={{ textAlign: 'right', flex: 1 }}>{children}</span>
+    </div>
+  );
+}
+
+function InlineInput({ value, onSave, type = 'text' }) {
+  const [editing, setEditing] = useState(false);
+  const [val, setVal] = useState(value || '');
+  const ref = useRef();
+
+  function start() { setVal(value || ''); setEditing(true); setTimeout(() => ref.current?.focus(), 0); }
+  function save() { setEditing(false); if (val !== (value || '')) onSave(val || null); }
+
+  if (!editing) return (
+    <span onClick={start} title="Click để sửa"
+      style={{ cursor: 'pointer', borderBottom: '1px dashed var(--border)', minWidth: 40, display: 'inline-block', fontSize: 13 }}>
+      {value || <span style={{ color: 'var(--text-3)' }}>—</span>}
+    </span>
+  );
+  return (
+    <input ref={ref} type={type} value={val}
+      onChange={e => setVal(e.target.value)}
+      onBlur={save}
+      onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') setEditing(false); }}
+      style={{ width: '100%', maxWidth: 200, padding: '2px 6px', border: '1px solid var(--primary)', borderRadius: 4, fontSize: 13 }} />
+  );
+}
+
+function InlineSelect({ value, options, onSave }) {
+  const [editing, setEditing] = useState(false);
+  const ref = useRef();
+
+  if (!editing) return (
+    <span onClick={() => { setEditing(true); setTimeout(() => ref.current?.focus(), 0); }}
+      style={{ cursor: 'pointer', color: TK_STATUS_COLOR[value] || 'var(--text)', fontWeight: 500,
+        borderBottom: '1px dashed var(--border)', fontSize: 13 }}>
+      {options.find(o => o.value === value)?.label || '—'}
+    </span>
+  );
+  return (
+    <select ref={ref} value={value || ''} autoFocus
+      onChange={e => { onSave(e.target.value); setEditing(false); }}
+      onBlur={() => setEditing(false)}
+      style={{ padding: '2px 4px', border: '1px solid var(--primary)', borderRadius: 4, fontSize: 13 }}>
+      {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+    </select>
+  );
+}
+
 function SvcChips({ services, label }) {
   const active = OTHER_SVC_KEYS.filter(k => services?.[k]);
   if (!active.length) return null;
@@ -71,23 +149,6 @@ function SvcChips({ services, label }) {
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, justifyContent: 'flex-end' }}>
         {active.map(k => (
           <span key={k} style={{ padding: '2px 8px', borderRadius: 12, fontSize: 11, fontWeight: 600, background: 'var(--info-dim)', color: 'var(--info)' }}>
-            {OTHER_SVC_LABEL[k]}
-          </span>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function SvcCompletedChips({ services }) {
-  const done = OTHER_SVC_KEYS.filter(k => services?.[k]);
-  if (!done.length) return null;
-  return (
-    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', padding: '5px 10px', fontSize: 13 }}>
-      <span style={{ color: 'var(--text-2)', flexShrink: 0, marginRight: 8 }}>Dịch vụ hoàn thành</span>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, justifyContent: 'flex-end' }}>
-        {done.map(k => (
-          <span key={k} style={{ padding: '2px 8px', borderRadius: 12, fontSize: 11, fontWeight: 600, background: 'var(--primary-dim)', color: 'var(--primary)' }}>
             {OTHER_SVC_LABEL[k]}
           </span>
         ))}
@@ -113,10 +174,26 @@ function HistoryRow({ row }) {
 }
 
 export default function JobDetailModal({ jobId, onClose }) {
+  const { user } = useAuth();
+  const qc = useQueryClient();
+
+  const canEditTk = ['cus','cus1','cus2','cus3'].includes(user?.role);
+  const canEditStatus = user?.role === 'ops';
+  const canEditTruck = user?.role === 'dieu_do';
+
   const { data: job, isLoading } = useQuery({
     queryKey: ['job', jobId],
     queryFn: () => getJob(jobId),
     enabled: !!jobId,
+  });
+
+  const tkMut = useMutation({
+    mutationFn: data => updateJobTk(jobId, data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['job', jobId] }),
+  });
+  const truckMut = useMutation({
+    mutationFn: data => updateJobTruck(jobId, data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['job', jobId] }),
   });
 
   if (!jobId) return null;
@@ -223,39 +300,149 @@ export default function JobDetailModal({ jobId, onClose }) {
                     <Row label="Lý do điều chỉnh" value={job.adjustment_reason} />
                   )}
                   <Row label="Nhân viên OPS" value={job.ops_name || '—'} />
+                  <Row label="Đối tác OPS" value={job.ops_partner || '—'} />
                 </Section>
 
-                {job.tk && (
-                  <Section title="Tờ khai">
-                    <Row label="CUS xử lý" value={job.tk.cus_name || '—'} />
-                    <Row label="Ngày TK" value={fmtDt(job.tk.tk_datetime)} />
-                    <Row label="Số TK" value={job.tk.tk_number || '—'} />
-                    <Row label="Luồng" value={job.tk.tk_flow || '—'} />
-                    <Row label="Trạng thái" value={TK_STATUS_LABEL[job.tk.tk_status] || '—'}
-                         color={TK_STATUS_COLOR[job.tk.tk_status]} />
-                    <Row label="Ngày TQ" value={fmtDt(job.tk.tq_datetime)} />
-                    <Row label="Ngày giao" value={fmtDt(job.tk.delivery_datetime)} />
-                    <Row label="Địa điểm giao" value={job.tk.delivery_location || '—'} />
-                    <Row label="Đã đặt xe" value={job.tk.truck_booked ? 'Có' : 'Không'} />
-                    <SvcCompletedChips services={job.tk.services_completed} />
-                    <Row label="Ghi chú TK" value={job.tk.notes || '—'} />
-                    <Row label="Hoàn thành lúc" value={fmtDt(job.tk.completed_at)} color="var(--primary)" />
-                  </Section>
-                )}
+                {job.tk && (() => {
+                  const tk = job.tk;
+                  const svc = parseJson(tk.services_completed);
+                  const otherSvc = parseJson(job.other_services);
+                  const activeSvcKeys = OTHER_SVC_KEYS.filter(k => otherSvc[k]);
+                  return (
+                    <Section title="Tờ khai" accent={tkFlowAccent(tk)}>
+                      <Row label="CUS xử lý" value={tk.cus_name || '—'} />
+                      {canEditTk ? (
+                        <>
+                          <ERow label="Ngày TK">
+                            <InlineInput type="datetime-local" value={toDatetimeLocal(tk.tk_datetime)}
+                              onSave={v => tkMut.mutate({ tk_datetime: v })} />
+                          </ERow>
+                          <ERow label="Số TK">
+                            <InlineInput value={tk.tk_number} onSave={v => tkMut.mutate({ tk_number: v })} />
+                          </ERow>
+                          <ERow label="Luồng">
+                            <InlineInput value={tk.tk_flow} onSave={v => tkMut.mutate({ tk_flow: v })} />
+                          </ERow>
+                          <ERow label="Trạng thái">
+                            <InlineSelect value={tk.tk_status} options={TK_STATUS_OPTIONS}
+                              onSave={v => tkMut.mutate({ tk_status: v })} />
+                          </ERow>
+                          <ERow label="Ngày TQ">
+                            <InlineInput type="datetime-local" value={toDatetimeLocal(tk.tq_datetime)}
+                              onSave={v => tkMut.mutate({ tq_datetime: v })} />
+                          </ERow>
+                          <ERow label="Ngày giao">
+                            <InlineInput type="datetime-local" value={toDatetimeLocal(tk.delivery_datetime)}
+                              onSave={v => tkMut.mutate({ delivery_datetime: v })} />
+                          </ERow>
+                          <ERow label="Địa điểm giao">
+                            <InlineInput value={tk.delivery_location} onSave={v => tkMut.mutate({ delivery_location: v })} />
+                          </ERow>
+                          <ERow label="Đặt xe">
+                            <input type="checkbox" checked={!!tk.truck_booked}
+                              onChange={e => tkMut.mutate({ truck_booked: e.target.checked })} />
+                          </ERow>
+                          {activeSvcKeys.length > 0 && (
+                            <ERow label="Dịch vụ HT">
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, justifyContent: 'flex-end' }}>
+                                {activeSvcKeys.map(k => (
+                                  <label key={k} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, cursor: 'pointer' }}>
+                                    <input type="checkbox" checked={!!svc[k]}
+                                      onChange={e => tkMut.mutate({ services_completed: { ...svc, [k]: e.target.checked } })} />
+                                    {OTHER_SVC_LABEL[k]}
+                                  </label>
+                                ))}
+                              </div>
+                            </ERow>
+                          )}
+                          <ERow label="Ghi chú TK">
+                            <InlineInput value={tk.notes} onSave={v => tkMut.mutate({ notes: v })} />
+                          </ERow>
+                        </>
+                      ) : canEditStatus ? (
+                        <>
+                          <Row label="Ngày TK" value={fmtDt(tk.tk_datetime)} />
+                          <Row label="Số TK" value={tk.tk_number || '—'} />
+                          <Row label="Luồng" value={tk.tk_flow || '—'} />
+                          <ERow label="Trạng thái">
+                            <InlineSelect value={tk.tk_status} options={TK_STATUS_OPTIONS}
+                              onSave={v => tkMut.mutate({ tk_status: v })} />
+                          </ERow>
+                          <Row label="Ngày TQ" value={fmtDt(tk.tq_datetime)} />
+                          <Row label="Ngày giao" value={fmtDt(tk.delivery_datetime)} />
+                          <Row label="Địa điểm giao" value={tk.delivery_location || '—'} />
+                          <Row label="Đặt xe" value={tk.truck_booked ? 'Có' : 'Không'} />
+                          <Row label="Ghi chú TK" value={tk.notes || '—'} />
+                        </>
+                      ) : (
+                        <>
+                          <Row label="Ngày TK" value={fmtDt(tk.tk_datetime)} />
+                          <Row label="Số TK" value={tk.tk_number || '—'} />
+                          <Row label="Luồng" value={tk.tk_flow || '—'} />
+                          <Row label="Trạng thái" value={TK_STATUS_LABEL[tk.tk_status] || '—'}
+                               color={TK_STATUS_COLOR[tk.tk_status]} />
+                          <Row label="Ngày TQ" value={fmtDt(tk.tq_datetime)} />
+                          <Row label="Ngày giao" value={fmtDt(tk.delivery_datetime)} />
+                          <Row label="Địa điểm giao" value={tk.delivery_location || '—'} />
+                          <Row label="Đặt xe" value={tk.truck_booked ? 'Có' : 'Không'} />
+                          <Row label="Ghi chú TK" value={tk.notes || '—'} />
+                        </>
+                      )}
+                      <Row label="Hoàn thành lúc" value={fmtDt(tk.completed_at)} color="var(--primary)" />
+                    </Section>
+                  );
+                })()}
 
-                {job.truck && (
-                  <Section title="Vận chuyển">
-                    <Row label="Vận tải" value={job.truck.transport_name || '—'} />
-                    <Row label="Số xe" value={job.truck.vehicle_number || '—'} />
-                    <Row label="KH ngày giờ" value={fmtDt(job.truck.planned_datetime)} />
-                    <Row label="TH ngày giờ" value={fmtDt(job.truck.actual_datetime)} />
-                    <Row label="Lấy hàng" value={job.truck.pickup_location || '—'} />
-                    <Row label="Giao hàng" value={job.truck.delivery_location || '—'} />
-                    <Row label="Cước" value={job.truck.cost ? Number(job.truck.cost).toLocaleString('vi-VN') + ' đ' : '—'} />
-                    <Row label="Ghi chú vận tải" value={job.truck.notes || '—'} />
-                    <Row label="Hoàn thành lúc" value={fmtDt(job.truck.completed_at)} color="var(--primary)" />
-                  </Section>
-                )}
+                {job.truck && (() => {
+                  const truck = job.truck;
+                  return (
+                    <Section title="Vận chuyển">
+                      {canEditTruck ? (
+                        <>
+                          <ERow label="Vận tải">
+                            <InlineInput value={truck.transport_name} onSave={v => truckMut.mutate({ transport_name: v })} />
+                          </ERow>
+                          <ERow label="Số xe">
+                            <InlineInput value={truck.vehicle_number} onSave={v => truckMut.mutate({ vehicle_number: v })} />
+                          </ERow>
+                          <ERow label="KH ngày giờ">
+                            <InlineInput type="datetime-local" value={toDatetimeLocal(truck.planned_datetime)}
+                              onSave={v => truckMut.mutate({ planned_datetime: v })} />
+                          </ERow>
+                          <ERow label="TH ngày giờ">
+                            <InlineInput type="datetime-local" value={toDatetimeLocal(truck.actual_datetime)}
+                              onSave={v => truckMut.mutate({ actual_datetime: v })} />
+                          </ERow>
+                          <ERow label="Lấy hàng">
+                            <InlineInput value={truck.pickup_location} onSave={v => truckMut.mutate({ pickup_location: v })} />
+                          </ERow>
+                          <ERow label="Giao hàng">
+                            <InlineInput value={truck.delivery_location} onSave={v => truckMut.mutate({ delivery_location: v })} />
+                          </ERow>
+                          <ERow label="Cước">
+                            <InlineInput type="number" value={truck.cost != null ? String(truck.cost) : ''}
+                              onSave={v => truckMut.mutate({ cost: v ? Number(v) : null })} />
+                          </ERow>
+                          <ERow label="Ghi chú vận tải">
+                            <InlineInput value={truck.notes} onSave={v => truckMut.mutate({ notes: v })} />
+                          </ERow>
+                        </>
+                      ) : (
+                        <>
+                          <Row label="Vận tải" value={truck.transport_name || '—'} />
+                          <Row label="Số xe" value={truck.vehicle_number || '—'} />
+                          <Row label="KH ngày giờ" value={fmtDt(truck.planned_datetime)} />
+                          <Row label="TH ngày giờ" value={fmtDt(truck.actual_datetime)} />
+                          <Row label="Lấy hàng" value={truck.pickup_location || '—'} />
+                          <Row label="Giao hàng" value={truck.delivery_location || '—'} />
+                          <Row label="Cước" value={truck.cost ? Number(truck.cost).toLocaleString('vi-VN') + ' đ' : '—'} />
+                          <Row label="Ghi chú vận tải" value={truck.notes || '—'} />
+                        </>
+                      )}
+                      <Row label="Hoàn thành lúc" value={fmtDt(truck.completed_at)} color="var(--primary)" />
+                    </Section>
+                  );
+                })()}
 
                 {job.ops_tasks?.length > 0 && (
                   <Section title="Công việc OPS">

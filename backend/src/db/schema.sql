@@ -401,6 +401,9 @@ CREATE TABLE IF NOT EXISTS ai_assignment_logs (
 );
 CREATE INDEX IF NOT EXISTS idx_ai_logs_job_id ON ai_assignment_logs(job_id);
 
+-- OPS partner name (free-text, assigned by CUS when no auto-assigned ops)
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS ops_partner VARCHAR(100);
+
 -- In-app notifications
 CREATE TABLE IF NOT EXISTS notifications (
   id         SERIAL PRIMARY KEY,
