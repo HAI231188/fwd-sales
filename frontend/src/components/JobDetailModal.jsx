@@ -664,6 +664,9 @@ export default function JobDetailModal({ jobId, onClose }) {
                   )}
                   <Row label="Nhân viên OPS" value={job.ops_name || '—'} />
                   <Row label="Đối tác OPS" value={job.ops_partner || '—'} />
+                  {(job.service_type === 'truck' || job.service_type === 'both') && (
+                    <Row label="Điều Độ" value={job.dieu_do_name || '—'} />
+                  )}
                 </Section>
 
                 {job.tk && (() => {

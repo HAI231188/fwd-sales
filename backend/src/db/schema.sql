@@ -417,3 +417,34 @@ CREATE TABLE IF NOT EXISTS notifications (
 );
 CREATE INDEX IF NOT EXISTS idx_notifications_user_id ON notifications(user_id);
 CREATE INDEX IF NOT EXISTS idx_notifications_unread  ON notifications(user_id, read);
+
+-- Điều Độ assignment: dieu_do staff assigned per truck/both job
+ALTER TABLE job_assignments ADD COLUMN IF NOT EXISTS dieu_do_id INTEGER REFERENCES users(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_job_assignments_dieu_do_id ON job_assignments(dieu_do_id);
+
+-- Backfill: assign existing truck/both jobs to dieu_do user with lowest workload
+DO $$
+DECLARE
+  dd_user_id INTEGER;
+BEGIN
+  SELECT id INTO dd_user_id FROM users WHERE role = 'dieu_do'
+    ORDER BY (
+      SELECT COUNT(*) FROM job_assignments ja2
+      WHERE ja2.dieu_do_id = users.id
+    ) ASC, id
+    LIMIT 1;
+  IF dd_user_id IS NOT NULL THEN
+    UPDATE job_assignments SET dieu_do_id = dd_user_id
+    WHERE dieu_do_id IS NULL
+      AND job_id IN (
+        SELECT id FROM jobs WHERE service_type IN ('truck','both') AND deleted_at IS NULL
+      );
+    INSERT INTO job_assignments (job_id, dieu_do_id, assignment_mode)
+    SELECT j.id, dd_user_id, 'auto'
+    FROM jobs j
+    LEFT JOIN job_assignments ja ON ja.job_id = j.id
+    WHERE j.service_type IN ('truck','both')
+      AND j.deleted_at IS NULL
+      AND ja.id IS NULL;
+  END IF;
+END $$;

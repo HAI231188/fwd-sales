@@ -91,10 +91,10 @@ router.get('/stats', requireAuth, async (req, res) => {
       });
     } else if (role === 'dieu_do') {
       const [total, daDat, chuaDat, warnOverdue] = await Promise.all([
-        db.query(`SELECT COUNT(*) AS v FROM job_truck jt JOIN jobs j ON j.id = jt.job_id WHERE j.status = 'pending' AND j.deleted_at IS NULL AND jt.completed_at IS NULL`),
-        db.query(`SELECT COUNT(*) AS v FROM job_truck jt JOIN jobs j ON j.id = jt.job_id WHERE j.status = 'pending' AND j.deleted_at IS NULL AND jt.completed_at IS NULL AND jt.transport_name IS NOT NULL AND jt.vehicle_number IS NOT NULL`),
-        db.query(`SELECT COUNT(*) AS v FROM job_truck jt JOIN jobs j ON j.id = jt.job_id WHERE j.status = 'pending' AND j.deleted_at IS NULL AND jt.completed_at IS NULL AND jt.planned_datetime IS NOT NULL AND (jt.transport_name IS NULL OR jt.transport_name = '')`),
-        db.query(`SELECT COUNT(*) AS v FROM job_truck jt JOIN jobs j ON j.id = jt.job_id WHERE j.status = 'pending' AND j.deleted_at IS NULL AND jt.completed_at IS NULL AND jt.planned_datetime <= NOW() + INTERVAL '24 hours'`),
+        db.query(`SELECT COUNT(*) AS v FROM job_truck jt JOIN jobs j ON j.id = jt.job_id JOIN job_assignments ja ON ja.job_id = j.id WHERE ja.dieu_do_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL AND jt.completed_at IS NULL`, [userId]),
+        db.query(`SELECT COUNT(*) AS v FROM job_truck jt JOIN jobs j ON j.id = jt.job_id JOIN job_assignments ja ON ja.job_id = j.id WHERE ja.dieu_do_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL AND jt.completed_at IS NULL AND jt.transport_name IS NOT NULL AND jt.vehicle_number IS NOT NULL`, [userId]),
+        db.query(`SELECT COUNT(*) AS v FROM job_truck jt JOIN jobs j ON j.id = jt.job_id JOIN job_assignments ja ON ja.job_id = j.id WHERE ja.dieu_do_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL AND jt.completed_at IS NULL AND jt.planned_datetime IS NOT NULL AND (jt.transport_name IS NULL OR jt.transport_name = '')`, [userId]),
+        db.query(`SELECT COUNT(*) AS v FROM job_truck jt JOIN jobs j ON j.id = jt.job_id JOIN job_assignments ja ON ja.job_id = j.id WHERE ja.dieu_do_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL AND jt.completed_at IS NULL AND jt.planned_datetime <= NOW() + INTERVAL '24 hours'`, [userId]),
       ]);
       res.json({
         total_active:    parseInt(total.rows[0].v),
@@ -196,18 +196,6 @@ router.get('/deadline-requests', requireAuth, async (req, res) => {
   }
 });
 
-// GET /api/jobs/debug-dieu-do — TEMPORARY, remove after investigation
-router.get('/debug-dieu-do', requireAuth, async (req, res) => {
-  if (!['truong_phong_log','lead'].includes(req.user.role)) return res.status(403).json({ error: 'Forbidden' });
-  try {
-    const [dieuDoUsers, truckJobs, jaColumns] = await Promise.all([
-      db.query(`SELECT id, username, role, name FROM users WHERE role = 'dieu_do'`),
-      db.query(`SELECT j.id, j.job_code, j.service_type, j.status, ja.cus_id, ja.ops_id, ja.cus_confirm_status FROM jobs j LEFT JOIN job_assignments ja ON ja.job_id = j.id WHERE j.service_type IN ('truck','both') ORDER BY j.id DESC LIMIT 10`),
-      db.query(`SELECT column_name FROM information_schema.columns WHERE table_name = 'job_assignments' ORDER BY ordinal_position`),
-    ]);
-    res.json({ dieu_do_users: dieuDoUsers.rows, truck_jobs: truckJobs.rows, job_assignments_columns: jaColumns.rows.map(r => r.column_name) });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
 
 // GET /api/jobs/staff-workload
 router.get('/staff-workload', requireAuth, async (req, res) => {
@@ -398,7 +386,8 @@ router.get('/filtered', requireAuth, async (req, res) => {
     baseWhere = `AND ja.cus_id = $${idx++}`;
     params.push(userId);
   } else if (role === 'dieu_do') {
-    baseWhere = `AND j.service_type IN ('truck','both')`;
+    baseWhere = `AND ja.dieu_do_id = $${idx++}`;
+    params.push(userId);
   } else if (role === 'ops') {
     baseWhere = `AND ja.ops_id = $${idx++}`;
     params.push(userId);
@@ -483,7 +472,8 @@ router.get('/', requireAuth, async (req, res) => {
   }
 
   if (role === 'dieu_do') {
-    conditions.push(`j.service_type IN ('truck','both')`);
+    conditions.push(`ja.dieu_do_id = $${idx++}`);
+    params.push(userId);
   } else if (CUS_ROLES.includes(role)) {
     conditions.push(`ja.cus_id = $${idx++}`);
     params.push(userId);
@@ -502,11 +492,12 @@ router.get('/', requireAuth, async (req, res) => {
       SELECT j.*,
         u_sales.name AS sales_name,
         u_created.name AS created_by_name,
-        ja.id AS assignment_id, ja.cus_id, ja.ops_id,
+        ja.id AS assignment_id, ja.cus_id, ja.ops_id, ja.dieu_do_id,
         ja.cus_confirm_status, ja.assignment_mode AS ja_mode,
         ja.adjustment_reason, ja.adjustment_deadline_proposed,
         u_cus.name AS cus_name, u_cus.code AS cus_code, u_cus.avatar_color AS cus_color,
         u_ops.name AS ops_name, u_ops.code AS ops_code, u_ops.avatar_color AS ops_color,
+        u_dd.name AS dieu_do_name, u_dd.code AS dieu_do_code, u_dd.avatar_color AS dieu_do_color,
         jt.id AS tk_id, jt.tk_status, jt.tk_number, jt.tk_flow,
         jt.tk_datetime, jt.tq_datetime, jt.services_completed,
         jt.delivery_datetime, jt.delivery_location, jt.truck_booked,
@@ -526,6 +517,7 @@ router.get('/', requireAuth, async (req, res) => {
       LEFT JOIN job_assignments ja ON ja.job_id = j.id
       LEFT JOIN users u_cus ON u_cus.id = ja.cus_id
       LEFT JOIN users u_ops ON u_ops.id = ja.ops_id
+      LEFT JOIN users u_dd ON u_dd.id = ja.dieu_do_id
       LEFT JOIN users u_sales ON u_sales.id = j.sales_id
       LEFT JOIN users u_created ON u_created.id = j.created_by
       LEFT JOIN job_tk jt ON jt.job_id = j.id
@@ -629,6 +621,22 @@ router.post('/', requireAuth, async (req, res) => {
       await client.query(`INSERT INTO job_truck (job_id) VALUES ($1)`, [job.id]);
     }
 
+    // Điều Độ assignment for truck/both jobs
+    const isDieuDo = service_type === 'truck' || service_type === 'both';
+    let ddUserId = null;
+    if (isDieuDo) {
+      const ddRes = await client.query(`
+        SELECT u.id FROM users u WHERE u.role = 'dieu_do'
+        ORDER BY (
+          SELECT COUNT(*) FROM job_assignments ja2
+          JOIN jobs j2 ON j2.id = ja2.job_id
+          WHERE ja2.dieu_do_id = u.id AND j2.status = 'pending' AND j2.deleted_at IS NULL
+        ) ASC, RANDOM()
+        LIMIT 1
+      `);
+      ddUserId = ddRes.rows[0]?.id || null;
+    }
+
     // TK / CUS assignment
     if (isTk) {
       if (mode === 'auto' && cusSuggestion) {
@@ -666,6 +674,24 @@ router.post('/', requireAuth, async (req, res) => {
       await recordHistory(client, job.id, req.user.id, 'ops_assigned', null, opsSuggestion.user_name || String(opsSuggestion.user_id));
     }
 
+    // Điều Độ assignment: set dieu_do_id on the job_assignments row
+    if (isDieuDo && ddUserId) {
+      const { rows: jaEx2 } = await client.query(`SELECT id FROM job_assignments WHERE job_id = $1`, [job.id]);
+      if (jaEx2[0]) {
+        await client.query(`UPDATE job_assignments SET dieu_do_id = $1 WHERE job_id = $2`, [ddUserId, job.id]);
+      } else {
+        await client.query(`
+          INSERT INTO job_assignments (job_id, dieu_do_id, assigned_by, assignment_mode)
+          VALUES ($1, $2, $3, 'auto')
+        `, [job.id, ddUserId, req.user.id]);
+      }
+      await client.query(`
+        INSERT INTO notifications (user_id, type, title, body, job_id)
+        VALUES ($1, 'job_assigned', 'Phân công Điều Độ mới', $2, $3)
+      `, [ddUserId, `Bạn được phân công điều độ cho ${customer_name}`, job.id]);
+      await recordHistory(client, job.id, req.user.id, 'dieu_do_assigned', null, String(ddUserId));
+    }
+
     await recordHistory(client, job.id, req.user.id, 'job_created', null, customer_name);
     await client.query('COMMIT');
 
@@ -699,15 +725,17 @@ router.get('/:id', requireAuth, async (req, res) => {
     const { rows } = await db.query(`
       SELECT j.*,
         u_sales.name AS sales_name, u_created.name AS created_by_name,
-        ja.id AS assignment_id, ja.cus_id, ja.ops_id,
+        ja.id AS assignment_id, ja.cus_id, ja.ops_id, ja.dieu_do_id,
         ja.cus_confirm_status, ja.assignment_mode AS ja_mode,
         ja.adjustment_reason, ja.adjustment_deadline_proposed,
         u_cus.name AS cus_name, u_cus.code AS cus_code,
-        u_ops.name AS ops_name, u_ops.code AS ops_code
+        u_ops.name AS ops_name, u_ops.code AS ops_code,
+        u_dd.name AS dieu_do_name, u_dd.code AS dieu_do_code
       FROM jobs j
       LEFT JOIN job_assignments ja ON ja.job_id = j.id
       LEFT JOIN users u_cus ON u_cus.id = ja.cus_id
       LEFT JOIN users u_ops ON u_ops.id = ja.ops_id
+      LEFT JOIN users u_dd ON u_dd.id = ja.dieu_do_id
       LEFT JOIN users u_sales ON u_sales.id = j.sales_id
       LEFT JOIN users u_created ON u_created.id = j.created_by
       WHERE j.id = $1 AND j.deleted_at IS NULL
