@@ -448,3 +448,14 @@ BEGIN
       AND ja.id IS NULL;
   END IF;
 END $$;
+
+-- Deduplicate job_assignments (keep latest row per job) then enforce one-row-per-job
+DO $$
+BEGIN
+  DELETE FROM job_assignments
+  WHERE id NOT IN (
+    SELECT DISTINCT ON (job_id) id FROM job_assignments ORDER BY job_id, id DESC
+  );
+EXCEPTION WHEN others THEN NULL;
+END $$;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_job_assignments_unique_job_id ON job_assignments(job_id);

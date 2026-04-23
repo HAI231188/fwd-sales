@@ -440,7 +440,9 @@ router.get('/filtered', requireAuth, async (req, res) => {
                CASE WHEN j.han_lenh IS NULL THEN 'Hạn lệnh' ELSE '' END
              ) AS missing_fields
       FROM jobs j
-      LEFT JOIN job_assignments ja ON ja.job_id = j.id
+      LEFT JOIN LATERAL (
+        SELECT * FROM job_assignments WHERE job_id = j.id ORDER BY id DESC LIMIT 1
+      ) ja ON true
       LEFT JOIN users cus ON cus.id = ja.cus_id
       LEFT JOIN users ops ON ops.id = ja.ops_id
       LEFT JOIN job_tk jt ON jt.job_id = j.id
@@ -514,7 +516,9 @@ router.get('/', requireAuth, async (req, res) => {
           FROM job_containers jc WHERE jc.job_id = j.id
         ), '[]'::json) AS containers
       FROM jobs j
-      LEFT JOIN job_assignments ja ON ja.job_id = j.id
+      LEFT JOIN LATERAL (
+        SELECT * FROM job_assignments WHERE job_id = j.id ORDER BY id DESC LIMIT 1
+      ) ja ON true
       LEFT JOIN users u_cus ON u_cus.id = ja.cus_id
       LEFT JOIN users u_ops ON u_ops.id = ja.ops_id
       LEFT JOIN users u_dd ON u_dd.id = ja.dieu_do_id
@@ -527,6 +531,7 @@ router.get('/', requireAuth, async (req, res) => {
     `, params);
     res.json(rows);
   } catch (err) {
+    console.error('GET /api/jobs error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
