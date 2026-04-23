@@ -339,6 +339,41 @@ router.get('/waiting-assignments', requireAuth, async (req, res) => {
   }
 });
 
+// GET /api/jobs/filtered?type=pending|warning|missing|overdue  (truong_phong_log only)
+router.get('/filtered', requireAuth, async (req, res) => {
+  if (req.user.role !== 'truong_phong_log') return res.status(403).json({ error: 'Không có quyền' });
+  const { type } = req.query;
+  let extraWhere = '';
+  if (type === 'warning') extraWhere = `AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '48 hours'`;
+  else if (type === 'missing') extraWhere = `AND (j.pol IS NULL OR j.pod IS NULL OR j.cont_number IS NULL OR j.han_lenh IS NULL)`;
+  else if (type === 'overdue') extraWhere = `AND j.deadline < NOW()`;
+  try {
+    const { rows } = await db.query(`
+      SELECT j.id, j.job_code, j.created_at, j.customer_name, j.deadline, j.han_lenh,
+             j.pol, j.pod, j.cont_number, j.service_type,
+             ja.cus_id, cus.name AS cus_name,
+             ja.ops_id, ops.name AS ops_name,
+             jt.tk_status,
+             TRIM(
+               CASE WHEN j.pol IS NULL THEN 'POL ' ELSE '' END ||
+               CASE WHEN j.pod IS NULL THEN 'POD ' ELSE '' END ||
+               CASE WHEN j.cont_number IS NULL THEN 'Số cont ' ELSE '' END ||
+               CASE WHEN j.han_lenh IS NULL THEN 'Hạn lệnh' ELSE '' END
+             ) AS missing_fields
+      FROM jobs j
+      LEFT JOIN job_assignments ja ON ja.job_id = j.id
+      LEFT JOIN users cus ON cus.id = ja.cus_id
+      LEFT JOIN users ops ON ops.id = ja.ops_id
+      LEFT JOIN job_tk jt ON jt.job_id = j.id
+      WHERE j.status = 'pending' AND j.deleted_at IS NULL ${extraWhere}
+      ORDER BY j.deadline ASC NULLS LAST, j.created_at DESC
+    `);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/jobs/
 router.get('/', requireAuth, async (req, res) => {
   const { role, id: userId } = req.user;

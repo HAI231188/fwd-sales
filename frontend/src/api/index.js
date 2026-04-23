@@ -95,6 +95,7 @@ export const reviewDeleteRequest = (rid, action) => api.patch(`/jobs/delete-requ
 export const getJobSettings = () => api.get('/jobs/settings');
 export const updateAssignmentMode = (assignment_mode) => api.patch('/jobs/settings/assignment-mode', { assignment_mode });
 export const getWaitingAssignments = () => api.get('/jobs/waiting-assignments');
+export const getFilteredJobs = (type) => api.get('/jobs/filtered', { params: { type } });
 export const manualAssignJob = (id, data) => api.post(`/jobs/${id}/manual-assign`, data);
 export const refreshJobSuggestion = (id, type) => api.post(`/jobs/${id}/refresh-suggestion`, { type });
 

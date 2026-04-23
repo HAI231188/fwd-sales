@@ -4,6 +4,7 @@ import Navbar from '../components/Navbar';
 import JobDetailModal from '../components/JobDetailModal';
 import CreateJobModal from '../components/CreateJobModal';
 import AssignmentModal from '../components/AssignmentModal';
+import JobListModal from '../components/JobListModal';
 import {
   getJobStats, getJobs, getDeadlineRequests, getLogStaff,
   assignJob, setJobDeadline, reviewDeadlineRequest, createJob,
@@ -301,6 +302,7 @@ export default function LogDashboardTP() {
   const [isVisible, setIsVisible] = useState(!document.hidden);
   const [visibleCols, setVisibleCols] = useState(loadVisibleCols);
   const [showColMenu, setShowColMenu] = useState(false);
+  const [jobListFilter, setJobListFilter] = useState(null);
 
   function toggleCol(key) {
     setVisibleCols(prev => {
@@ -373,7 +375,8 @@ export default function LogDashboardTP() {
 
         {/* Stat cards */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 12, marginBottom: 24 }}>
-          <StatCard label="Tổng job pending" value={stats?.total_pending} color="var(--info)" />
+          <StatCard label="Tổng job pending" value={stats?.total_pending} color="var(--info)"
+            onClick={() => setJobListFilter('pending')} />
           <StatCard label="Chờ phân CUS" value={stats?.waiting_cus} color="var(--warning)"
             badge={modeLabel}
             onClick={() => setShowAssignment('cus')} />
@@ -383,9 +386,12 @@ export default function LogDashboardTP() {
           <StatCard label="Chờ xác nhận deadline" value={stats?.deadline_pending} color="var(--warning)"
             badge={stats?.delete_requests > 0 ? `${stats.delete_requests} xóa` : null}
             onClick={() => setShowDeadline(true)} />
-          <StatCard label="Quá deadline" value={stats?.overdue} color="var(--danger)" />
-          <StatCard label="Sắp hạn (48h)" value={stats?.warn_soon} color="var(--warning)" />
-          <StatCard label="Thiếu thông tin" value={stats?.missing_info} color="var(--text-2)" />
+          <StatCard label="Quá deadline" value={stats?.overdue} color="var(--danger)"
+            onClick={() => setJobListFilter('overdue')} />
+          <StatCard label="Sắp hạn (48h)" value={stats?.warn_soon} color="var(--warning)"
+            onClick={() => setJobListFilter('warning')} />
+          <StatCard label="Thiếu thông tin" value={stats?.missing_info} color="var(--text-2)"
+            onClick={() => setJobListFilter('missing')} />
         </div>
 
         {/* Staff table */}
@@ -575,6 +581,9 @@ export default function LogDashboardTP() {
           initialTab={showAssignment}
           onClose={() => setShowAssignment(null)}
         />
+      )}
+      {jobListFilter && (
+        <JobListModal filterType={jobListFilter} onClose={() => setJobListFilter(null)} />
       )}
     </div>
   );
