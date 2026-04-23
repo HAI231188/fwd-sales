@@ -21,6 +21,11 @@ async function recordHistory(client, jobId, changedBy, fieldName, oldValue, newV
   );
 }
 
+function withTimeout(promise, ms) {
+  const timeout = new Promise(resolve => setTimeout(() => resolve(null), ms));
+  return Promise.race([promise, timeout]);
+}
+
 
 // GET /api/jobs/stats
 router.get('/stats', requireAuth, async (req, res) => {
@@ -317,16 +322,12 @@ router.get('/waiting-assignments', requireAuth, async (req, res) => {
 
     const [cusWithAI, opsWithAI] = await Promise.all([
       Promise.all(cusJobs.rows.map(async job => {
-        try {
-          const s = await suggestCus(job, db.pool);
-          return { ...job, ai_suggestion: s };
-        } catch { return { ...job, ai_suggestion: null }; }
+        const s = await withTimeout(suggestCus(job, db.pool).catch(() => null), 3000);
+        return { ...job, ai_suggestion: s };
       })),
       Promise.all(opsJobs.rows.map(async job => {
-        try {
-          const s = await suggestOps(job, db.pool);
-          return { ...job, ai_suggestion: s };
-        } catch { return { ...job, ai_suggestion: null }; }
+        const s = await withTimeout(suggestOps(job, db.pool).catch(() => null), 3000);
+        return { ...job, ai_suggestion: s };
       })),
     ]);
 
@@ -818,6 +819,25 @@ router.post('/:id/manual-assign', requireAuth, async (req, res) => {
     res.status(500).json({ error: err.message });
   } finally {
     client.release();
+  }
+});
+
+// POST /api/jobs/:id/refresh-suggestion  (truong_phong_log only)
+router.post('/:id/refresh-suggestion', requireAuth, async (req, res) => {
+  if (req.user.role !== 'truong_phong_log') return res.status(403).json({ error: 'Không có quyền' });
+  const { type = 'cus' } = req.body;
+  try {
+    const { rows } = await db.query(`SELECT * FROM jobs WHERE id = $1 AND deleted_at IS NULL`, [req.params.id]);
+    if (!rows[0]) return res.status(404).json({ error: 'Không tìm thấy job' });
+    const job = rows[0];
+
+    const fn = type === 'ops' ? suggestOps : suggestCus;
+    const suggestion = await withTimeout(fn(job, db.pool).catch(() => null), 10000);
+
+    suggestionCache = { data: null, ts: 0 };
+    res.json({ suggestion });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 

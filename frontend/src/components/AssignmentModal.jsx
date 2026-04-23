@@ -2,8 +2,9 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   getJobSettings, updateAssignmentMode, getWaitingAssignments,
-  manualAssignJob, getLogStaff,
+  manualAssignJob, getLogStaff, refreshJobSuggestion,
 } from '../api';
+import { useAuth } from '../App';
 
 const MODE_LABEL = { auto: 'Tự động', manual: 'Bán tự động' };
 const SVC_LABEL = { tk: 'TK', truck: 'Xe', both: 'TK+Xe' };
@@ -16,11 +17,26 @@ function fmtDt(val) {
 
 export default function AssignmentModal({ initialTab = 'cus', onClose }) {
   const qc = useQueryClient();
+  const { user } = useAuth();
   const [activeTab, setActiveTab] = useState(initialTab);
   const [manualSelections, setManualSelections] = useState({});
+  const [refreshedSuggestions, setRefreshedSuggestions] = useState({});
+  const [refreshingJobs, setRefreshingJobs] = useState(new Set());
+
+  async function handleRefresh(jobId) {
+    setRefreshingJobs(prev => new Set([...prev, jobId]));
+    try {
+      const result = await refreshJobSuggestion(jobId, activeTab);
+      setRefreshedSuggestions(prev => ({ ...prev, [jobId]: result.suggestion }));
+    } catch {
+      setRefreshedSuggestions(prev => ({ ...prev, [jobId]: null }));
+    } finally {
+      setRefreshingJobs(prev => { const next = new Set(prev); next.delete(jobId); return next; });
+    }
+  }
 
   const { data: settings } = useQuery({ queryKey: ['jobSettings'], queryFn: getJobSettings });
-  const { data: waiting, isLoading } = useQuery({
+  const { data: waiting } = useQuery({
     queryKey: ['waitingAssignments'],
     queryFn: getWaitingAssignments,
     refetchInterval: 30000,
@@ -89,7 +105,7 @@ export default function AssignmentModal({ initialTab = 'cus', onClose }) {
             </button>
           </div>
 
-          {isLoading ? (
+          {!waiting ? (
             <div style={{ textAlign: 'center', padding: 40 }}><span className="spinner" /></div>
           ) : currentJobs.length === 0 ? (
             <div className="empty-state">
@@ -99,8 +115,12 @@ export default function AssignmentModal({ initialTab = 'cus', onClose }) {
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               {currentJobs.map(job => {
-                const suggestion = job.ai_suggestion;
+                const isRefreshing = refreshingJobs.has(job.id);
+                const displaySuggestion = refreshedSuggestions[job.id] !== undefined
+                  ? refreshedSuggestions[job.id]
+                  : job.ai_suggestion;
                 const selected = manualSelections[job.id] || '';
+                const isTP = user?.role === 'truong_phong_log';
 
                 return (
                   <div key={job.id} className="card" style={{ padding: 14 }}>
@@ -124,38 +144,62 @@ export default function AssignmentModal({ initialTab = 'cus', onClose }) {
                       )}
                     </div>
 
-                    {suggestion ? (
+                    {isRefreshing ? (
+                      <div style={{ fontSize: 12, color: 'var(--text-2)', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span className="spinner" style={{ width: 14, height: 14 }} /> Đang phân tích...
+                      </div>
+                    ) : displaySuggestion ? (
                       <div style={{
-                        background: suggestion.fallback ? 'rgba(107,114,128,0.08)' : 'rgba(34,197,94,0.08)',
-                        border: `1px solid ${suggestion.fallback ? 'var(--border)' : 'rgba(34,197,94,0.3)'}`,
+                        background: displaySuggestion.fallback ? 'rgba(107,114,128,0.08)' : 'rgba(34,197,94,0.08)',
+                        border: `1px solid ${displaySuggestion.fallback ? 'var(--border)' : 'rgba(34,197,94,0.3)'}`,
                         borderRadius: 8, padding: '8px 12px', marginBottom: 10,
                         display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
                       }}>
                         <div style={{ flex: 1, fontSize: 12 }}>
-                          <span style={{ fontWeight: 600, color: suggestion.fallback ? 'var(--text-2)' : 'var(--primary)' }}>
-                            {suggestion.fallback ? '🔄' : '🤖'}{' '}
+                          <span style={{ fontWeight: 600, color: displaySuggestion.fallback ? 'var(--text-2)' : 'var(--primary)' }}>
+                            {displaySuggestion.fallback ? '🔄' : '🤖'}{' '}
                           </span>
                           <span style={{ fontWeight: 600 }}>
-                            {suggestion.user_name || `#${suggestion.user_id}`}
+                            {displaySuggestion.user_name || `#${displaySuggestion.user_id}`}
                           </span>
-                          {suggestion.reason && (
+                          {displaySuggestion.reason && (
                             <span style={{ color: 'var(--text-2)', marginLeft: 6, fontSize: 11 }}>
-                              — {suggestion.reason}
+                              — {displaySuggestion.reason}
                             </span>
                           )}
                         </div>
-                        <button
-                          className="btn btn-primary btn-sm"
-                          style={{ fontSize: 11, padding: '3px 12px', whiteSpace: 'nowrap' }}
-                          disabled={assignMut.isPending}
-                          onClick={() => handleAssign(job.id, suggestion.user_id)}
-                        >
-                          Dùng đề xuất AI
-                        </button>
+                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                          {isTP && (
+                            <button
+                              className="btn btn-ghost btn-sm"
+                              style={{ fontSize: 11, padding: '3px 10px', whiteSpace: 'nowrap' }}
+                              onClick={() => handleRefresh(job.id)}
+                            >
+                              Làm mới đề xuất
+                            </button>
+                          )}
+                          <button
+                            className="btn btn-primary btn-sm"
+                            style={{ fontSize: 11, padding: '3px 12px', whiteSpace: 'nowrap' }}
+                            disabled={assignMut.isPending}
+                            onClick={() => handleAssign(job.id, displaySuggestion.user_id)}
+                          >
+                            Dùng đề xuất AI
+                          </button>
+                        </div>
                       </div>
                     ) : (
-                      <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 10 }}>
-                        Không có đề xuất AI
+                      <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span>Đang phân tích...</span>
+                        {isTP && (
+                          <button
+                            className="btn btn-ghost btn-sm"
+                            style={{ fontSize: 11, padding: '2px 8px', whiteSpace: 'nowrap' }}
+                            onClick={() => handleRefresh(job.id)}
+                          >
+                            Làm mới đề xuất
+                          </button>
+                        )}
                       </div>
                     )}
 
