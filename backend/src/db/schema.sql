@@ -376,6 +376,9 @@ ALTER TABLE jobs ADD COLUMN IF NOT EXISTS si_number VARCHAR(100);
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS mbl_no VARCHAR(100);
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS hbl_no VARCHAR(100);
 
+-- Remove legacy bill_number field (replaced by si_number/mbl_no/hbl_no)
+ALTER TABLE jobs DROP COLUMN IF EXISTS bill_number;
+
 -- Global LOG department settings (single-row config, id=1 always)
 CREATE TABLE IF NOT EXISTS log_settings (
   id              SERIAL PRIMARY KEY,

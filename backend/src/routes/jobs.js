@@ -416,7 +416,7 @@ router.get('/', requireAuth, async (req, res) => {
 router.post('/', requireAuth, async (req, res) => {
   const {
     job_code, customer_id, customer_name, customer_address, customer_tax_code,
-    sales_id, pol, pod, bill_number, cont_number, cont_type, seal_number,
+    sales_id, pol, pod, cont_number, cont_type, seal_number,
     etd, eta, tons, cbm, deadline, service_type, other_services,
     is_new_customer, cargo_type, so_kien, kg, containers, destination, han_lenh,
     si_number, mbl_no, hbl_no,
@@ -454,16 +454,16 @@ router.post('/', requireAuth, async (req, res) => {
     const { rows } = await client.query(`
       INSERT INTO jobs (
         job_code, customer_id, customer_name, customer_address, customer_tax_code,
-        sales_id, pol, pod, bill_number, cont_number, cont_type, seal_number,
+        sales_id, pol, pod, cont_number, cont_type, seal_number,
         etd, eta, tons, cbm, deadline, service_type, other_services,
         cargo_type, so_kien, kg, destination, created_by, han_lenh,
         si_number, mbl_no, hbl_no
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28)
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)
       RETURNING *
     `, [
       job_code || null, customer_id || null, customer_name,
       customer_address || null, customer_tax_code || null,
-      sales_id || null, pol || null, pod || null, bill_number || null,
+      sales_id || null, pol || null, pod || null,
       cont_number || null, cont_type || null, seal_number || null,
       etd || null, eta || null, tons || null, cbm || null,
       deadline || null, service_type,
@@ -604,7 +604,7 @@ router.get('/:id', requireAuth, async (req, res) => {
 // PUT /api/jobs/:id
 router.put('/:id', requireAuth, async (req, res) => {
   const FIELDS = ['job_code','customer_name','customer_address','customer_tax_code',
-    'pol','pod','bill_number','cont_number','cont_type','seal_number',
+    'pol','pod','cont_number','cont_type','seal_number',
     'etd','eta','tons','cbm','deadline','service_type','other_services','status',
     'cargo_type','so_kien','kg','destination','han_lenh','si_number','mbl_no','hbl_no'];
 

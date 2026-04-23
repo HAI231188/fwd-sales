@@ -10,6 +10,18 @@ const TK_STATUS_COLOR = {
   thong_quan: '#22c55e', giai_phong: '#3b82f6', bao_quan: '#7c3aed',
 };
 const SVC_LABEL = { tk: 'Tờ khai', truck: 'Vận chuyển', both: 'TK + Vận chuyển' };
+const OTHER_SVC_KEYS = ['ktcl', 'kiem_dich', 'hun_trung', 'co', 'khac'];
+const OTHER_SVC_LABEL = { ktcl: 'KTCL', kiem_dich: 'Kiểm dịch', hun_trung: 'Hun trùng', co: 'CO', khac: 'Khác' };
+const CUS_CONFIRM_LABEL = {
+  pending: 'Chờ xác nhận',
+  confirmed: 'Đã xác nhận',
+  adjustment_requested: 'Yêu cầu điều chỉnh deadline',
+};
+const CUS_CONFIRM_COLOR = {
+  pending: 'var(--text-2)',
+  confirmed: 'var(--primary)',
+  adjustment_requested: 'var(--warning)',
+};
 
 function fmtDt(val) {
   if (!val) return '—';
@@ -25,6 +37,10 @@ function deadlineColor(dl) {
   if (ms < 0) return 'var(--danger)';
   if (ms < 48 * 3600 * 1000) return 'var(--warning)';
   return 'var(--primary)';
+}
+function fmtDest(d) {
+  if (d === 'hai_phong') return 'Hải Phòng';
+  return d || '—';
 }
 
 function Section({ title, children }) {
@@ -42,6 +58,40 @@ function Row({ label, value, color }) {
     <div style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 10px', fontSize: 13 }}>
       <span style={{ color: 'var(--text-2)', flexShrink: 0, marginRight: 8 }}>{label}</span>
       <span style={{ fontWeight: 500, color: color || 'var(--text)', textAlign: 'right' }}>{value}</span>
+    </div>
+  );
+}
+
+function SvcChips({ services, label }) {
+  const active = OTHER_SVC_KEYS.filter(k => services?.[k]);
+  if (!active.length) return null;
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', padding: '5px 10px', fontSize: 13 }}>
+      <span style={{ color: 'var(--text-2)', flexShrink: 0, marginRight: 8 }}>{label}</span>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, justifyContent: 'flex-end' }}>
+        {active.map(k => (
+          <span key={k} style={{ padding: '2px 8px', borderRadius: 12, fontSize: 11, fontWeight: 600, background: 'var(--info-dim)', color: 'var(--info)' }}>
+            {OTHER_SVC_LABEL[k]}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function SvcCompletedChips({ services }) {
+  const done = OTHER_SVC_KEYS.filter(k => services?.[k]);
+  if (!done.length) return null;
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', padding: '5px 10px', fontSize: 13 }}>
+      <span style={{ color: 'var(--text-2)', flexShrink: 0, marginRight: 8 }}>Dịch vụ hoàn thành</span>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, justifyContent: 'flex-end' }}>
+        {done.map(k => (
+          <span key={k} style={{ padding: '2px 8px', borderRadius: 12, fontSize: 11, fontWeight: 600, background: 'var(--primary-dim)', color: 'var(--primary)' }}>
+            {OTHER_SVC_LABEL[k]}
+          </span>
+        ))}
+      </div>
     </div>
   );
 }
@@ -92,27 +142,32 @@ export default function JobDetailModal({ jobId, onClose }) {
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', width: '100%', overflow: 'hidden' }}>
               {/* Left: job info */}
               <div style={{ padding: '20px 24px', borderRight: '1px solid var(--border)', overflowY: 'auto' }}>
+
                 <Section title="Thông tin chung">
-                  <Row label="Mã job" value={job.job_code} />
+                  <Row label="Mã job" value={job.job_code || '—'} />
                   <Row label="Mã SI" value={job.si_number || '—'} />
                   <Row label="MBL No" value={job.mbl_no || '—'} />
                   <Row label="HBL No" value={job.hbl_no || '—'} />
+                  <Row label="Ngày tạo" value={fmtDt(job.created_at)} />
+                  <Row label="Người tạo" value={job.created_by_name || '—'} />
+                  <Row label="Hạn lệnh" value={fmtDt(job.han_lenh)} color={deadlineColor(job.han_lenh)} />
+                  <Row label="Điểm đến" value={fmtDest(job.destination)} />
                   <Row label="Khách hàng" value={job.customer_name} />
-                  <Row label="Địa chỉ" value={job.customer_address} />
-                  <Row label="MST" value={job.customer_tax_code} />
-                  <Row label="Sales" value={job.sales_name} />
+                  <Row label="Địa chỉ" value={job.customer_address || '—'} />
+                  <Row label="MST" value={job.customer_tax_code || '—'} />
+                  <Row label="Sales" value={job.sales_name || '—'} />
                   <Row label="Dịch vụ" value={SVC_LABEL[job.service_type] || job.service_type} />
+                  <SvcChips services={job.other_services} label="Dịch vụ khác" />
                   <Row label="Deadline" value={fmtDt(job.deadline)} color={deadlineColor(job.deadline)} />
                   <Row label="Trạng thái" value={job.status === 'completed' ? 'Hoàn thành' : 'Đang xử lý'}
                        color={job.status === 'completed' ? 'var(--primary)' : 'var(--text)'} />
                 </Section>
 
                 <Section title="Lô hàng">
-                  <Row label="POL" value={job.pol} />
-                  <Row label="POD" value={job.pod} />
+                  <Row label="POL" value={job.pol || '—'} />
+                  <Row label="POD" value={job.pod || '—'} />
                   <Row label="ETD" value={fmtDate(job.etd)} />
                   <Row label="ETA" value={fmtDate(job.eta)} />
-                  <Row label="Số B/L" value={job.bill_number} />
                   {job.cargo_type === 'lcl' ? (
                     <>
                       <Row label="Loại hàng" value="LCL" />
@@ -145,9 +200,9 @@ export default function JobDetailModal({ jobId, onClose }) {
                         </div>
                       ) : (
                         <>
-                          <Row label="Số cont" value={job.cont_number} />
-                          <Row label="Loại cont" value={job.cont_type} />
-                          <Row label="Số seal" value={job.seal_number} />
+                          <Row label="Số cont" value={job.cont_number || '—'} />
+                          <Row label="Loại cont" value={job.cont_type || '—'} />
+                          <Row label="Số seal" value={job.seal_number || '—'} />
                         </>
                       )}
                       <Row label="Tấn" value={job.tons} />
@@ -156,42 +211,49 @@ export default function JobDetailModal({ jobId, onClose }) {
                   )}
                 </Section>
 
-                {job.cus_name && (
-                  <Section title="Phân công CUS">
-                    <Row label="Nhân viên CUS" value={job.cus_name} />
-                    <Row label="Xác nhận" value={
-                      job.cus_confirm_status === 'confirmed' ? 'Đã xác nhận' :
-                      job.cus_confirm_status === 'adjustment_requested' ? 'Yêu cầu điều chỉnh deadline' :
-                      'Chờ xác nhận'
-                    } color={
-                      job.cus_confirm_status === 'confirmed' ? 'var(--primary)' :
-                      job.cus_confirm_status === 'adjustment_requested' ? 'var(--warning)' : 'var(--text-2)'
-                    } />
-                  </Section>
-                )}
+                <Section title="Phân công">
+                  <Row label="Nhân viên CUS" value={job.cus_name || '—'} />
+                  <Row label="Xác nhận CUS"
+                       value={CUS_CONFIRM_LABEL[job.cus_confirm_status] || '—'}
+                       color={CUS_CONFIRM_COLOR[job.cus_confirm_status]} />
+                  {job.adjustment_deadline_proposed && (
+                    <Row label="Đề xuất deadline mới" value={fmtDt(job.adjustment_deadline_proposed)} color="var(--warning)" />
+                  )}
+                  {job.adjustment_reason && (
+                    <Row label="Lý do điều chỉnh" value={job.adjustment_reason} />
+                  )}
+                  <Row label="Nhân viên OPS" value={job.ops_name || '—'} />
+                </Section>
 
                 {job.tk && (
                   <Section title="Tờ khai">
+                    <Row label="CUS xử lý" value={job.tk.cus_name || '—'} />
                     <Row label="Ngày TK" value={fmtDt(job.tk.tk_datetime)} />
-                    <Row label="Số TK" value={job.tk.tk_number} />
-                    <Row label="Luồng" value={job.tk.tk_flow} />
-                    <Row label="Trạng thái" value={TK_STATUS_LABEL[job.tk.tk_status]}
+                    <Row label="Số TK" value={job.tk.tk_number || '—'} />
+                    <Row label="Luồng" value={job.tk.tk_flow || '—'} />
+                    <Row label="Trạng thái" value={TK_STATUS_LABEL[job.tk.tk_status] || '—'}
                          color={TK_STATUS_COLOR[job.tk.tk_status]} />
                     <Row label="Ngày TQ" value={fmtDt(job.tk.tq_datetime)} />
                     <Row label="Ngày giao" value={fmtDt(job.tk.delivery_datetime)} />
-                    <Row label="Địa điểm giao" value={job.tk.delivery_location} />
+                    <Row label="Địa điểm giao" value={job.tk.delivery_location || '—'} />
+                    <Row label="Đã đặt xe" value={job.tk.truck_booked ? 'Có' : 'Không'} />
+                    <SvcCompletedChips services={job.tk.services_completed} />
+                    <Row label="Ghi chú TK" value={job.tk.notes || '—'} />
+                    <Row label="Hoàn thành lúc" value={fmtDt(job.tk.completed_at)} color="var(--primary)" />
                   </Section>
                 )}
 
                 {job.truck && (
                   <Section title="Vận chuyển">
-                    <Row label="Vận tải" value={job.truck.transport_name} />
-                    <Row label="Số xe" value={job.truck.vehicle_number} />
+                    <Row label="Vận tải" value={job.truck.transport_name || '—'} />
+                    <Row label="Số xe" value={job.truck.vehicle_number || '—'} />
                     <Row label="KH ngày giờ" value={fmtDt(job.truck.planned_datetime)} />
                     <Row label="TH ngày giờ" value={fmtDt(job.truck.actual_datetime)} />
-                    <Row label="Lấy hàng" value={job.truck.pickup_location} />
-                    <Row label="Giao hàng" value={job.truck.delivery_location} />
-                    <Row label="Cước" value={job.truck.cost ? Number(job.truck.cost).toLocaleString('vi-VN') + ' đ' : null} />
+                    <Row label="Lấy hàng" value={job.truck.pickup_location || '—'} />
+                    <Row label="Giao hàng" value={job.truck.delivery_location || '—'} />
+                    <Row label="Cước" value={job.truck.cost ? Number(job.truck.cost).toLocaleString('vi-VN') + ' đ' : '—'} />
+                    <Row label="Ghi chú vận tải" value={job.truck.notes || '—'} />
+                    <Row label="Hoàn thành lúc" value={fmtDt(job.truck.completed_at)} color="var(--primary)" />
                   </Section>
                 )}
 
@@ -199,14 +261,29 @@ export default function JobDetailModal({ jobId, onClose }) {
                   <Section title="Công việc OPS">
                     {job.ops_tasks.map(t => (
                       <div key={t.id} style={{ padding: '8px 10px', borderBottom: '1px solid var(--border)', fontSize: 13 }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <span style={{ fontWeight: 500 }}>{t.ops_name}</span>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                          <span style={{ fontWeight: 500 }}>{t.ops_name || '—'}</span>
                           <span style={{ color: t.completed ? 'var(--primary)' : 'var(--warning)', fontSize: 11 }}>
                             {t.completed ? '✓ Hoàn thành' : 'Chờ xử lý'}
                           </span>
                         </div>
-                        <div style={{ color: 'var(--text-2)', marginTop: 2 }}>{t.content}</div>
+                        {t.content && <div style={{ color: 'var(--text-2)', marginBottom: 2 }}>{t.content}</div>}
                         {t.port && <div style={{ color: 'var(--text-3)', fontSize: 11 }}>Cảng: {t.port}</div>}
+                        {t.deadline && (
+                          <div style={{ fontSize: 11, color: deadlineColor(t.deadline), marginTop: 2 }}>
+                            Deadline: {fmtDt(t.deadline)}
+                          </div>
+                        )}
+                        {t.completed_at && (
+                          <div style={{ fontSize: 11, color: 'var(--primary)', marginTop: 2 }}>
+                            Hoàn thành lúc: {fmtDt(t.completed_at)}
+                          </div>
+                        )}
+                        {t.notes && (
+                          <div style={{ fontSize: 11, color: 'var(--text-2)', marginTop: 2, fontStyle: 'italic' }}>
+                            Ghi chú: {t.notes}
+                          </div>
+                        )}
                       </div>
                     ))}
                   </Section>

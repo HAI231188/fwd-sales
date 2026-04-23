@@ -10,7 +10,7 @@ const EMPTY_CONT = () => ({ cont_type: '40DC', cont_number: '', seal_number: '' 
 
 const INIT_FORM = {
   job_code: '', si_number: '', customer_name: '', customer_address: '', customer_tax_code: '',
-  sales_id: '', pol: '', pod: '', bill_number: '', mbl_no: '', hbl_no: '',
+  sales_id: '', pol: '', pod: '', mbl_no: '', hbl_no: '',
   etd: '', eta: '', tons: '', cbm: '', kg: '', so_kien: '', deadline: '', han_lenh: '',
   service_type: 'tk', other_services: {},
 };
@@ -254,11 +254,7 @@ export default function CreateJobModal({ onClose, onCreated }) {
               <input className="form-input" value={form.pod} onChange={e => set('pod', e.target.value)} placeholder="Cảng dỡ hàng" />
             </div>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginTop: 12 }}>
-            <div className="form-group">
-              <label className="form-label">Số B/L</label>
-              <input className="form-input" value={form.bill_number} onChange={e => set('bill_number', e.target.value)} />
-            </div>
+          <div className="grid-2" style={{ gap: 12, marginTop: 12 }}>
             <div className="form-group">
               <label className="form-label">MBL No</label>
               <input className="form-input" value={form.mbl_no} onChange={e => set('mbl_no', e.target.value)} />
