@@ -286,6 +286,32 @@ Also applies to backend route handlers with parallel structure (e.g. PATCH /tk, 
 
 ---
 
+### L12 — Debug with real data before fixing, and beware of default values
+
+**Root cause pattern:** Bugs in data display (stat cards, modals, lists) often trigger assumption-based fixes that patch symptoms but miss the actual data shape. Schema default values can also leak into queries in unexpected ways (e.g. `cus_confirm_status` defaults to `'pending'`, causing truck-only jobs without `cus_id` to match CUS pending queries).
+
+**Example:** "CUS chưa nhận = 0" bug took 3 fix iterations. Only after querying real DB data did it become clear there were no actual CUS jobs waiting — the counts were correct all along. A different "1 showing unexpectedly" symptom earlier was caused by schema default values bleeding into queries.
+
+**Rules (mandatory for all data display bugs):**
+
+1. **DEBUG WITH REAL DATA FIRST:**
+   - Run a `SELECT` query on the actual database before writing any fix code
+   - Report query results to the user before writing fix code
+   - Confirm the "bug" is actually wrong behavior, not correct behavior on empty/new data
+
+2. **WATCH DEFAULT VALUES:**
+   - When a table has a `DEFAULT` value (e.g. `cus_confirm_status DEFAULT 'pending'`), any row created without that column will have that default — even when the field isn't semantically applicable
+   - Always consider: "could this default value match queries it shouldn't?"
+   - Common fix: add explicit NULL guards (e.g. `AND cus_id IS NOT NULL`) or use conditional defaults
+
+3. **REPEATED BUG RULE:**
+   - If a bug has been "fixed" once and returns, L12 applies with extra rigor
+   - Never skip the real-data debug step for repeat bugs
+
+4. Applies to: stat cards, drilldown modals, list views, dashboards, search results, any data-display component.
+
+---
+
 ## 6. Session Start Checklist
 
 1. Read this file.
