@@ -3,6 +3,14 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getJob, updateJobTk, updateJobTruck } from '../api';
 import { useAuth } from '../App';
 
+const TK_FLOW_OPTIONS = [
+  { value: 'xanh', label: 'Xanh', color: '#22c55e', bg: 'rgba(34,197,94,0.15)' },
+  { value: 'vang', label: 'Vàng', color: '#d97706', bg: 'rgba(217,119,6,0.15)' },
+  { value: 'do',   label: 'Đỏ',   color: '#ef4444', bg: 'rgba(239,68,68,0.15)' },
+];
+const TK_FLOW_LABEL = { xanh: 'Xanh', vang: 'Vàng', do: 'Đỏ' };
+const TK_FLOW_COLOR = { xanh: '#22c55e', vang: '#d97706', do: '#ef4444' };
+
 const TK_STATUS_OPTIONS = [
   { value: 'chua_truyen', label: 'Chưa truyền' },
   { value: 'dang_lam',    label: 'Đang làm' },
@@ -136,6 +144,36 @@ function InlineSelect({ value, options, onSave }) {
       onBlur={() => setEditing(false)}
       style={{ padding: '2px 4px', border: '1px solid var(--primary)', borderRadius: 4, fontSize: 13 }}>
       {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+    </select>
+  );
+}
+
+function InlineFlowSelect({ value, onSave }) {
+  const [editing, setEditing] = useState(false);
+  const ref = useRef();
+  const opt = TK_FLOW_OPTIONS.find(o => o.value === value);
+
+  if (!editing) return (
+    <span onClick={() => { setEditing(true); setTimeout(() => ref.current?.focus(), 0); }}
+      title="Click để chọn"
+      style={{
+        cursor: 'pointer', display: 'inline-block',
+        background: opt?.bg || 'transparent',
+        color: opt?.color || 'var(--text-3)',
+        padding: '1px 8px', borderRadius: 10,
+        fontSize: 12, fontWeight: opt ? 600 : 400,
+        border: '1px dashed var(--border)',
+      }}>
+      {opt?.label || '—'}
+    </span>
+  );
+  return (
+    <select ref={ref} value={value || ''} autoFocus
+      onChange={e => { onSave(e.target.value || null); setEditing(false); }}
+      onBlur={() => setEditing(false)}
+      style={{ padding: '2px 4px', border: '1px solid var(--primary)', borderRadius: 4, fontSize: 13 }}>
+      <option value="">— Bỏ chọn —</option>
+      {TK_FLOW_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
     </select>
   );
 }
@@ -321,7 +359,7 @@ export default function JobDetailModal({ jobId, onClose }) {
                             <InlineInput value={tk.tk_number} onSave={v => tkMut.mutate({ tk_number: v })} />
                           </ERow>
                           <ERow label="Luồng">
-                            <InlineInput value={tk.tk_flow} onSave={v => tkMut.mutate({ tk_flow: v })} />
+                            <InlineFlowSelect value={tk.tk_flow} onSave={v => tkMut.mutate({ tk_flow: v })} />
                           </ERow>
                           <ERow label="Trạng thái">
                             <InlineSelect value={tk.tk_status} options={TK_STATUS_OPTIONS}
@@ -363,7 +401,7 @@ export default function JobDetailModal({ jobId, onClose }) {
                         <>
                           <Row label="Ngày TK" value={fmtDt(tk.tk_datetime)} />
                           <Row label="Số TK" value={tk.tk_number || '—'} />
-                          <Row label="Luồng" value={tk.tk_flow || '—'} />
+                          <Row label="Luồng" value={TK_FLOW_LABEL[tk.tk_flow] || '—'} color={TK_FLOW_COLOR[tk.tk_flow]} />
                           <ERow label="Trạng thái">
                             <InlineSelect value={tk.tk_status} options={TK_STATUS_OPTIONS}
                               onSave={v => tkMut.mutate({ tk_status: v })} />
@@ -378,7 +416,7 @@ export default function JobDetailModal({ jobId, onClose }) {
                         <>
                           <Row label="Ngày TK" value={fmtDt(tk.tk_datetime)} />
                           <Row label="Số TK" value={tk.tk_number || '—'} />
-                          <Row label="Luồng" value={tk.tk_flow || '—'} />
+                          <Row label="Luồng" value={TK_FLOW_LABEL[tk.tk_flow] || '—'} color={TK_FLOW_COLOR[tk.tk_flow]} />
                           <Row label="Trạng thái" value={TK_STATUS_LABEL[tk.tk_status] || '—'}
                                color={TK_STATUS_COLOR[tk.tk_status]} />
                           <Row label="Ngày TQ" value={fmtDt(tk.tq_datetime)} />

@@ -102,6 +102,12 @@ function InlineSelect({ value, options, onSave }) {
   );
 }
 
+const TK_FLOW_OPTIONS = [
+  { value: 'xanh', label: 'Xanh', color: '#22c55e', bg: 'rgba(34,197,94,0.15)' },
+  { value: 'vang', label: 'Vàng', color: '#d97706', bg: 'rgba(217,119,6,0.15)' },
+  { value: 'do',   label: 'Đỏ',   color: '#ef4444', bg: 'rgba(239,68,68,0.15)' },
+];
+
 const OPS_PARTNER_OPTIONS = ['OPS 1', 'OPS 2', 'TTN', 'CDK', 'CTX'];
 
 function tkFlowRowBg(j) {
@@ -110,6 +116,36 @@ function tkFlowRowBg(j) {
   if (j.tk_flow === 'do') return 'rgba(239,68,68,0.06)';
   if (j.tk_status === 'chua_truyen') return 'rgba(239,68,68,0.04)';
   return '';
+}
+
+function InlineFlowSelect({ value, onSave }) {
+  const [editing, setEditing] = useState(false);
+  const ref = useRef();
+  const opt = TK_FLOW_OPTIONS.find(o => o.value === value);
+
+  if (!editing) return (
+    <span onClick={() => { setEditing(true); setTimeout(() => ref.current?.focus(), 0); }}
+      title="Click để chọn"
+      style={{
+        cursor: 'pointer', display: 'inline-block',
+        background: opt?.bg || 'transparent',
+        color: opt?.color || 'var(--text-3)',
+        padding: '1px 8px', borderRadius: 10,
+        fontSize: 12, fontWeight: opt ? 600 : 400,
+        border: '1px dashed var(--border)',
+      }}>
+      {opt?.label || '—'}
+    </span>
+  );
+  return (
+    <select ref={ref} value={value || ''} autoFocus
+      onChange={e => { onSave(e.target.value || null); setEditing(false); }}
+      onBlur={() => setEditing(false)}
+      style={{ padding: '2px 4px', border: '1px solid var(--primary)', borderRadius: 4, fontSize: 13 }}>
+      <option value="">— Bỏ chọn —</option>
+      {TK_FLOW_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+    </select>
+  );
 }
 
 function OpsPartnerCell({ job, onSave }) {
@@ -341,7 +377,7 @@ export default function LogDashboardCus() {
                                 onSave={v => tkMut.mutate({ jobId: j.id, data: { tk_number: v } })} />
                             </td>
                             <td style={{ padding: '8px 6px', minWidth: 70 }}>
-                              <InlineInput value={j.tk_flow}
+                              <InlineFlowSelect value={j.tk_flow}
                                 onSave={v => tkMut.mutate({ jobId: j.id, data: { tk_flow: v } })} />
                             </td>
                             <td style={{ padding: '8px 6px', minWidth: 110 }}>
