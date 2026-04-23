@@ -639,11 +639,16 @@ router.get('/:id', requireAuth, async (req, res) => {
 
 // PUT /api/jobs/:id
 router.put('/:id', requireAuth, async (req, res) => {
+  if (req.user.role === 'ops')
+    return res.status(403).json({ error: 'Không có quyền chỉnh sửa thông tin job' });
+  if (req.body.deadline !== undefined && req.user.role !== 'truong_phong_log')
+    return res.status(403).json({ error: 'Chỉ Trưởng phòng mới được đổi deadline' });
+
   const FIELDS = ['job_code','customer_name','customer_address','customer_tax_code',
     'pol','pod','cont_number','cont_type','seal_number',
     'etd','eta','tons','cbm','deadline','service_type','other_services','status',
     'cargo_type','so_kien','kg','destination','han_lenh','si_number','mbl_no','hbl_no',
-  'ops_partner'];
+    'ops_partner','sales_id'];
 
   const client = await db.pool.connect();
   try {
@@ -659,12 +664,30 @@ router.put('/:id', requireAuth, async (req, res) => {
       params.push(val);
       await recordHistory(client, req.params.id, req.user.id, f, cur[0][f], val);
     }
-    if (!sets.length) { await client.query('ROLLBACK'); return res.json(cur[0]); }
-    sets.push(`updated_at = NOW()`);
-    params.push(req.params.id);
-    const { rows } = await client.query(`UPDATE jobs SET ${sets.join(', ')} WHERE id = $${idx} RETURNING *`, params);
+
+    let containersUpdated = false;
+    if (Array.isArray(req.body.containers)) {
+      await client.query(`DELETE FROM job_containers WHERE job_id = $1`, [req.params.id]);
+      for (const c of req.body.containers) {
+        if (c.cont_type) {
+          await client.query(
+            `INSERT INTO job_containers (job_id, cont_number, cont_type, seal_number) VALUES ($1,$2,$3,$4)`,
+            [req.params.id, c.cont_number || null, c.cont_type, c.seal_number || null]
+          );
+        }
+      }
+      await recordHistory(client, req.params.id, req.user.id, 'containers', null, 'updated');
+      containersUpdated = true;
+    }
+
+    if (!sets.length && !containersUpdated) { await client.query('ROLLBACK'); return res.json(cur[0]); }
+    if (sets.length) {
+      sets.push(`updated_at = NOW()`);
+      params.push(req.params.id);
+      await client.query(`UPDATE jobs SET ${sets.join(', ')} WHERE id = $${idx}`, params);
+    }
     await client.query('COMMIT');
-    res.json(rows[0]);
+    res.json({ ok: true });
   } catch (err) {
     await client.query('ROLLBACK');
     res.status(500).json({ error: err.message });

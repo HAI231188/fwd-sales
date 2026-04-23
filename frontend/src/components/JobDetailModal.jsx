@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getJob, updateJobTk, updateJobTruck } from '../api';
+import { getJob, updateJobTk, updateJobTruck, updateJob, deleteJob, requestJobDelete, getLogStaff } from '../api';
 import { useAuth } from '../App';
 
 const TK_FLOW_OPTIONS = [
@@ -36,6 +36,8 @@ const CUS_CONFIRM_LABEL = {
 const CUS_CONFIRM_COLOR = {
   pending: 'var(--text-2)', confirmed: 'var(--primary)', adjustment_requested: 'var(--warning)',
 };
+const CONT_TYPES = ['20DC', '40DC', '40HC', '45HC', '20RF', '40RF'];
+const OPS_PARTNER_OPTIONS = ['OPS 1', 'OPS 2', 'TTN', 'CDK', 'CTX'];
 
 function fmtDt(val) {
   if (!val) return '—';
@@ -211,6 +213,54 @@ function HistoryRow({ row }) {
   );
 }
 
+function buildDraft(job) {
+  const otherSvc = parseJson(job.other_services);
+  return {
+    job_code: job.job_code || '',
+    customer_name: job.customer_name || '',
+    customer_address: job.customer_address || '',
+    customer_tax_code: job.customer_tax_code || '',
+    pol: job.pol || '',
+    pod: job.pod || '',
+    etd: job.etd ? job.etd.slice(0, 10) : '',
+    eta: job.eta ? job.eta.slice(0, 10) : '',
+    service_type: job.service_type || 'tk',
+    cargo_type: job.cargo_type || 'fcl',
+    cont_number: job.cont_number || '',
+    cont_type: job.cont_type || '',
+    seal_number: job.seal_number || '',
+    tons: job.tons || '',
+    cbm: job.cbm || '',
+    so_kien: job.so_kien || '',
+    kg: job.kg || '',
+    destination: job.destination || '',
+    han_lenh: toDatetimeLocal(job.han_lenh),
+    si_number: job.si_number || '',
+    mbl_no: job.mbl_no || '',
+    hbl_no: job.hbl_no || '',
+    ops_partner: job.ops_partner || '',
+    sales_id: job.sales_id || '',
+    deadline: toDatetimeLocal(job.deadline),
+    status: job.status || 'pending',
+    other_services: { ...otherSvc },
+    containers: Array.isArray(job.containers) && job.containers.length > 0
+      ? job.containers.map(c => ({ cont_type: c.cont_type || '', cont_number: c.cont_number || '', seal_number: c.seal_number || '' }))
+      : [],
+  };
+}
+
+const INP = { padding: '4px 8px', border: '1px solid var(--border)', borderRadius: 6, fontSize: 13, width: '100%', background: 'var(--bg-card)' };
+const LBL = { fontSize: 12, color: 'var(--text-2)', marginBottom: 3, display: 'block' };
+
+function FRow({ label, children }) {
+  return (
+    <div style={{ marginBottom: 10 }}>
+      <label style={LBL}>{label}</label>
+      {children}
+    </div>
+  );
+}
+
 export default function JobDetailModal({ jobId, onClose }) {
   const { user } = useAuth();
   const qc = useQueryClient();
@@ -218,11 +268,25 @@ export default function JobDetailModal({ jobId, onClose }) {
   const canEditTk = ['cus','cus1','cus2','cus3'].includes(user?.role);
   const canEditStatus = user?.role === 'ops';
   const canEditTruck = user?.role === 'dieu_do';
+  const canEditJob = user?.role !== 'ops';
+  const isTP = user?.role === 'truong_phong_log';
+
+  const [editMode, setEditMode] = useState(false);
+  const [draft, setDraft] = useState(null);
+  const [editErr, setEditErr] = useState('');
+  const [deleteReason, setDeleteReason] = useState('');
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   const { data: job, isLoading } = useQuery({
     queryKey: ['job', jobId],
     queryFn: () => getJob(jobId),
     enabled: !!jobId,
+  });
+
+  const { data: staffList } = useQuery({
+    queryKey: ['logStaff'],
+    queryFn: getLogStaff,
+    enabled: editMode,
   });
 
   const tkMut = useMutation({
@@ -233,6 +297,68 @@ export default function JobDetailModal({ jobId, onClose }) {
     mutationFn: data => updateJobTruck(jobId, data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['job', jobId] }),
   });
+  const editMut = useMutation({
+    mutationFn: data => updateJob(jobId, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['job', jobId] });
+      qc.invalidateQueries({ queryKey: ['jobs'] });
+      setEditMode(false);
+      setDraft(null);
+    },
+    onError: err => setEditErr(err?.response?.data?.error || 'Lỗi khi lưu'),
+  });
+  const deleteMut = useMutation({
+    mutationFn: () => deleteJob(jobId),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['jobs'] }); onClose(); },
+    onError: err => setEditErr(err?.response?.data?.error || 'Lỗi khi xóa'),
+  });
+  const deleteReqMut = useMutation({
+    mutationFn: () => requestJobDelete(jobId, deleteReason),
+    onSuccess: () => { setShowDeleteConfirm(false); setDeleteReason(''); alert('Đã gửi yêu cầu xóa job'); },
+    onError: err => setEditErr(err?.response?.data?.error || 'Lỗi khi gửi yêu cầu'),
+  });
+
+  function startEdit() {
+    if (!job) return;
+    setDraft(buildDraft(job));
+    setEditErr('');
+    setEditMode(true);
+  }
+  function setD(field, value) {
+    setDraft(d => ({ ...d, [field]: value }));
+  }
+  function toggleOs(key) {
+    setDraft(d => ({ ...d, other_services: { ...d.other_services, [key]: !d.other_services[key] } }));
+  }
+  function addCont() {
+    setDraft(d => ({ ...d, containers: [...d.containers, { cont_type: '', cont_number: '', seal_number: '' }] }));
+  }
+  function removeCont(i) {
+    setDraft(d => ({ ...d, containers: d.containers.filter((_, idx) => idx !== i) }));
+  }
+  function updateCont(i, field, value) {
+    setDraft(d => {
+      const conts = d.containers.map((c, idx) => idx === i ? { ...c, [field]: value } : c);
+      return { ...d, containers: conts };
+    });
+  }
+  function handleSave() {
+    setEditErr('');
+    const payload = { ...draft };
+    if (!isTP) delete payload.deadline;
+    if (payload.etd === '') payload.etd = null;
+    if (payload.eta === '') payload.eta = null;
+    if (payload.han_lenh === '') payload.han_lenh = null;
+    if (payload.deadline === '') payload.deadline = null;
+    editMut.mutate(payload);
+  }
+  function handleDelete() {
+    if (isTP) {
+      if (window.confirm('Xác nhận xóa job này?')) deleteMut.mutate();
+    } else {
+      setShowDeleteConfirm(true);
+    }
+  }
 
   if (!jobId) return null;
 
@@ -247,8 +373,43 @@ export default function JobDetailModal({ jobId, onClose }) {
               {job && <div style={{ fontSize: 12, color: 'var(--text-2)' }}>{job.customer_name}</div>}
             </div>
           </div>
-          <button className="btn btn-ghost btn-sm btn-icon" onClick={onClose}>✕</button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {job && canEditJob && !editMode && (
+              <>
+                <button className="btn btn-ghost btn-sm" onClick={startEdit} title="Chỉnh sửa job">✏️ Chỉnh sửa</button>
+                <button className="btn btn-danger btn-sm" onClick={handleDelete} title="Xóa job">🗑 Xóa</button>
+              </>
+            )}
+            {editMode && (
+              <>
+                <button className="btn btn-primary btn-sm" onClick={handleSave} disabled={editMut.isPending}>
+                  {editMut.isPending ? 'Đang lưu...' : '💾 Lưu'}
+                </button>
+                <button className="btn btn-ghost btn-sm" onClick={() => { setEditMode(false); setDraft(null); setEditErr(''); }}>Hủy</button>
+              </>
+            )}
+            <button className="btn btn-ghost btn-sm btn-icon" onClick={onClose}>✕</button>
+          </div>
         </div>
+
+        {editErr && (
+          <div style={{ padding: '8px 20px', background: 'var(--danger-dim)', color: 'var(--danger)', fontSize: 13 }}>{editErr}</div>
+        )}
+
+        {showDeleteConfirm && (
+          <div style={{ padding: '12px 20px', background: 'var(--warning-dim)', borderBottom: '1px solid var(--border)' }}>
+            <div style={{ fontSize: 13, marginBottom: 8, fontWeight: 600 }}>Gửi yêu cầu xóa job</div>
+            <input value={deleteReason} onChange={e => setDeleteReason(e.target.value)}
+              placeholder="Lý do xóa (bắt buộc)"
+              style={{ ...INP, marginBottom: 8 }} />
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button className="btn btn-danger btn-sm" onClick={() => deleteReqMut.mutate()} disabled={!deleteReason.trim() || deleteReqMut.isPending}>
+                {deleteReqMut.isPending ? 'Đang gửi...' : 'Gửi yêu cầu'}
+              </button>
+              <button className="btn btn-ghost btn-sm" onClick={() => { setShowDeleteConfirm(false); setDeleteReason(''); }}>Hủy</button>
+            </div>
+          </div>
+        )}
 
         <div className="modal-body" style={{ padding: 0, display: 'flex', overflow: 'hidden' }}>
           {isLoading ? (
@@ -258,73 +419,237 @@ export default function JobDetailModal({ jobId, onClose }) {
               {/* Left: job info */}
               <div style={{ padding: '20px 24px', borderRight: '1px solid var(--border)', overflowY: 'auto' }}>
 
-                <Section title="Thông tin chung">
-                  <Row label="Mã job" value={job.job_code || '—'} />
-                  <Row label="Mã SI" value={job.si_number || '—'} />
-                  <Row label="MBL No" value={job.mbl_no || '—'} />
-                  <Row label="HBL No" value={job.hbl_no || '—'} />
-                  <Row label="Ngày tạo" value={fmtDt(job.created_at)} />
-                  <Row label="Người tạo" value={job.created_by_name || '—'} />
-                  <Row label="Hạn lệnh" value={fmtDt(job.han_lenh)} color={deadlineColor(job.han_lenh)} />
-                  <Row label="Điểm đến" value={fmtDest(job.destination)} />
-                  <Row label="Khách hàng" value={job.customer_name} />
-                  <Row label="Địa chỉ" value={job.customer_address || '—'} />
-                  <Row label="MST" value={job.customer_tax_code || '—'} />
-                  <Row label="Sales" value={job.sales_name || '—'} />
-                  <Row label="Dịch vụ" value={SVC_LABEL[job.service_type] || job.service_type} />
-                  <SvcChips services={job.other_services} label="Dịch vụ khác" />
-                  <Row label="Deadline" value={fmtDt(job.deadline)} color={deadlineColor(job.deadline)} />
-                  <Row label="Trạng thái" value={job.status === 'completed' ? 'Hoàn thành' : 'Đang xử lý'}
-                       color={job.status === 'completed' ? 'var(--primary)' : 'var(--text)'} />
-                </Section>
-
-                <Section title="Lô hàng">
-                  <Row label="POL" value={job.pol || '—'} />
-                  <Row label="POD" value={job.pod || '—'} />
-                  <Row label="ETD" value={fmtDate(job.etd)} />
-                  <Row label="ETA" value={fmtDate(job.eta)} />
-                  {job.cargo_type === 'lcl' ? (
-                    <>
-                      <Row label="Loại hàng" value="LCL" />
-                      <Row label="Số kiện" value={job.so_kien} />
-                      <Row label="Kg" value={job.kg} />
-                      <Row label="CBM" value={job.cbm} />
-                    </>
-                  ) : (
-                    <>
-                      {Array.isArray(job.containers) && job.containers.length > 0 ? (
-                        <div style={{ padding: '4px 10px' }}>
-                          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
-                            <thead>
-                              <tr>
-                                <th style={{ textAlign: 'left', padding: '4px 6px', color: 'var(--text-2)', fontWeight: 600, borderBottom: '1px solid var(--border)' }}>Loại</th>
-                                <th style={{ textAlign: 'left', padding: '4px 6px', color: 'var(--text-2)', fontWeight: 600, borderBottom: '1px solid var(--border)' }}>Số cont</th>
-                                <th style={{ textAlign: 'left', padding: '4px 6px', color: 'var(--text-2)', fontWeight: 600, borderBottom: '1px solid var(--border)' }}>Số seal</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {job.containers.map((c, i) => (
-                                <tr key={i}>
-                                  <td style={{ padding: '4px 6px', fontWeight: 500 }}>{c.cont_type}</td>
-                                  <td style={{ padding: '4px 6px' }}>{c.cont_number || '—'}</td>
-                                  <td style={{ padding: '4px 6px', color: 'var(--text-2)' }}>{c.seal_number || '—'}</td>
-                                </tr>
+                {editMode && draft ? (
+                  <Section title="Chỉnh sửa job">
+                    <div style={{ padding: '8px 10px' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
+                        <FRow label="Mã job">
+                          <input style={INP} value={draft.job_code} onChange={e => setD('job_code', e.target.value)} />
+                        </FRow>
+                        <FRow label="Khách hàng">
+                          <input style={INP} value={draft.customer_name} onChange={e => setD('customer_name', e.target.value)} />
+                        </FRow>
+                        <FRow label="Địa chỉ KH">
+                          <input style={INP} value={draft.customer_address} onChange={e => setD('customer_address', e.target.value)} />
+                        </FRow>
+                        <FRow label="MST">
+                          <input style={INP} value={draft.customer_tax_code} onChange={e => setD('customer_tax_code', e.target.value)} />
+                        </FRow>
+                        <FRow label="POL">
+                          <input style={INP} value={draft.pol} onChange={e => setD('pol', e.target.value)} />
+                        </FRow>
+                        <FRow label="POD">
+                          <input style={INP} value={draft.pod} onChange={e => setD('pod', e.target.value)} />
+                        </FRow>
+                        <FRow label="ETD">
+                          <input style={INP} type="date" value={draft.etd} onChange={e => setD('etd', e.target.value)} />
+                        </FRow>
+                        <FRow label="ETA">
+                          <input style={INP} type="date" value={draft.eta} onChange={e => setD('eta', e.target.value)} />
+                        </FRow>
+                        <FRow label="Mã SI">
+                          <input style={INP} value={draft.si_number} onChange={e => setD('si_number', e.target.value)} />
+                        </FRow>
+                        <FRow label="MBL No">
+                          <input style={INP} value={draft.mbl_no} onChange={e => setD('mbl_no', e.target.value)} />
+                        </FRow>
+                        <FRow label="HBL No">
+                          <input style={INP} value={draft.hbl_no} onChange={e => setD('hbl_no', e.target.value)} />
+                        </FRow>
+                        <FRow label="Hạn lệnh">
+                          <input style={INP} type="datetime-local" value={draft.han_lenh} onChange={e => setD('han_lenh', e.target.value)} />
+                        </FRow>
+                        <FRow label="Điểm đến">
+                          <select style={INP} value={draft.destination} onChange={e => setD('destination', e.target.value)}>
+                            <option value="">—</option>
+                            <option value="hai_phong">Hải Phòng</option>
+                            <option value="khac">Khác</option>
+                          </select>
+                        </FRow>
+                        <FRow label="Dịch vụ">
+                          <select style={INP} value={draft.service_type} onChange={e => setD('service_type', e.target.value)}>
+                            <option value="tk">Tờ khai</option>
+                            <option value="truck">Vận chuyển</option>
+                            <option value="both">TK + Vận chuyển</option>
+                          </select>
+                        </FRow>
+                        <FRow label="Đối tác OPS">
+                          <select style={INP} value={draft.ops_partner} onChange={e => setD('ops_partner', e.target.value)}>
+                            <option value="">—</option>
+                            {OPS_PARTNER_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                            {draft.ops_partner && !OPS_PARTNER_OPTIONS.includes(draft.ops_partner) && (
+                              <option value={draft.ops_partner}>{draft.ops_partner}</option>
+                            )}
+                          </select>
+                        </FRow>
+                        {staffList && (
+                          <FRow label="Sales">
+                            <select style={INP} value={draft.sales_id} onChange={e => setD('sales_id', e.target.value)}>
+                              <option value="">—</option>
+                              {staffList.filter(s => ['sales','lead'].includes(s.role)).map(s => (
+                                <option key={s.id} value={s.id}>{s.name}</option>
                               ))}
-                            </tbody>
-                          </table>
+                            </select>
+                          </FRow>
+                        )}
+                        {isTP && (
+                          <FRow label="Deadline">
+                            <input style={INP} type="datetime-local" value={draft.deadline} onChange={e => setD('deadline', e.target.value)} />
+                          </FRow>
+                        )}
+                        <FRow label="Trạng thái">
+                          <select style={INP} value={draft.status} onChange={e => setD('status', e.target.value)}>
+                            <option value="pending">Đang xử lý</option>
+                            <option value="completed">Hoàn thành</option>
+                          </select>
+                        </FRow>
+                      </div>
+
+                      <div style={{ marginBottom: 10 }}>
+                        <label style={LBL}>Loại hàng</label>
+                        <div style={{ display: 'flex', gap: 16 }}>
+                          {['fcl','lcl'].map(v => (
+                            <label key={v} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, cursor: 'pointer' }}>
+                              <input type="radio" name="cargo_type" value={v} checked={draft.cargo_type === v} onChange={e => setD('cargo_type', e.target.value)} />
+                              {v.toUpperCase()}
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+
+                      {draft.cargo_type === 'lcl' ? (
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0 12px' }}>
+                          <FRow label="Số kiện"><input style={INP} type="number" value={draft.so_kien} onChange={e => setD('so_kien', e.target.value)} /></FRow>
+                          <FRow label="Kg"><input style={INP} type="number" value={draft.kg} onChange={e => setD('kg', e.target.value)} /></FRow>
+                          <FRow label="CBM"><input style={INP} type="number" value={draft.cbm} onChange={e => setD('cbm', e.target.value)} /></FRow>
                         </div>
                       ) : (
+                        <div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                            <label style={{ ...LBL, marginBottom: 0 }}>Containers</label>
+                            <button type="button" className="btn btn-ghost btn-sm" onClick={addCont} style={{ fontSize: 11 }}>+ Thêm cont</button>
+                          </div>
+                          {draft.containers.length === 0 ? (
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0 12px' }}>
+                              <FRow label="Số cont"><input style={INP} value={draft.cont_number} onChange={e => setD('cont_number', e.target.value)} /></FRow>
+                              <FRow label="Loại cont">
+                                <select style={INP} value={draft.cont_type} onChange={e => setD('cont_type', e.target.value)}>
+                                  <option value="">—</option>
+                                  {CONT_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                                </select>
+                              </FRow>
+                              <FRow label="Số seal"><input style={INP} value={draft.seal_number} onChange={e => setD('seal_number', e.target.value)} /></FRow>
+                            </div>
+                          ) : (
+                            draft.containers.map((c, i) => (
+                              <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr auto', gap: '0 8px', marginBottom: 8, alignItems: 'end' }}>
+                                <FRow label={i === 0 ? 'Loại cont' : ''}>
+                                  <select style={INP} value={c.cont_type} onChange={e => updateCont(i, 'cont_type', e.target.value)}>
+                                    <option value="">—</option>
+                                    {CONT_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                                  </select>
+                                </FRow>
+                                <FRow label={i === 0 ? 'Số cont' : ''}>
+                                  <input style={INP} value={c.cont_number} onChange={e => updateCont(i, 'cont_number', e.target.value)} />
+                                </FRow>
+                                <FRow label={i === 0 ? 'Số seal' : ''}>
+                                  <input style={INP} value={c.seal_number} onChange={e => updateCont(i, 'seal_number', e.target.value)} />
+                                </FRow>
+                                <button type="button" onClick={() => removeCont(i)} style={{ padding: '4px 8px', background: 'var(--danger-dim)', border: 'none', borderRadius: 4, cursor: 'pointer', color: 'var(--danger)', marginBottom: 10 }}>✕</button>
+                              </div>
+                            ))
+                          )}
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 12px' }}>
+                            <FRow label="Tấn"><input style={INP} type="number" value={draft.tons} onChange={e => setD('tons', e.target.value)} /></FRow>
+                            <FRow label="CBM"><input style={INP} type="number" value={draft.cbm} onChange={e => setD('cbm', e.target.value)} /></FRow>
+                          </div>
+                        </div>
+                      )}
+
+                      <div style={{ marginBottom: 10 }}>
+                        <label style={LBL}>Dịch vụ khác</label>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
+                          {OTHER_SVC_KEYS.map(k => (
+                            <label key={k} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, cursor: 'pointer' }}>
+                              <input type="checkbox" checked={!!draft.other_services[k]} onChange={() => toggleOs(k)} />
+                              {OTHER_SVC_LABEL[k]}
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </Section>
+                ) : (
+                  <>
+                    <Section title="Thông tin chung">
+                      <Row label="Mã job" value={job.job_code || '—'} />
+                      <Row label="Mã SI" value={job.si_number || '—'} />
+                      <Row label="MBL No" value={job.mbl_no || '—'} />
+                      <Row label="HBL No" value={job.hbl_no || '—'} />
+                      <Row label="Ngày tạo" value={fmtDt(job.created_at)} />
+                      <Row label="Người tạo" value={job.created_by_name || '—'} />
+                      <Row label="Hạn lệnh" value={fmtDt(job.han_lenh)} color={deadlineColor(job.han_lenh)} />
+                      <Row label="Điểm đến" value={fmtDest(job.destination)} />
+                      <Row label="Khách hàng" value={job.customer_name} />
+                      <Row label="Địa chỉ" value={job.customer_address || '—'} />
+                      <Row label="MST" value={job.customer_tax_code || '—'} />
+                      <Row label="Sales" value={job.sales_name || '—'} />
+                      <Row label="Dịch vụ" value={SVC_LABEL[job.service_type] || job.service_type} />
+                      <SvcChips services={job.other_services} label="Dịch vụ khác" />
+                      <Row label="Deadline" value={fmtDt(job.deadline)} color={deadlineColor(job.deadline)} />
+                      <Row label="Trạng thái" value={job.status === 'completed' ? 'Hoàn thành' : 'Đang xử lý'}
+                           color={job.status === 'completed' ? 'var(--primary)' : 'var(--text)'} />
+                    </Section>
+
+                    <Section title="Lô hàng">
+                      <Row label="POL" value={job.pol || '—'} />
+                      <Row label="POD" value={job.pod || '—'} />
+                      <Row label="ETD" value={fmtDate(job.etd)} />
+                      <Row label="ETA" value={fmtDate(job.eta)} />
+                      {job.cargo_type === 'lcl' ? (
                         <>
-                          <Row label="Số cont" value={job.cont_number || '—'} />
-                          <Row label="Loại cont" value={job.cont_type || '—'} />
-                          <Row label="Số seal" value={job.seal_number || '—'} />
+                          <Row label="Loại hàng" value="LCL" />
+                          <Row label="Số kiện" value={job.so_kien} />
+                          <Row label="Kg" value={job.kg} />
+                          <Row label="CBM" value={job.cbm} />
+                        </>
+                      ) : (
+                        <>
+                          {Array.isArray(job.containers) && job.containers.length > 0 ? (
+                            <div style={{ padding: '4px 10px' }}>
+                              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                                <thead>
+                                  <tr>
+                                    <th style={{ textAlign: 'left', padding: '4px 6px', color: 'var(--text-2)', fontWeight: 600, borderBottom: '1px solid var(--border)' }}>Loại</th>
+                                    <th style={{ textAlign: 'left', padding: '4px 6px', color: 'var(--text-2)', fontWeight: 600, borderBottom: '1px solid var(--border)' }}>Số cont</th>
+                                    <th style={{ textAlign: 'left', padding: '4px 6px', color: 'var(--text-2)', fontWeight: 600, borderBottom: '1px solid var(--border)' }}>Số seal</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {job.containers.map((c, i) => (
+                                    <tr key={i}>
+                                      <td style={{ padding: '4px 6px', fontWeight: 500 }}>{c.cont_type}</td>
+                                      <td style={{ padding: '4px 6px' }}>{c.cont_number || '—'}</td>
+                                      <td style={{ padding: '4px 6px', color: 'var(--text-2)' }}>{c.seal_number || '—'}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          ) : (
+                            <>
+                              <Row label="Số cont" value={job.cont_number || '—'} />
+                              <Row label="Loại cont" value={job.cont_type || '—'} />
+                              <Row label="Số seal" value={job.seal_number || '—'} />
+                            </>
+                          )}
+                          <Row label="Tấn" value={job.tons} />
+                          <Row label="CBM" value={job.cbm} />
                         </>
                       )}
-                      <Row label="Tấn" value={job.tons} />
-                      <Row label="CBM" value={job.cbm} />
-                    </>
-                  )}
-                </Section>
+                    </Section>
+                  </>
+                )}
 
                 <Section title="Phân công">
                   <Row label="Nhân viên CUS" value={job.cus_name || '—'} />
