@@ -40,6 +40,19 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// Temporary debug: TP jobs visibility — remove after investigation
+app.get('/api/debug/tp-jobs', async (req, res) => {
+  const db = require('./db');
+  try {
+    const [allJobs, pendingTotal, assignSummary] = await Promise.all([
+      db.query(`SELECT j.id, j.job_code, j.status, j.deleted_at, j.service_type, ja.id AS ja_id, ja.cus_id, ja.ops_id, ja.dieu_do_id FROM jobs j LEFT JOIN job_assignments ja ON ja.job_id = j.id ORDER BY j.id DESC LIMIT 20`),
+      db.query(`SELECT COUNT(*) AS v FROM jobs WHERE deleted_at IS NULL AND status = 'pending'`),
+      db.query(`SELECT COUNT(*) AS total_ja, COUNT(ja.dieu_do_id) AS with_dd FROM jobs j LEFT JOIN job_assignments ja ON ja.job_id = j.id WHERE j.deleted_at IS NULL AND j.status = 'pending'`),
+    ]);
+    res.json({ jobs_with_assignments: allJobs.rows, pending_total: parseInt(pendingTotal.rows[0].v), assignment_summary: assignSummary.rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // Temporary debug: follow-up customers — remove after diagnosis
 app.get('/api/debug/followup', async (req, res) => {
   const db = require('./db');
