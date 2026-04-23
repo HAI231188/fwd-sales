@@ -85,11 +85,19 @@ const ALL_COLS = [
 ];
 const LS_COL_KEY = 'tp_grid_columns';
 function loadVisibleCols() {
+  const allKeys = ALL_COLS.map(c => c.key);
   try {
     const s = localStorage.getItem(LS_COL_KEY);
-    if (s) { const a = JSON.parse(s); if (Array.isArray(a) && a.length) return a; }
+    if (s) {
+      const a = JSON.parse(s);
+      if (Array.isArray(a)) {
+        const valid = a.filter(k => allKeys.includes(k));
+        if (valid.length) return valid;
+      }
+    }
   } catch {}
-  return ALL_COLS.map(c => c.key);
+  localStorage.removeItem(LS_COL_KEY);
+  return allKeys;
 }
 
 function StatCard({ label, value, color, onClick, badge, rows }) {
@@ -392,6 +400,8 @@ export default function LogDashboardTP() {
     return () => document.removeEventListener('visibilitychange', handler);
   }, []);
 
+  useEffect(() => { setFilterAssignee(''); }, [tab]);
+
   const pollInterval = isVisible ? 5000 : 30000;
 
   const { data: stats } = useQuery({ queryKey: ['jobStats'], queryFn: getJobStats, refetchInterval: pollInterval });
@@ -431,11 +441,16 @@ export default function LogDashboardTP() {
   });
 
   const modeLabel = settings?.assignment_mode === 'manual' ? 'Bán tự động' : 'Tự động';
-  const cusStaff = (qc.getQueryData(['logStaff']) || []).filter(s => ['cus','cus1','cus2','cus3'].includes(s.role));
-  const opsStaff = (qc.getQueryData(['logStaff']) || []).filter(s => s.role === 'ops');
-  const allAssignees = [...cusStaff, ...opsStaff];
+  const logStaff = qc.getQueryData(['logStaff']) || [];
+  const cusStaff = logStaff.filter(s => ['cus','cus1','cus2','cus3'].includes(s.role));
+  const opsStaff = logStaff.filter(s => s.role === 'ops');
+  const dieuDoStaff = logStaff.filter(s => s.role === 'dieu_do');
   const filteredJobs = filterAssignee
-    ? jobs.filter(j => String(j.cus_id) === filterAssignee || String(j.ops_id) === filterAssignee)
+    ? jobs.filter(j =>
+        String(j.cus_id) === filterAssignee ||
+        String(j.ops_id) === filterAssignee ||
+        String(j.dieu_do_id) === filterAssignee
+      )
     : jobs;
 
   return (
@@ -532,6 +547,8 @@ export default function LogDashboardTP() {
                   {cusStaff.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                   {opsStaff.length > 0 && <option disabled>── OPS ──</option>}
                   {opsStaff.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  {dieuDoStaff.length > 0 && <option disabled>── Điều Độ ──</option>}
+                  {dieuDoStaff.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                 </select>
               )}
               <div style={{ position: 'relative' }}>

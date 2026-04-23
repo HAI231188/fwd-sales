@@ -40,29 +40,6 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// Temporary debug: run exact TP query and return raw result — remove after diagnosis
-app.get('/api/debug/tp-test', async (req, res) => {
-  const db = require('./db');
-  try {
-    const { rows } = await db.query(`
-      SELECT j.id, j.job_code, j.status, j.deleted_at, j.service_type,
-        ja.id AS assignment_id, ja.cus_id, ja.ops_id, ja.dieu_do_id,
-        jt.id AS tk_id, jtr.id AS truck_id
-      FROM jobs j
-      LEFT JOIN LATERAL (
-        SELECT * FROM job_assignments WHERE job_id = j.id ORDER BY id DESC LIMIT 1
-      ) ja ON true
-      LEFT JOIN job_tk jt ON jt.job_id = j.id
-      LEFT JOIN job_truck jtr ON jtr.job_id = j.id
-      WHERE j.deleted_at IS NULL AND j.status = $1
-      ORDER BY j.created_at DESC
-    `, ['pending']);
-    res.json({ count: rows.length, rows });
-  } catch (err) {
-    res.status(500).json({ error: err.message, stack: err.stack });
-  }
-});
-
 // Serve frontend — always, whenever the dist folder exists
 if (hasFrontend) {
   app.use(express.static(frontendPath));

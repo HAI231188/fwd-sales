@@ -489,10 +489,6 @@ router.get('/', requireAuth, async (req, res) => {
 
   const WHERE = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
 
-  if (role === 'truong_phong_log') {
-    console.log('[TP-DEBUG] GET /api/jobs — role:', role, 'userId:', userId, 'WHERE:', WHERE, 'params:', params);
-  }
-
   try {
     const { rows } = await db.query(`
       SELECT j.*,
@@ -533,9 +529,6 @@ router.get('/', requireAuth, async (req, res) => {
       ${WHERE}
       ORDER BY j.created_at DESC
     `, params);
-    if (role === 'truong_phong_log') {
-      console.log('[TP-DEBUG] GET /api/jobs result count:', rows.length, 'first row id:', rows[0]?.id ?? 'none');
-    }
     res.json(rows);
   } catch (err) {
     console.error('GET /api/jobs error (role=' + role + '):', err.message);
