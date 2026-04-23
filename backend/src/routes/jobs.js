@@ -198,7 +198,7 @@ router.get('/deadline-requests', requireAuth, async (req, res) => {
 
 // GET /api/jobs/debug-assignment  — TEMPORARY DEBUG, remove after investigation
 router.get('/debug-assignment', requireAuth, async (req, res) => {
-  if (req.user.role !== 'truong_phong_log') return res.status(403).json({ error: 'Forbidden' });
+  if (!['truong_phong_log','lead'].includes(req.user.role)) return res.status(403).json({ error: 'Forbidden' });
   try {
     const [cusUsers, recentJA, recentJobs] = await Promise.all([
       db.query(`SELECT id, name, username, role FROM users WHERE role IN ('cus','cus1','cus2','cus3','ops') ORDER BY role, name`),
