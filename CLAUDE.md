@@ -272,6 +272,20 @@ Also applies to backend route handlers with parallel structure (e.g. PATCH /tk, 
 
 ---
 
+### L11 — Every job/customer list must have clickable rows
+
+**Root cause pattern:** Drilldown modals, stat card drilldowns, and search results repeatedly ship without row-click handlers. Users see a list of jobs/customers but have no way to see details — they must navigate back, find the item in the main grid, and click from there.
+
+**Rules (mandatory for all modules — LOG, Sales, future OVS/PRI/CUS/ACCOUNTING):**
+1. ANY component that displays a list of jobs MUST make each row clickable to open `JobDetailModal`.
+2. ANY component that displays a list of customers MUST make each row clickable to open `CustomerDetailModal`.
+3. Applies to: drilldown modals, stat card drilldowns, search results, notification lists, activity lists, history views, filtered lists.
+4. Inline action buttons (Approve/Reject, Edit, Delete, etc.) inside the row must use `event.stopPropagation()` to prevent triggering the row-level modal open.
+5. Hover state: add `cursor: pointer` and subtle background change to signal clickability.
+6. Never ship a job/customer list view without clickable rows — this is a core UX contract.
+
+---
+
 ## 6. Session Start Checklist
 
 1. Read this file.
