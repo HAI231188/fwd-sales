@@ -202,6 +202,16 @@ This codebase has no TypeScript, no API schema validation, no serializers. The S
 - `GET /api/jobs/stats` → `total_pending`, `warn_soon`, `delete_requests`, `total_managing`, `sap_han`, `qua_han`
 - `GET /api/jobs/customer-search` → `customer_address`, `customer_tax_code`, `pipeline_id`, `sales_id`, `sales_name`
 
+### L7 — Seed scripts must never DELETE users outside their own scope
+
+**Root cause pattern:** `seed_users.js` had a broad `DELETE FROM users WHERE code != ALL(sales_codes)` that deleted any user not in the sales list. When the LOG module added cus/ops users with FK references (`ai_assignment_logs.assigned_user_id`), the DELETE failed with a FK constraint violation, crashed `npm run db:seed`, and Railway entered a restart loop ("Application failed to respond").
+
+**Rules:**
+1. Seed scripts must scope DELETE by role (`role IN ('sales','lead')`) not by exclusion of codes — never assume the users table only contains your module's users.
+2. Each module's seed script only manages its own roles — do not delete users that belong to other modules.
+3. When adding a new module with new roles, audit all existing seed scripts to confirm they won't accidentally delete the new users.
+4. Test `npm run db:seed` locally after adding new roles before pushing to production.
+
 ---
 
 ## 6. Session Start Checklist
