@@ -140,7 +140,7 @@ async function getOpsContext(pool, candidateIds) {
 // Returns { user_id, user_name, reason, cost, fallback } — no DB writes
 async function suggestCus(jobData, pool) {
   const { rows: candidates } = await pool.query(
-    `SELECT id FROM users WHERE username IN ('cus1','cus2','cus3')`
+    `SELECT id FROM users WHERE role IN ('cus1','cus2','cus3')`
   );
   const candidateIds = candidates.map(r => r.id);
   if (candidateIds.length === 0) throw new Error('No CUS candidates found in database');
@@ -216,7 +216,7 @@ async function suggestOps(jobData, pool) {
   }
 
   const { rows: candidates } = await pool.query(
-    `SELECT id FROM users WHERE username IN ('ops1','ops2')`
+    `SELECT id FROM users WHERE role = 'ops'`
   );
   const candidateIds = candidates.map(r => r.id);
   if (candidateIds.length === 0) throw new Error('No OPS candidates found in database');
