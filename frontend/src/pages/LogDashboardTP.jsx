@@ -59,6 +59,37 @@ function deadlineStyle(dl) {
   return { color: 'var(--primary)' };
 }
 
+const ALL_COLS = [
+  { key: 'stt',          label: '#' },
+  { key: 'job_code',     label: 'Số job' },
+  { key: 'created_at',   label: 'Ngày tạo' },
+  { key: 'customer',     label: 'Tên khách' },
+  { key: 'han_lenh',     label: 'Hạn lệnh' },
+  { key: 'deadline',     label: 'Deadline' },
+  { key: 'tk_flow',      label: 'Luồng TK' },
+  { key: 'tk_number',    label: 'Số TK' },
+  { key: 'tk_datetime',  label: 'Ngày TK' },
+  { key: 'tk_status',    label: 'TT TK' },
+  { key: 'tq_datetime',  label: 'Ngày TQ' },
+  { key: 'delivery',     label: 'Ngày giao' },
+  { key: 'phan_cong',    label: 'Phân công' },
+  { key: 'delivery_loc', label: 'Địa điểm giao' },
+  { key: 'cargo',        label: 'Cont-Loại' },
+  { key: 'service',      label: 'DV' },
+  { key: 'etd_eta',      label: 'ETD-ETA' },
+  { key: 'cus',          label: 'CUS' },
+  { key: 'ops',          label: 'OPS' },
+  { key: 'notes',        label: 'Ghi chú' },
+];
+const LS_COL_KEY = 'tp_grid_columns';
+function loadVisibleCols() {
+  try {
+    const s = localStorage.getItem(LS_COL_KEY);
+    if (s) { const a = JSON.parse(s); if (Array.isArray(a) && a.length) return a; }
+  } catch {}
+  return ALL_COLS.map(c => c.key);
+}
+
 function StatCard({ label, value, color, onClick, badge }) {
   return (
     <div className="card" onClick={onClick}
@@ -267,6 +298,16 @@ export default function LogDashboardTP() {
   const [showAssignment, setShowAssignment] = useState(null); // 'cus' | 'ops' | null
   const [filterAssignee, setFilterAssignee] = useState('');
   const [isVisible, setIsVisible] = useState(!document.hidden);
+  const [visibleCols, setVisibleCols] = useState(loadVisibleCols);
+  const [showColMenu, setShowColMenu] = useState(false);
+
+  function toggleCol(key) {
+    setVisibleCols(prev => {
+      const next = prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key];
+      localStorage.setItem(LS_COL_KEY, JSON.stringify(next));
+      return next;
+    });
+  }
 
   useEffect(() => {
     const handler = () => setIsVisible(!document.hidden);
@@ -392,20 +433,44 @@ export default function LogDashboardTP() {
                 CV Hoàn thành (3 ngày)
               </button>
             </div>
-            {tab === 'pending' && (
-              <select
-                className="form-select"
-                style={{ fontSize: 12, padding: '4px 8px', width: 'auto', minWidth: 140, marginRight: 8 }}
-                value={filterAssignee}
-                onChange={e => setFilterAssignee(e.target.value)}
-              >
-                <option value="">Tất cả nhân viên</option>
-                {cusStaff.length > 0 && <option disabled>── CUS ──</option>}
-                {cusStaff.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                {opsStaff.length > 0 && <option disabled>── OPS ──</option>}
-                {opsStaff.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-              </select>
-            )}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, paddingRight: 4 }}>
+              {tab === 'pending' && (
+                <select
+                  className="form-select"
+                  style={{ fontSize: 12, padding: '4px 8px', width: 'auto', minWidth: 140 }}
+                  value={filterAssignee}
+                  onChange={e => setFilterAssignee(e.target.value)}
+                >
+                  <option value="">Tất cả nhân viên</option>
+                  {cusStaff.length > 0 && <option disabled>── CUS ──</option>}
+                  {cusStaff.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  {opsStaff.length > 0 && <option disabled>── OPS ──</option>}
+                  {opsStaff.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+              )}
+              <div style={{ position: 'relative' }}>
+                <button className="btn btn-ghost btn-sm"
+                  style={{ fontSize: 11, padding: '4px 10px' }}
+                  onClick={() => setShowColMenu(v => !v)}>
+                  ⚙️ Cột
+                </button>
+                {showColMenu && (
+                  <div style={{
+                    position: 'absolute', top: '100%', right: 0, zIndex: 300,
+                    background: '#fff', border: '1px solid var(--border)', borderRadius: 8,
+                    boxShadow: '0 4px 16px rgba(0,0,0,0.12)', padding: 8,
+                    minWidth: 170, display: 'flex', flexDirection: 'column', gap: 2,
+                  }}>
+                    {ALL_COLS.map(c => (
+                      <label key={c.key} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, cursor: 'pointer', padding: '3px 4px', borderRadius: 4 }}>
+                        <input type="checkbox" checked={visibleCols.includes(c.key)} onChange={() => toggleCol(c.key)} />
+                        {c.label}
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
 
           <div style={{ overflowX: 'auto' }}>
@@ -415,73 +480,53 @@ export default function LogDashboardTP() {
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                 <thead>
                   <tr style={{ background: 'var(--bg)', borderBottom: '2px solid var(--border)' }}>
-                    {['#','Ngày tạo','Khách hàng','POL → POD','Cont / Loại','DV',
-                      'ETD / ETA','Deadline','Ngày TK','TT TK','CUS','OPS','Phân công',''].map((h, i) => (
-                      <th key={i} style={{ padding: '10px 8px', textAlign: 'left', fontWeight: 600, color: 'var(--text-2)', fontSize: 11, whiteSpace: 'nowrap' }}>{h}</th>
+                    {ALL_COLS.filter(c => visibleCols.includes(c.key)).map(c => (
+                      <th key={c.key} style={{ padding: '10px 8px', textAlign: 'left', fontWeight: 600, color: 'var(--text-2)', fontSize: 11, whiteSpace: 'nowrap' }}>{c.label}</th>
                     ))}
+                    <th style={{ padding: '10px 8px' }} />
                   </tr>
                 </thead>
                 <tbody>
                   {filteredJobs.length === 0 && (
-                    <tr><td colSpan={14} style={{ textAlign: 'center', padding: 40, color: 'var(--text-3)' }}>Không có job nào</td></tr>
+                    <tr><td colSpan={visibleCols.length + 1} style={{ textAlign: 'center', padding: 40, color: 'var(--text-3)' }}>Không có job nào</td></tr>
                   )}
                   {filteredJobs.map((j, i) => {
                     const waitingAssign = (j.service_type === 'tk' || j.service_type === 'both') && !j.cus_id;
                     const rowBg = waitingAssign ? 'rgba(217,119,6,0.04)'
                       : j.deadline && new Date(j.deadline) < Date.now() ? 'rgba(239,68,68,0.04)' : '';
+                    const cs = { padding: '8px 8px' };
+
+                    const cell = (key) => {
+                      switch (key) {
+                        case 'stt':         return <td key={key} style={{ ...cs, color: 'var(--text-3)' }}>{i + 1}</td>;
+                        case 'job_code':    return <td key={key} style={{ ...cs, whiteSpace: 'nowrap', fontSize: 12, color: 'var(--info)' }}>{j.job_code || '—'}</td>;
+                        case 'created_at':  return <td key={key} style={{ ...cs, whiteSpace: 'nowrap', fontSize: 12 }}>{fmtDate(j.created_at)}</td>;
+                        case 'customer':    return <td key={key} style={{ ...cs, maxWidth: 150 }}><div style={{ fontWeight: 500, fontSize: 13 }}>{j.customer_name}</div></td>;
+                        case 'han_lenh':    return <td key={key} style={{ ...cs, whiteSpace: 'nowrap', fontSize: 12 }}>{j.han_lenh ? <span style={deadlineStyle(j.han_lenh)}>{fmtDt(j.han_lenh)}</span> : <span style={{ color: 'var(--text-3)' }}>—</span>}</td>;
+                        case 'deadline':    return <td key={key} style={{ ...cs, minWidth: 130 }}><InlineDeadline value={j.deadline} onSave={v => setDlMut.mutate({ id: j.id, deadline: v })} /></td>;
+                        case 'tk_flow':     return <td key={key} style={{ ...cs, fontSize: 12, color: 'var(--text-2)' }}>{j.tk_flow || '—'}</td>;
+                        case 'tk_number':   return <td key={key} style={{ ...cs, fontSize: 12 }}>{j.tk_number || '—'}</td>;
+                        case 'tk_datetime': return <td key={key} style={{ ...cs, fontSize: 12, whiteSpace: 'nowrap', color: 'var(--text-2)' }}>{j.tk_datetime ? fmtDt(j.tk_datetime) : '—'}</td>;
+                        case 'tk_status':   return <td key={key} style={cs}>{j.tk_status ? <span style={{ color: TK_STATUS_COLOR[j.tk_status], fontWeight: 500, fontSize: 12 }}>{TK_STATUS_LABEL[j.tk_status]}</span> : <span style={{ color: 'var(--text-3)', fontSize: 12 }}>—</span>}</td>;
+                        case 'tq_datetime': return <td key={key} style={{ ...cs, fontSize: 12, whiteSpace: 'nowrap', color: 'var(--text-2)' }}>{j.tq_datetime ? fmtDt(j.tq_datetime) : '—'}</td>;
+                        case 'delivery':    return <td key={key} style={{ ...cs, fontSize: 12, whiteSpace: 'nowrap', color: 'var(--text-2)' }}>{j.delivery_datetime ? fmtDate(j.delivery_datetime) : '—'}</td>;
+                        case 'phan_cong':   return <td key={key} style={cs}>{tab === 'pending' && <button className="btn btn-ghost btn-sm" style={{ fontSize: 11, padding: '3px 8px', whiteSpace: 'nowrap' }} onClick={() => setAssigningJob(j)}>{waitingAssign ? '⚡ Phân công' : '✏️ Sửa'}</button>}</td>;
+                        case 'delivery_loc':return <td key={key} style={{ ...cs, fontSize: 12, color: 'var(--text-2)', maxWidth: 120 }}>{j.delivery_location || '—'}</td>;
+                        case 'cargo':       return <td key={key} style={{ ...cs, whiteSpace: 'nowrap', fontSize: 12 }}>{fmtCargo(j)}</td>;
+                        case 'service':     return <td key={key} style={cs}><span className="badge badge-info" style={{ fontSize: 10 }}>{SVC_LABEL[j.service_type] || j.service_type}</span></td>;
+                        case 'etd_eta':     return <td key={key} style={{ ...cs, whiteSpace: 'nowrap', color: 'var(--text-2)', fontSize: 12 }}>{fmtDate(j.etd)}<br />{fmtDate(j.eta)}</td>;
+                        case 'cus':         return <td key={key} style={cs}>{j.cus_name ? <span style={{ fontSize: 12 }}>{j.cus_name}</span> : <span style={{ fontSize: 11, color: 'var(--warning)', fontWeight: 600 }}>Chờ phân</span>}</td>;
+                        case 'ops':         return <td key={key} style={cs}>{j.ops_name ? <span style={{ fontSize: 12 }}>{j.ops_name}</span> : <span style={{ color: 'var(--text-3)', fontSize: 12 }}>—</span>}</td>;
+                        case 'notes':       return <td key={key} style={{ ...cs, fontSize: 12, color: 'var(--text-2)', maxWidth: 140 }}>{j.tk_notes || '—'}</td>;
+                        default: return null;
+                      }
+                    };
 
                     return (
                       <tr key={j.id} style={{ borderBottom: '1px solid var(--border)', background: rowBg }}
                         onDoubleClick={() => setDetailJobId(j.id)}>
-                        <td style={{ padding: '8px 8px', color: 'var(--text-3)' }}>{i + 1}</td>
-                        <td style={{ padding: '8px 8px', whiteSpace: 'nowrap', fontSize: 12 }}>{fmtDate(j.created_at)}</td>
-                        <td style={{ padding: '8px 8px', maxWidth: 150 }}>
-                          <div style={{ fontWeight: 500, fontSize: 13 }}>{j.customer_name}</div>
-                          {j.job_code && <div style={{ fontSize: 11, color: 'var(--info)' }}>{j.job_code}</div>}
-                        </td>
-                        <td style={{ padding: '8px 8px', fontSize: 12, whiteSpace: 'nowrap', color: 'var(--text-2)' }}>
-                          {j.pol || '—'} → {j.pod || '—'}
-                        </td>
-                        <td style={{ padding: '8px 8px', whiteSpace: 'nowrap', fontSize: 12 }}>
-                          {fmtCargo(j)}
-                        </td>
-                        <td style={{ padding: '8px 8px' }}>
-                          <span className="badge badge-info" style={{ fontSize: 10 }}>{SVC_LABEL[j.service_type] || j.service_type}</span>
-                        </td>
-                        <td style={{ padding: '8px 8px', whiteSpace: 'nowrap', color: 'var(--text-2)', fontSize: 12 }}>
-                          {fmtDate(j.etd)}<br />{fmtDate(j.eta)}
-                        </td>
-                        <td style={{ padding: '8px 8px', minWidth: 130 }}>
-                          <InlineDeadline value={j.deadline}
-                            onSave={v => setDlMut.mutate({ id: j.id, deadline: v })} />
-                        </td>
-                        <td style={{ padding: '8px 8px', fontSize: 12, whiteSpace: 'nowrap', color: 'var(--text-2)' }}>
-                          {j.tk_datetime ? fmtDt(j.tk_datetime) : '—'}
-                        </td>
-                        <td style={{ padding: '8px 8px' }}>
-                          {j.tk_status
-                            ? <span style={{ color: TK_STATUS_COLOR[j.tk_status], fontWeight: 500, fontSize: 12 }}>{TK_STATUS_LABEL[j.tk_status]}</span>
-                            : <span style={{ color: 'var(--text-3)', fontSize: 12 }}>—</span>}
-                        </td>
-                        <td style={{ padding: '8px 8px' }}>
-                          {j.cus_name
-                            ? <span style={{ fontSize: 12 }}>{j.cus_name}</span>
-                            : <span style={{ fontSize: 11, color: 'var(--warning)', fontWeight: 600 }}>Chờ phân</span>}
-                        </td>
-                        <td style={{ padding: '8px 8px' }}>
-                          {j.ops_name
-                            ? <span style={{ fontSize: 12 }}>{j.ops_name}</span>
-                            : <span style={{ color: 'var(--text-3)', fontSize: 12 }}>—</span>}
-                        </td>
-                        <td style={{ padding: '8px 8px' }}>
-                          {tab === 'pending' && (
-                            <button className="btn btn-ghost btn-sm" style={{ fontSize: 11, padding: '3px 8px', whiteSpace: 'nowrap' }}
-                              onClick={() => setAssigningJob(j)}>
-                              {waitingAssign ? '⚡ Phân công' : '✏️ Sửa'}
-                            </button>
-                          )}
-                        </td>
-                        <td style={{ padding: '8px 8px', whiteSpace: 'nowrap' }}>
+                        {ALL_COLS.filter(c => visibleCols.includes(c.key)).map(c => cell(c.key))}
+                        <td style={{ ...cs, whiteSpace: 'nowrap' }}>
                           {tab === 'pending' && (
                             <button className="btn btn-ghost btn-sm btn-icon"
                               title="Xóa job" style={{ color: 'var(--danger)' }}

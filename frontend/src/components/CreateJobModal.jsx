@@ -11,7 +11,7 @@ const EMPTY_CONT = () => ({ cont_type: '40DC', cont_number: '', seal_number: '' 
 const INIT_FORM = {
   job_code: '', customer_name: '', customer_address: '', customer_tax_code: '',
   sales_id: '', pol: '', pod: '', bill_number: '',
-  etd: '', eta: '', tons: '', cbm: '', kg: '', so_kien: '', deadline: '',
+  etd: '', eta: '', tons: '', cbm: '', kg: '', so_kien: '', deadline: '', han_lenh: '',
   service_type: 'tk', other_services: {},
 };
 
@@ -101,6 +101,7 @@ export default function CreateJobModal({ onClose, onCreated }) {
         kg: form.kg ? Number(form.kg) : null,
         so_kien: form.so_kien ? Number(form.so_kien) : null,
         deadline: form.deadline || null,
+        han_lenh: form.han_lenh || null,
         etd: form.etd || null,
         eta: form.eta || null,
         cargo_type: cargoType,
@@ -340,6 +341,10 @@ export default function CreateJobModal({ onClose, onCreated }) {
             <div className="form-group">
               <label className="form-label">Deadline</label>
               <input type="datetime-local" className="form-input" value={form.deadline} onChange={e => set('deadline', e.target.value)} />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Hạn lệnh</label>
+              <input type="datetime-local" className="form-input" value={form.han_lenh} onChange={e => set('han_lenh', e.target.value)} />
             </div>
           </div>
         </div>

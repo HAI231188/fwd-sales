@@ -51,7 +51,7 @@ router.get('/stats', requireAuth, async (req, res) => {
           ) x`),
         db.query(`SELECT COUNT(*) AS v FROM jobs WHERE status = 'pending' AND deleted_at IS NULL AND deadline < NOW()`),
         db.query(`SELECT COUNT(*) AS v FROM jobs WHERE status = 'pending' AND deleted_at IS NULL AND deadline BETWEEN NOW() AND NOW() + INTERVAL '48 hours'`),
-        db.query(`SELECT COUNT(*) AS v FROM jobs WHERE status = 'pending' AND deleted_at IS NULL AND (pol IS NULL OR pod IS NULL OR cont_number IS NULL)`),
+        db.query(`SELECT COUNT(*) AS v FROM jobs WHERE status = 'pending' AND deleted_at IS NULL AND (pol IS NULL OR pod IS NULL OR cont_number IS NULL OR han_lenh IS NULL)`),
         db.query(`SELECT COUNT(*) AS v FROM job_delete_requests WHERE status = 'pending'`),
         db.query(`
           SELECT u.id, u.name, u.role, u.code, u.avatar_color,
@@ -418,7 +418,7 @@ router.post('/', requireAuth, async (req, res) => {
     job_code, customer_id, customer_name, customer_address, customer_tax_code,
     sales_id, pol, pod, bill_number, cont_number, cont_type, seal_number,
     etd, eta, tons, cbm, deadline, service_type, other_services,
-    is_new_customer, cargo_type, so_kien, kg, containers, destination,
+    is_new_customer, cargo_type, so_kien, kg, containers, destination, han_lenh,
   } = req.body;
 
   if (!customer_name || !service_type) {
@@ -455,8 +455,8 @@ router.post('/', requireAuth, async (req, res) => {
         job_code, customer_id, customer_name, customer_address, customer_tax_code,
         sales_id, pol, pod, bill_number, cont_number, cont_type, seal_number,
         etd, eta, tons, cbm, deadline, service_type, other_services,
-        cargo_type, so_kien, kg, destination, created_by
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
+        cargo_type, so_kien, kg, destination, created_by, han_lenh
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)
       RETURNING *
     `, [
       job_code || null, customer_id || null, customer_name,
@@ -467,7 +467,7 @@ router.post('/', requireAuth, async (req, res) => {
       deadline || null, service_type,
       JSON.stringify(other_services || {}),
       cargo_type || 'fcl', so_kien || null, kg || null,
-      destination || null, req.user.id,
+      destination || null, req.user.id, han_lenh || null,
     ]);
 
     const job = rows[0];
@@ -603,7 +603,7 @@ router.put('/:id', requireAuth, async (req, res) => {
   const FIELDS = ['job_code','customer_name','customer_address','customer_tax_code',
     'pol','pod','bill_number','cont_number','cont_type','seal_number',
     'etd','eta','tons','cbm','deadline','service_type','other_services','status',
-    'cargo_type','so_kien','kg','destination'];
+    'cargo_type','so_kien','kg','destination','han_lenh'];
 
   const client = await db.pool.connect();
   try {
