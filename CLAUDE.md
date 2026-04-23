@@ -258,6 +258,20 @@ Also applies to all modules: Sales, LOG, and future (OVS, PRI, ACCOUNTING).
 
 ---
 
+### L10 — Fix broadcast to similar patterns
+
+**Root cause pattern:** When fixing a bug or adding a feature in one role/component, only that component gets updated. Other dashboards with the same structure (TP/CUS/OPS/DieuDo) silently remain broken or missing the feature — discovered later by users, requiring a second round of fixes.
+
+**Rules:**
+1. When fixing a pattern (e.g. clickable stat cards, inline editing, drilldown modal, button visibility), audit all similar components (other dashboards, other roles) in the same commit.
+2. Dashboards with parallel structure (TP/CUS/DieuDo/OPS) should have features applied consistently unless explicitly role-specific.
+3. Never fix in isolation when the pattern repeats. Grep for the same pattern across the codebase before committing.
+4. Ask: "Does any other dashboard/component do the same thing?" If yes, apply the fix there too.
+
+Also applies to backend route handlers with parallel structure (e.g. PATCH /tk, PATCH /truck, PUT /:id).
+
+---
+
 ## 6. Session Start Checklist
 
 1. Read this file.
