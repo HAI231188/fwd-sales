@@ -146,10 +146,12 @@ router.get('/deadline-requests', requireAuth, async (req, res) => {
       db.query(`
         SELECT ja.job_id, j.job_code, j.customer_name, j.deadline, j.created_at,
                u_cus.name AS cus_name,
+               u_ops.name AS ops_name,
                al.reason AS ai_reason
         FROM job_assignments ja
         JOIN jobs j ON j.id = ja.job_id
         LEFT JOIN users u_cus ON u_cus.id = ja.cus_id
+        LEFT JOIN users u_ops ON u_ops.id = ja.ops_id
         LEFT JOIN LATERAL (
           SELECT reason FROM ai_assignment_logs
           WHERE job_id = ja.job_id AND role = 'cus'

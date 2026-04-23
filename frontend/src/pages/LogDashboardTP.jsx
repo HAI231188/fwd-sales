@@ -201,6 +201,7 @@ function AssignModal({ job, staff, onClose, onSave }) {
 function DeadlineModal({ data, onClose, onReview, onSetDeadline, onReviewDelete }) {
   const [activeTab, setActiveTab] = useState('cus_confirm');
   const [overrides, setOverrides] = useState({});
+  const [detailJobId, setDetailJobId] = useState(null);
   const { pending_confirmations = [], requests = [], no_deadline = [], delete_requests = [] } = data || {};
 
   const tabs = [
@@ -209,136 +210,156 @@ function DeadlineModal({ data, onClose, onReview, onSetDeadline, onReviewDelete 
     { key: 'no_deadline', label: 'Chưa có deadline', count: no_deadline.length, color: 'var(--text-2)' },
   ];
 
+  const rowStyle = { cursor: 'pointer' };
+  function onRowHover(e, enter) { e.currentTarget.style.background = enter ? 'var(--bg)' : ''; }
+
   return (
-    <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="modal modal-lg" style={{ maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}>
-        <div className="modal-header">
-          <h3>Chờ xác nhận</h3>
-          <button className="btn btn-ghost btn-sm btn-icon" onClick={onClose}>✕</button>
-        </div>
-
-        <div style={{ padding: '0 20px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
-          <div className="tabs" style={{ marginBottom: 0 }}>
-            {tabs.map(t => (
-              <button key={t.key} className={`tab ${activeTab === t.key ? 'active' : ''}`}
-                onClick={() => setActiveTab(t.key)}
-                style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                {t.label}
-                <span style={{
-                  background: t.count > 0 ? t.color : 'var(--border)',
-                  color: t.count > 0 ? '#fff' : 'var(--text-3)',
-                  borderRadius: 10, fontSize: 10, padding: '1px 6px', fontWeight: 600,
-                }}>{t.count}</span>
-              </button>
-            ))}
+    <>
+      <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+        <div className="modal modal-lg" style={{ maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}>
+          <div className="modal-header">
+            <h3>Chờ xác nhận</h3>
+            <button className="btn btn-ghost btn-sm btn-icon" onClick={onClose}>✕</button>
           </div>
-        </div>
 
-        <div className="modal-body" style={{ overflowY: 'auto', flex: 1 }}>
+          <div style={{ padding: '0 20px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+            <div className="tabs" style={{ marginBottom: 0 }}>
+              {tabs.map(t => (
+                <button key={t.key} className={`tab ${activeTab === t.key ? 'active' : ''}`}
+                  onClick={() => setActiveTab(t.key)}
+                  style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  {t.label}
+                  <span style={{
+                    background: t.count > 0 ? t.color : 'var(--border)',
+                    color: t.count > 0 ? '#fff' : 'var(--text-3)',
+                    borderRadius: 10, fontSize: 10, padding: '1px 6px', fontWeight: 600,
+                  }}>{t.count}</span>
+                </button>
+              ))}
+            </div>
+          </div>
 
-          {/* Tab 1: CUS chưa nhận */}
-          {activeTab === 'cus_confirm' && (
-            pending_confirmations.length === 0
-              ? <div className="empty-state"><div className="icon">✅</div><p>Tất cả CUS đã xác nhận</p></div>
-              : pending_confirmations.map(j => (
-                <div key={j.job_id} className="card" style={{ marginBottom: 10, padding: 14 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
-                    <span style={{ fontWeight: 600, color: 'var(--info)' }}>{j.job_code || `#${j.job_id}`}</span>
-                    <span style={{ fontSize: 11, color: 'var(--text-3)' }}>{fmtDate(j.created_at)}</span>
-                  </div>
-                  <div style={{ fontSize: 13, marginBottom: 4 }}>{j.customer_name}</div>
-                  <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: 12, color: 'var(--text-2)' }}>
-                    <span>CUS: <strong style={{ color: 'var(--warning)' }}>{j.cus_name || '—'}</strong></span>
-                    <span>Deadline: <strong style={{ color: j.deadline ? 'var(--text)' : 'var(--text-3)' }}>{j.deadline ? fmtDt(j.deadline) : 'Chưa có'}</strong></span>
-                  </div>
-                  {j.ai_reason && (
-                    <div style={{ marginTop: 6, fontSize: 11, color: 'var(--text-3)', fontStyle: 'italic' }}>
-                      AI: {j.ai_reason}
+          <div className="modal-body" style={{ overflowY: 'auto', flex: 1 }}>
+
+            {/* Tab 1: CUS chưa nhận */}
+            {activeTab === 'cus_confirm' && (
+              pending_confirmations.length === 0
+                ? <div className="empty-state"><div className="icon">✅</div><p>Tất cả CUS đã xác nhận</p></div>
+                : pending_confirmations.map(j => (
+                  <div key={j.job_id} className="card" style={{ marginBottom: 10, padding: 14, ...rowStyle }}
+                    onClick={() => setDetailJobId(j.job_id)}
+                    onMouseEnter={e => onRowHover(e, true)}
+                    onMouseLeave={e => onRowHover(e, false)}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
+                      <span style={{ fontWeight: 600, color: 'var(--info)' }}>{j.job_code || `#${j.job_id}`}</span>
+                      <span style={{ fontSize: 11, color: 'var(--text-3)' }}>{fmtDate(j.created_at)}</span>
                     </div>
+                    <div style={{ fontSize: 13, marginBottom: 6 }}>{j.customer_name}</div>
+                    <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: 12, color: 'var(--text-2)' }}>
+                      <span>CUS: <strong style={{ color: 'var(--warning)' }}>
+                        {j.cus_name ? `${j.cus_name}${j.ai_reason ? ` (AI: ${j.ai_reason})` : ''}` : '—'}
+                      </strong></span>
+                      {j.ops_name && <span>OPS: <strong>{j.ops_name}</strong></span>}
+                      <span>Deadline: <strong style={{ color: j.deadline ? 'var(--text)' : 'var(--text-3)' }}>{j.deadline ? fmtDt(j.deadline) : 'Chưa có'}</strong></span>
+                    </div>
+                  </div>
+                ))
+            )}
+
+            {/* Tab 2: Điều chỉnh deadline */}
+            {activeTab === 'deadline_adj' && (
+              requests.length === 0 && delete_requests.length === 0
+                ? <div className="empty-state"><div className="icon">✅</div><p>Không có yêu cầu pending</p></div>
+                : <>
+                  {requests.map(r => (
+                    <div key={r.id} className="card" style={{ marginBottom: 12, padding: 14, ...rowStyle }}
+                      onClick={() => setDetailJobId(r.job_id)}
+                      onMouseEnter={e => onRowHover(e, true)}
+                      onMouseLeave={e => onRowHover(e, false)}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                        <span style={{ fontWeight: 600 }}>{r.job_code || `#${r.job_id}`} — {r.customer_name}</span>
+                        <span style={{ fontSize: 12, color: 'var(--text-3)' }}>by {r.requested_by_name}</span>
+                      </div>
+                      <div style={{ fontSize: 13, color: 'var(--text-2)', marginBottom: 6 }}>
+                        Deadline hiện tại: <strong>{r.current_deadline ? fmtDt(r.current_deadline) : 'Chưa có'}</strong>
+                        {' → '}Đề xuất: <strong style={{ color: 'var(--warning)' }}>{fmtDt(r.proposed_deadline)}</strong>
+                      </div>
+                      <div style={{ fontSize: 13, marginBottom: 10, color: 'var(--text-2)' }}>Lý do: {r.reason}</div>
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}
+                        onClick={e => e.stopPropagation()}>
+                        <input type="datetime-local"
+                          value={overrides[r.id] !== undefined ? overrides[r.id] : toDatetimeLocal(r.proposed_deadline)}
+                          onChange={e => setOverrides(p => ({ ...p, [r.id]: e.target.value }))}
+                          style={{ padding: '4px 8px', border: '1px solid var(--border)', borderRadius: 6, fontSize: 13 }} />
+                        <button className="btn btn-primary btn-sm"
+                          onClick={() => onReview(r.id, 'approved', overrides[r.id] || r.proposed_deadline)}>Duyệt</button>
+                        <button className="btn btn-danger btn-sm"
+                          onClick={() => onReview(r.id, 'rejected', null)}>Từ chối</button>
+                      </div>
+                    </div>
+                  ))}
+                  {delete_requests.length > 0 && (
+                    <>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--danger)', marginTop: 16, marginBottom: 8 }}>
+                        Yêu cầu xóa job ({delete_requests.length})
+                      </div>
+                      {delete_requests.map(r => (
+                        <div key={r.id} className="card" style={{ marginBottom: 10, padding: 14, borderLeft: '3px solid var(--danger)', ...rowStyle }}
+                          onClick={() => setDetailJobId(r.job_id)}
+                          onMouseEnter={e => onRowHover(e, true)}
+                          onMouseLeave={e => onRowHover(e, false)}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                            <span style={{ fontWeight: 600 }}>{r.job_code || `#${r.job_id}`} — {r.customer_name}</span>
+                            <span style={{ fontSize: 12, color: 'var(--text-3)' }}>by {r.requested_by_name}</span>
+                          </div>
+                          {r.reason && <div style={{ fontSize: 13, color: 'var(--text-2)', marginBottom: 8 }}>Lý do: {r.reason}</div>}
+                          <div style={{ display: 'flex', gap: 8 }} onClick={e => e.stopPropagation()}>
+                            <button className="btn btn-danger btn-sm" onClick={() => onReviewDelete(r.id, 'approved')}>Duyệt xóa</button>
+                            <button className="btn btn-ghost btn-sm" onClick={() => onReviewDelete(r.id, 'rejected')}>Từ chối</button>
+                          </div>
+                        </div>
+                      ))}
+                    </>
                   )}
-                </div>
-              ))
-          )}
+                </>
+            )}
 
-          {/* Tab 2: Điều chỉnh deadline */}
-          {activeTab === 'deadline_adj' && (
-            requests.length === 0 && delete_requests.length === 0
-              ? <div className="empty-state"><div className="icon">✅</div><p>Không có yêu cầu pending</p></div>
-              : <>
-                {requests.map(r => (
-                  <div key={r.id} className="card" style={{ marginBottom: 12, padding: 14 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-                      <span style={{ fontWeight: 600 }}>{r.job_code || `#${r.job_id}`} — {r.customer_name}</span>
-                      <span style={{ fontSize: 12, color: 'var(--text-3)' }}>by {r.requested_by_name}</span>
+            {/* Tab 3: Chưa có deadline */}
+            {activeTab === 'no_deadline' && (
+              no_deadline.length === 0
+                ? <div className="empty-state"><div className="icon">✅</div><p>Tất cả job đã có deadline</p></div>
+                : no_deadline.map(j => (
+                  <div key={j.job_id} className="card" style={{ marginBottom: 8, padding: 12, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', ...rowStyle }}
+                    onClick={() => setDetailJobId(j.job_id)}
+                    onMouseEnter={e => onRowHover(e, true)}
+                    onMouseLeave={e => onRowHover(e, false)}>
+                    <div style={{ flex: 1, fontSize: 13 }}>
+                      <strong>{j.job_code || `#${j.job_id}`}</strong> — {j.customer_name}
+                      <span style={{ color: 'var(--text-3)', fontSize: 11, marginLeft: 8 }}>{fmtDate(j.created_at)}</span>
                     </div>
-                    <div style={{ fontSize: 13, color: 'var(--text-2)', marginBottom: 6 }}>
-                      Deadline hiện tại: <strong>{r.current_deadline ? fmtDt(r.current_deadline) : 'Chưa có'}</strong>
-                      {' → '}Đề xuất: <strong style={{ color: 'var(--warning)' }}>{fmtDt(r.proposed_deadline)}</strong>
-                    </div>
-                    <div style={{ fontSize: 13, marginBottom: 10, color: 'var(--text-2)' }}>Lý do: {r.reason}</div>
-                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }} onClick={e => e.stopPropagation()}>
                       <input type="datetime-local"
-                        value={overrides[r.id] !== undefined ? overrides[r.id] : toDatetimeLocal(r.proposed_deadline)}
-                        onChange={e => setOverrides(p => ({ ...p, [r.id]: e.target.value }))}
+                        value={overrides[`n_${j.job_id}`] || ''}
+                        onChange={e => setOverrides(p => ({ ...p, [`n_${j.job_id}`]: e.target.value }))}
                         style={{ padding: '4px 8px', border: '1px solid var(--border)', borderRadius: 6, fontSize: 13 }} />
                       <button className="btn btn-primary btn-sm"
-                        onClick={() => onReview(r.id, 'approved', overrides[r.id] || r.proposed_deadline)}>Duyệt</button>
-                      <button className="btn btn-danger btn-sm"
-                        onClick={() => onReview(r.id, 'rejected', null)}>Từ chối</button>
+                        disabled={!overrides[`n_${j.job_id}`]}
+                        onClick={() => onSetDeadline(j.job_id, overrides[`n_${j.job_id}`])}>
+                        Đặt deadline
+                      </button>
                     </div>
                   </div>
-                ))}
-                {delete_requests.length > 0 && (
-                  <>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--danger)', marginTop: 16, marginBottom: 8 }}>
-                      Yêu cầu xóa job ({delete_requests.length})
-                    </div>
-                    {delete_requests.map(r => (
-                      <div key={r.id} className="card" style={{ marginBottom: 10, padding: 14, borderLeft: '3px solid var(--danger)' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                          <span style={{ fontWeight: 600 }}>{r.job_code || `#${r.job_id}`} — {r.customer_name}</span>
-                          <span style={{ fontSize: 12, color: 'var(--text-3)' }}>by {r.requested_by_name}</span>
-                        </div>
-                        {r.reason && <div style={{ fontSize: 13, color: 'var(--text-2)', marginBottom: 8 }}>Lý do: {r.reason}</div>}
-                        <div style={{ display: 'flex', gap: 8 }}>
-                          <button className="btn btn-danger btn-sm" onClick={() => onReviewDelete(r.id, 'approved')}>Duyệt xóa</button>
-                          <button className="btn btn-ghost btn-sm" onClick={() => onReviewDelete(r.id, 'rejected')}>Từ chối</button>
-                        </div>
-                      </div>
-                    ))}
-                  </>
-                )}
-              </>
-          )}
+                ))
+            )}
 
-          {/* Tab 3: Chưa có deadline */}
-          {activeTab === 'no_deadline' && (
-            no_deadline.length === 0
-              ? <div className="empty-state"><div className="icon">✅</div><p>Tất cả job đã có deadline</p></div>
-              : no_deadline.map(j => (
-                <div key={j.job_id} className="card" style={{ marginBottom: 8, padding: 12, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-                  <div style={{ flex: 1, fontSize: 13 }}>
-                    <strong>{j.job_code || `#${j.job_id}`}</strong> — {j.customer_name}
-                    <span style={{ color: 'var(--text-3)', fontSize: 11, marginLeft: 8 }}>{fmtDate(j.created_at)}</span>
-                  </div>
-                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                    <input type="datetime-local"
-                      value={overrides[`n_${j.job_id}`] || ''}
-                      onChange={e => setOverrides(p => ({ ...p, [`n_${j.job_id}`]: e.target.value }))}
-                      style={{ padding: '4px 8px', border: '1px solid var(--border)', borderRadius: 6, fontSize: 13 }} />
-                    <button className="btn btn-primary btn-sm"
-                      disabled={!overrides[`n_${j.job_id}`]}
-                      onClick={() => onSetDeadline(j.job_id, overrides[`n_${j.job_id}`])}>
-                      Đặt deadline
-                    </button>
-                  </div>
-                </div>
-              ))
-          )}
-
+          </div>
         </div>
       </div>
-    </div>
+
+      {detailJobId && (
+        <JobDetailModal jobId={detailJobId} onClose={() => setDetailJobId(null)} />
+      )}
+    </>
   );
 }
 
