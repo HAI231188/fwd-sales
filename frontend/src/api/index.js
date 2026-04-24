@@ -99,5 +99,6 @@ export const getFilteredJobs = (type) => api.get('/jobs/filtered', { params: { t
 export const manualAssignJob = (id, data) => api.post(`/jobs/${id}/manual-assign`, data);
 export const refreshJobSuggestion = (id, type) => api.post(`/jobs/${id}/refresh-suggestion`, { type });
 export const markOpsDone = (id) => api.post(`/jobs/${id}/ops-done`, {});
+export const getJobOverview = (params) => api.get('/jobs/overview', { params });
 
 export default api;

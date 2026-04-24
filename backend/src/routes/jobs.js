@@ -388,6 +388,193 @@ router.get('/waiting-assignments', requireAuth, async (req, res) => {
   }
 });
 
+// GET /api/jobs/overview?from=DATE&to=DATE  (truong_phong_log only)
+router.get('/overview', requireAuth, async (req, res) => {
+  if (req.user.role !== 'truong_phong_log') return res.status(403).json({ error: 'Không có quyền' });
+
+  let { from, to } = req.query;
+  if (from) from = from.replace(/'/g, '');
+  if (to) to = to.replace(/'/g, '');
+
+  const fromClause = from ? `'${from}'::date` : `NOW() - INTERVAL '30 days'`;
+  const toClause   = to   ? `'${to}'::date + INTERVAL '1 day'` : `NOW() + INTERVAL '1 day'`;
+
+  try {
+    const [dailyCreated, dailyCompleted, staffDist, completionStatus] = await Promise.all([
+      // Daily created count
+      db.query(`
+        SELECT TO_CHAR(j.created_at AT TIME ZONE 'Asia/Ho_Chi_Minh', 'YYYY-MM-DD') AS date,
+               COUNT(*) AS created
+        FROM jobs j
+        WHERE j.deleted_at IS NULL
+          AND j.created_at >= ${fromClause}
+          AND j.created_at < ${toClause}
+        GROUP BY 1 ORDER BY 1
+      `),
+      // Daily completed count
+      db.query(`
+        SELECT TO_CHAR(j.updated_at AT TIME ZONE 'Asia/Ho_Chi_Minh', 'YYYY-MM-DD') AS date,
+               COUNT(*) AS completed
+        FROM jobs j
+        WHERE j.status = 'completed' AND j.deleted_at IS NULL
+          AND j.updated_at >= ${fromClause}
+          AND j.updated_at < ${toClause}
+        GROUP BY 1 ORDER BY 1
+      `),
+      // Staff distribution — CUS + OPS + DieuDo
+      db.query(`
+        SELECT u.id, u.name, u.role,
+          COUNT(CASE WHEN j.status = 'pending' AND j.deleted_at IS NULL THEN 1 END) AS pending,
+          COUNT(CASE WHEN j.status = 'completed' AND j.deleted_at IS NULL
+                          AND j.updated_at >= ${fromClause}
+                          AND j.updated_at < ${toClause} THEN 1 END) AS completed
+        FROM users u
+        LEFT JOIN job_assignments ja ON (
+          (u.role IN ('cus','cus1','cus2','cus3') AND ja.cus_id = u.id) OR
+          (u.role = 'ops' AND ja.ops_id = u.id) OR
+          (u.role = 'dieu_do' AND ja.dieu_do_id = u.id)
+        )
+        LEFT JOIN jobs j ON j.id = ja.job_id
+        WHERE u.role IN ('cus','cus1','cus2','cus3','ops','dieu_do')
+        GROUP BY u.id, u.name, u.role
+        ORDER BY u.role, u.name
+      `),
+      // Completion status for jobs in range
+      db.query(`
+        SELECT
+          COUNT(CASE WHEN j.status = 'completed' AND j.deadline IS NOT NULL AND j.updated_at <= j.deadline THEN 1 END) AS on_time,
+          COUNT(CASE WHEN j.status = 'completed' AND j.deadline IS NOT NULL AND j.updated_at > j.deadline THEN 1 END) AS late,
+          COUNT(CASE WHEN j.status = 'pending' THEN 1 END) AS in_progress
+        FROM jobs j
+        WHERE j.deleted_at IS NULL
+          AND j.created_at >= ${fromClause}
+          AND j.created_at < ${toClause}
+      `),
+    ]);
+
+    // Merge daily created/completed into single array covering full date range
+    const dateMap = {};
+    dailyCreated.rows.forEach(r => { dateMap[r.date] = { date: r.date, created: parseInt(r.created), completed: 0 }; });
+    dailyCompleted.rows.forEach(r => {
+      if (dateMap[r.date]) dateMap[r.date].completed = parseInt(r.completed);
+      else dateMap[r.date] = { date: r.date, created: 0, completed: parseInt(r.completed) };
+    });
+    const daily_stats = Object.values(dateMap).sort((a, b) => a.date.localeCompare(b.date));
+
+    const cs = completionStatus.rows[0] || {};
+    res.json({
+      daily_stats,
+      staff_distribution: staffDist.rows.map(r => ({
+        name: r.name, role: r.role,
+        pending: parseInt(r.pending), completed: parseInt(r.completed),
+      })),
+      completion_status: {
+        on_time:     parseInt(cs.on_time || 0),
+        late:        parseInt(cs.late || 0),
+        in_progress: parseInt(cs.in_progress || 0),
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/jobs/overview?from=YYYY-MM-DD&to=YYYY-MM-DD  — TP only
+router.get('/overview', requireAuth, async (req, res) => {
+  if (req.user.role !== 'tp') return res.status(403).json({ error: 'Forbidden' });
+  let { from, to } = req.query;
+  if (!from || !to) {
+    const now = new Date();
+    to = now.toISOString().slice(0, 10);
+    const d30 = new Date(now); d30.setDate(d30.getDate() - 29);
+    from = d30.toISOString().slice(0, 10);
+  }
+  from = from.replace(/'/g, '');
+  to = to.replace(/'/g, '');
+
+  try {
+    // Daily stats: created and completed counts per day
+    const dailyQ = await db.query(`
+      WITH dates AS (
+        SELECT generate_series($1::date, $2::date, '1 day'::interval)::date AS d
+      ),
+      created_per_day AS (
+        SELECT DATE(j.created_at AT TIME ZONE 'Asia/Ho_Chi_Minh') AS d, COUNT(*) AS cnt
+        FROM jobs j
+        WHERE DATE(j.created_at AT TIME ZONE 'Asia/Ho_Chi_Minh') BETWEEN $1 AND $2
+        GROUP BY 1
+      ),
+      completed_per_day AS (
+        SELECT DATE(j.completed_at AT TIME ZONE 'Asia/Ho_Chi_Minh') AS d, COUNT(*) AS cnt
+        FROM jobs j
+        WHERE j.status = 'completed'
+          AND DATE(j.completed_at AT TIME ZONE 'Asia/Ho_Chi_Minh') BETWEEN $1 AND $2
+        GROUP BY 1
+      )
+      SELECT dates.d::text AS date,
+             COALESCE(c.cnt, 0)::int AS created,
+             COALESCE(cp.cnt, 0)::int AS completed
+      FROM dates
+      LEFT JOIN created_per_day c ON c.d = dates.d
+      LEFT JOIN completed_per_day cp ON cp.d = dates.d
+      ORDER BY dates.d
+    `, [from, to]);
+
+    // Staff distribution: job count per day per assignee (truck/cus role)
+    const staffQ = await db.query(`
+      SELECT DATE(j.created_at AT TIME ZONE 'Asia/Ho_Chi_Minh') AS date,
+             u.name,
+             COUNT(*) AS cnt
+      FROM jobs j
+      JOIN job_assignments ja ON ja.job_id = j.id
+      JOIN users u ON u.id = ja.user_id
+      WHERE DATE(j.created_at AT TIME ZONE 'Asia/Ho_Chi_Minh') BETWEEN '${from}' AND '${to}'
+      GROUP BY 1, 2
+      ORDER BY 1
+    `);
+
+    // Pivot staff rows into {date, name1: cnt, name2: cnt}
+    const staffMap = {};
+    for (const row of staffQ.rows) {
+      const key = row.date instanceof Date ? row.date.toISOString().slice(0, 10) : String(row.date).slice(0, 10);
+      if (!staffMap[key]) staffMap[key] = { day: key };
+      staffMap[key][row.name] = parseInt(row.cnt, 10);
+    }
+    // Fill all dates in range
+    const cur = new Date(from);
+    const end = new Date(to);
+    while (cur <= end) {
+      const k = cur.toISOString().slice(0, 10);
+      if (!staffMap[k]) staffMap[k] = { day: k };
+      cur.setDate(cur.getDate() + 1);
+    }
+    const staffDistribution = Object.values(staffMap).sort((a, b) => a.day < b.day ? -1 : 1);
+
+    // Completion status donut
+    const statusQ = await db.query(`
+      SELECT
+        COUNT(*) FILTER (WHERE status = 'completed') AS completed,
+        COUNT(*) FILTER (WHERE status != 'completed') AS in_progress
+      FROM jobs
+      WHERE DATE(created_at AT TIME ZONE 'Asia/Ho_Chi_Minh') BETWEEN $1 AND $2
+    `, [from, to]);
+    const sr = statusQ.rows[0];
+    const completionStatus = [
+      { name: 'Hoàn thành', value: parseInt(sr.completed, 10) },
+      { name: 'Đang xử lý', value: parseInt(sr.in_progress, 10) },
+    ];
+
+    res.json({
+      daily_stats: dailyQ.rows,
+      staff_distribution: staffDistribution,
+      completion_status: completionStatus,
+    });
+  } catch (err) {
+    console.error('overview error', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/jobs/filtered?type=...  — all LOG roles
 router.get('/filtered', requireAuth, async (req, res) => {
   const { role, id: userId } = req.user;

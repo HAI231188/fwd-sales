@@ -7,6 +7,7 @@ import AssignmentModal from '../components/AssignmentModal';
 import JobListModal from '../components/JobListModal';
 import FilteredTable from '../components/FilteredTable';
 import DateRangeFilter from '../components/DateRangeFilter';
+import TP_OverviewSection from '../components/TP_OverviewSection';
 import {
   getJobStats, getJobs, getDeadlineRequests, getLogStaff,
   assignJob, setJobDeadline, reviewDeadlineRequest, createJob,
@@ -549,6 +550,8 @@ export default function LogDashboardTP() {
             </table>
           </div>
         )}
+
+        <TP_OverviewSection />
 
         {/* Jobs grid */}
         <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
