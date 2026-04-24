@@ -51,14 +51,16 @@ app.get('/api/debug/recent-jobs', async (req, res) => {
         ja.ops_id,      u_ops.name  AS ops_name,
         ja.dieu_do_id,  u_dd.name   AS dieu_do_name,
         COALESCE(
-          (SELECT json_agg(al ORDER BY al.id DESC)
-           FROM (
-             SELECT role, reason, fallback_used, ai_cost_usd, created_at
-             FROM ai_assignment_logs
-             WHERE job_id = j.id
-             ORDER BY id DESC
-             LIMIT 4
-           ) al),
+          (SELECT json_agg(json_build_object(
+             'role', role,
+             'reason', reason,
+             'fallback_used', fallback_used,
+             'ai_cost_usd', ai_cost_usd,
+             'created_at', created_at
+           ) ORDER BY id DESC)
+           FROM ai_assignment_logs
+           WHERE job_id = j.id
+           LIMIT 4),
           '[]'::json
         ) AS ai_logs
       FROM jobs j
