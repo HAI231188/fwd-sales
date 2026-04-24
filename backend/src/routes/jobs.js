@@ -39,7 +39,7 @@ router.get('/stats', requireAuth, async (req, res) => {
           LEFT JOIN job_assignments ja ON ja.job_id = j.id
           WHERE j.status = 'pending' AND j.deleted_at IS NULL
             AND j.service_type IN ('tk','both')
-            AND (ja.cus_id IS NULL OR ja.id IS NULL OR ja.cus_confirm_status = 'pending')`),
+            AND (ja.cus_id IS NULL OR ja.id IS NULL)`),
         db.query(`
           SELECT COUNT(*) AS v FROM jobs j
           LEFT JOIN job_assignments ja ON ja.job_id = j.id
