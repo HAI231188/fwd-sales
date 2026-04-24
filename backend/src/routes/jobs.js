@@ -67,10 +67,18 @@ router.get('/stats', requireAuth, async (req, res) => {
             COUNT(ja.id) FILTER (WHERE j.status = 'pending' AND j.deleted_at IS NULL) AS pending,
             COUNT(ja.id) FILTER (WHERE j.status = 'pending' AND j.deleted_at IS NULL AND j.deadline < NOW()) AS overdue,
             COUNT(ja.id) FILTER (WHERE j.status = 'pending' AND j.deleted_at IS NULL AND ja.cus_id IS NOT NULL AND ja.cus_confirm_status = 'pending') AS awaiting_confirm,
-            COUNT(ja.id) FILTER (WHERE j.status = 'pending' AND j.deleted_at IS NULL AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '48 hours') AS warning
+            COUNT(ja.id) FILTER (WHERE j.status = 'pending' AND j.deleted_at IS NULL AND (
+              (u.role != 'dieu_do' AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '48 hours')
+              OR (u.role = 'dieu_do'
+                  AND jtr.planned_datetime IS NOT NULL
+                  AND jtr.planned_datetime <= NOW() + INTERVAL '24 hours'
+                  AND (jtr.transport_name IS NULL OR jtr.transport_name = '')
+                  AND jtr.completed_at IS NULL)
+            )) AS warning
           FROM users u
-          LEFT JOIN job_assignments ja ON (ja.cus_id = u.id OR ja.ops_id = u.id)
+          LEFT JOIN job_assignments ja ON (ja.cus_id = u.id OR ja.ops_id = u.id OR ja.dieu_do_id = u.id)
           LEFT JOIN jobs j ON j.id = ja.job_id
+          LEFT JOIN job_truck jtr ON jtr.job_id = j.id
           WHERE u.role = ANY($1)
           GROUP BY u.id, u.name, u.role, u.code, u.avatar_color
           ORDER BY u.role, u.name
