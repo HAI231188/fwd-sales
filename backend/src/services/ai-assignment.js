@@ -162,11 +162,20 @@ ${context.map(c => `  ${c.name} (${c.username}), id=${c.id}
   - Other services handled this month: ${c.other_services_month}
   - Recent customers (3 months): ${c.recent_customers.slice(0, 5).join(', ') || 'none'}`).join('\n\n')}
 
-Assignment criteria (in order of priority):
-1. Balance monthly workload across staff
-2. Minimize current pending load
-3. Match task type (prefer staff experienced with required other services)
-4. Customer familiarity (prefer staff who have worked with this customer before)
+Assignment criteria — follow this EXACT order, no exceptions:
+
+PRIORITY 1 — WORKLOAD BALANCE (always the deciding factor):
+Compute total_load = this_month_jobs + pending_jobs for each candidate.
+Assign to the candidate with the LOWEST total_load. This rule overrides everything else.
+
+PRIORITY 2 — CUSTOMER FAMILIARITY (tiebreaker ONLY, never overrides workload):
+Apply ONLY IF two or more candidates have total_load values within 20% of each other
+(condition: |load_A - load_B| / max(load_A, load_B) <= 0.20).
+In that case, prefer the candidate listed in recent_customers for this customer.
+If no workloads are within 20% of each other, IGNORE customer history and pick lowest load.
+
+PRIORITY 3 — TASK TYPE MATCH (secondary tiebreaker):
+Only if still tied after priority 2: prefer staff with higher other_services_month count.
 
 Respond ONLY with valid JSON, no text outside the JSON object:
 {"user_id": <number>, "reason": "<brief reason in Vietnamese, max 100 chars>"}`;
@@ -238,11 +247,21 @@ ${context.map(c => `  ${c.name} (${c.username}), id=${c.id}
   - Truck only jobs this month: ${c.truck_only_jobs}
   - Recent customers (3 months): ${c.recent_customers.slice(0, 5).join(', ') || 'none'}`).join('\n\n')}
 
-Assignment criteria (in order of priority):
-1. Balance monthly workload
-2. Minimize current pending load
-3. Match task type distribution (balanced TK+Truck vs Truck-only ratio)
-4. Customer familiarity
+Assignment criteria — follow this EXACT order, no exceptions:
+
+PRIORITY 1 — WORKLOAD BALANCE (always the deciding factor):
+Compute total_load = this_month_jobs + pending_jobs for each candidate.
+Assign to the candidate with the LOWEST total_load. This rule overrides everything else.
+
+PRIORITY 2 — CUSTOMER FAMILIARITY (tiebreaker ONLY, never overrides workload):
+Apply ONLY IF two or more candidates have total_load values within 20% of each other
+(condition: |load_A - load_B| / max(load_A, load_B) <= 0.20).
+In that case, prefer the candidate listed in recent_customers for this customer.
+If no workloads are within 20% of each other, IGNORE customer history and pick lowest load.
+
+PRIORITY 3 — TASK TYPE MATCH (secondary tiebreaker):
+Only if still tied after priority 2: prefer staff with a more balanced
+TK+Truck vs Truck-only job distribution.
 
 Respond ONLY with valid JSON, no text outside the JSON object:
 {"user_id": <number>, "reason": "<brief reason in Vietnamese, max 100 chars>"}`;
