@@ -17,6 +17,14 @@ try {
   console.warn('⚠️  Migration warning (server will still start):', e.message);
 }
 
+// Seed sales/lead users (idempotent — ON CONFLICT DO UPDATE, passwords not overwritten)
+console.log('👤 Seeding users...');
+try {
+  execSync('node src/db/seed_users.js', { cwd: __dirname, stdio: 'inherit' });
+} catch (e) {
+  console.warn('⚠️  Seed warning (server will still start):', e.message);
+}
+
 // Backfill pipeline from existing report data (idempotent — safe every deploy)
 console.log('🔄 Backfilling pipeline from existing customers...');
 try {
