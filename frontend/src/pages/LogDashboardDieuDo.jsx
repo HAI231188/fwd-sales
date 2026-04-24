@@ -86,6 +86,7 @@ const DD_COLS = [
   { key: 'cargo',         label: 'Cont / Tons' },
   { key: 'etd_eta',       label: 'ETD / ETA' },
   { key: 'deadline',      label: 'Hạn lệnh' },
+  { key: 'doi_lenh',      label: 'TT đổi lệnh' },
   { key: 'transport',     label: 'Tên vận tải',    filterType: 'text', accessor: j => j.transport_name || '' },
   { key: 'planned_dt',    label: 'KH ngày giờ' },
   { key: 'actual_dt',     label: 'TH ngày giờ' },
@@ -205,6 +206,13 @@ export default function LogDashboardDieuDo() {
                         {j.deadline
                           ? new Date(j.deadline).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
                           : '—'}
+                      </td>
+                      <td style={{ ...cs, whiteSpace: 'nowrap' }}>
+                        {(j.destination === 'hai_phong' && (j.service_type === 'truck' || j.service_type === 'both'))
+                          ? j.ops_done
+                            ? <span style={{ background: 'rgba(34,197,94,0.15)', color: '#16a34a', borderRadius: 6, padding: '2px 8px', fontSize: 11, fontWeight: 600 }}>Đã đổi</span>
+                            : <span style={{ background: 'rgba(217,119,6,0.12)', color: '#b45309', borderRadius: 6, padding: '2px 8px', fontSize: 11, fontWeight: 600 }}>Chưa đổi</span>
+                          : <span style={{ color: 'var(--text-3)' }}>—</span>}
                       </td>
                       <td style={{ padding: '8px 6px', minWidth: 130 }}>
                         <InlineInput value={j.transport_name} placeholder="Nhập vận tải..."

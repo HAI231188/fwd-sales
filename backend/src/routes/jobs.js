@@ -125,19 +125,19 @@ router.get('/stats', requireAuth, async (req, res) => {
         qua_han:       parseInt(quaHan.rows[0].v),
       });
     } else if (role === 'ops') {
-      const [total, choDoiLenh, choTQ, sapHan, quaHan] = await Promise.all([
+      const [total, choTqDoiLenh, choDoiLenh, sapHan, quaHan] = await Promise.all([
         db.query(`SELECT COUNT(*) AS v FROM job_assignments ja JOIN jobs j ON j.id = ja.job_id WHERE ja.ops_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL`, [userId]),
-        db.query(`SELECT COUNT(*) AS v FROM job_ops_task jot JOIN jobs j ON j.id = jot.job_id WHERE jot.ops_id = $1 AND jot.completed = FALSE AND j.deleted_at IS NULL`, [userId]),
-        db.query(`SELECT COUNT(*) AS v FROM job_assignments ja JOIN jobs j ON j.id = ja.job_id JOIN job_tk jt ON jt.job_id = j.id WHERE ja.ops_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL AND jt.tk_status = 'dang_lam'`, [userId]),
+        db.query(`SELECT COUNT(*) AS v FROM job_assignments ja JOIN jobs j ON j.id = ja.job_id WHERE ja.ops_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL AND j.destination = 'hai_phong' AND j.service_type IN ('tk','both') AND COALESCE(ja.ops_done, FALSE) = FALSE`, [userId]),
+        db.query(`SELECT COUNT(*) AS v FROM job_assignments ja JOIN jobs j ON j.id = ja.job_id WHERE ja.ops_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL AND j.destination = 'hai_phong' AND j.service_type IN ('truck','both') AND COALESCE(ja.ops_done, FALSE) = FALSE`, [userId]),
         db.query(`SELECT COUNT(*) AS v FROM job_assignments ja JOIN jobs j ON j.id = ja.job_id WHERE ja.ops_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '24 hours'`, [userId]),
         db.query(`SELECT COUNT(*) AS v FROM job_assignments ja JOIN jobs j ON j.id = ja.job_id WHERE ja.ops_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL AND j.deadline < NOW()`, [userId]),
       ]);
       res.json({
-        total_managing: parseInt(total.rows[0].v),
-        cho_doi_lenh:   parseInt(choDoiLenh.rows[0].v),
-        cho_thong_quan: parseInt(choTQ.rows[0].v),
-        sap_han:        parseInt(sapHan.rows[0].v),
-        qua_han:        parseInt(quaHan.rows[0].v),
+        total_managing:  parseInt(total.rows[0].v),
+        cho_tq_doi_lenh: parseInt(choTqDoiLenh.rows[0].v),
+        cho_doi_lenh:    parseInt(choDoiLenh.rows[0].v),
+        sap_han:         parseInt(sapHan.rows[0].v),
+        qua_han:         parseInt(quaHan.rows[0].v),
       });
     } else {
       res.json({});
@@ -518,6 +518,7 @@ router.get('/', requireAuth, async (req, res) => {
         ja.id AS assignment_id, ja.cus_id, ja.ops_id, ja.dieu_do_id,
         ja.cus_confirm_status, ja.assignment_mode AS ja_mode,
         ja.adjustment_reason, ja.adjustment_deadline_proposed,
+        ja.ops_done, ja.ops_done_at,
         u_cus.name AS cus_name, u_cus.code AS cus_code, u_cus.avatar_color AS cus_color,
         u_ops.name AS ops_name, u_ops.code AS ops_code, u_ops.avatar_color AS ops_color,
         u_dd.name AS dieu_do_name, u_dd.code AS dieu_do_code, u_dd.avatar_color AS dieu_do_color,
@@ -535,7 +536,15 @@ router.get('/', requireAuth, async (req, res) => {
             'cont_type', jc.cont_type, 'seal_number', jc.seal_number
           ) ORDER BY jc.id)
           FROM job_containers jc WHERE jc.job_id = j.id
-        ), '[]'::json) AS containers
+        ), '[]'::json) AS containers,
+        COALESCE((
+          SELECT json_agg(json_build_object(
+            'id', jot.id, 'task_type', jot.task_type, 'content', jot.content,
+            'port', jot.port, 'deadline', jot.deadline,
+            'completed', jot.completed, 'completed_at', jot.completed_at, 'notes', jot.notes
+          ) ORDER BY jot.id)
+          FROM job_ops_task jot WHERE jot.job_id = j.id
+        ), '[]'::json) AS ops_tasks
       FROM jobs j
       LEFT JOIN LATERAL (
         SELECT * FROM job_assignments WHERE job_id = j.id ORDER BY id DESC LIMIT 1
@@ -718,6 +727,21 @@ router.post('/', requireAuth, async (req, res) => {
       await recordHistory(client, job.id, req.user.id, 'dieu_do_assigned', null, String(ddUserId));
     }
 
+    // Auto-generate job_ops_task rows for Hải Phòng truck/both jobs
+    if (destination === 'hai_phong' && (service_type === 'truck' || service_type === 'both')) {
+      const opsUserId = opsSuggestion?.user_id || null;
+      if (service_type === 'both') {
+        await client.query(
+          `INSERT INTO job_ops_task (job_id, ops_id, task_type) VALUES ($1, $2, 'thong_quan_doi_lenh')`,
+          [job.id, opsUserId]
+        );
+      }
+      await client.query(
+        `INSERT INTO job_ops_task (job_id, ops_id, task_type) VALUES ($1, $2, 'doi_lenh')`,
+        [job.id, opsUserId]
+      );
+    }
+
     await recordHistory(client, job.id, req.user.id, 'job_created', null, customer_name);
     await client.query('COMMIT');
 
@@ -754,6 +778,7 @@ router.get('/:id', requireAuth, async (req, res) => {
         ja.id AS assignment_id, ja.cus_id, ja.ops_id, ja.dieu_do_id,
         ja.cus_confirm_status, ja.assignment_mode AS ja_mode,
         ja.adjustment_reason, ja.adjustment_deadline_proposed,
+        ja.ops_done, ja.ops_done_at,
         u_cus.name AS cus_name, u_cus.code AS cus_code,
         u_ops.name AS ops_name, u_ops.code AS ops_code,
         u_dd.name AS dieu_do_name, u_dd.code AS dieu_do_code
@@ -1188,8 +1213,11 @@ router.patch('/:id/set-deadline', requireAuth, async (req, res) => {
 
 // PATCH /api/jobs/:id/tk
 router.patch('/:id/tk', requireAuth, async (req, res) => {
-  const FIELDS = ['tk_datetime','tk_number','tk_flow','tk_status','tq_datetime',
-    'services_completed','delivery_datetime','delivery_location','truck_booked','notes'];
+  const isOps = req.user.role === 'ops';
+  const FIELDS = isOps
+    ? ['tk_status']
+    : ['tk_datetime','tk_number','tk_flow','tk_status','tq_datetime',
+       'services_completed','delivery_datetime','delivery_location','truck_booked','notes'];
   const client = await db.pool.connect();
   try {
     await client.query('BEGIN');
@@ -1343,6 +1371,43 @@ router.post('/:id/delete-request', requireAuth, async (req, res) => {
     await recordHistory(client, req.params.id, req.user.id, 'delete_requested', null, String(req.user.id));
     await client.query('COMMIT');
     res.status(201).json({ ok: true });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// POST /api/jobs/:id/ops-done
+router.post('/:id/ops-done', requireAuth, async (req, res) => {
+  if (req.user.role !== 'ops') return res.status(403).json({ error: 'Không có quyền' });
+  const client = await db.pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows: jobRows } = await client.query(
+      `SELECT j.service_type, jt.tk_status FROM jobs j LEFT JOIN job_tk jt ON jt.job_id = j.id WHERE j.id = $1 AND j.deleted_at IS NULL`,
+      [req.params.id]
+    );
+    if (!jobRows[0]) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Không tìm thấy job' }); }
+    const { service_type, tk_status } = jobRows[0];
+    const needsTkCheck = service_type === 'tk' || service_type === 'both';
+    const terminalStatuses = ['thong_quan', 'giai_phong', 'bao_quan'];
+    if (needsTkCheck && !terminalStatuses.includes(tk_status)) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'TK chưa thông quan / giải phóng / bảo quan' });
+    }
+    await client.query(
+      `UPDATE job_assignments SET ops_done = TRUE, ops_done_at = NOW() WHERE job_id = $1`,
+      [req.params.id]
+    );
+    await client.query(
+      `UPDATE job_ops_task SET completed = TRUE, completed_at = NOW() WHERE job_id = $1 AND completed = FALSE`,
+      [req.params.id]
+    );
+    await recordHistory(client, req.params.id, req.user.id, 'ops_done', 'false', 'true');
+    await client.query('COMMIT');
+    res.json({ ok: true });
   } catch (err) {
     await client.query('ROLLBACK');
     res.status(500).json({ error: err.message });

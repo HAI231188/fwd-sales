@@ -302,6 +302,10 @@ CREATE INDEX IF NOT EXISTS idx_job_assignments_ops_id ON job_assignments(ops_id)
 CREATE INDEX IF NOT EXISTS idx_job_tk_job_id          ON job_tk(job_id);
 CREATE INDEX IF NOT EXISTS idx_job_truck_job_id       ON job_truck(job_id);
 CREATE INDEX IF NOT EXISTS idx_job_ops_task_job_id    ON job_ops_task(job_id);
+
+ALTER TABLE job_ops_task ADD COLUMN IF NOT EXISTS task_type VARCHAR(30);
+ALTER TABLE job_assignments ADD COLUMN IF NOT EXISTS ops_done BOOLEAN DEFAULT FALSE;
+ALTER TABLE job_assignments ADD COLUMN IF NOT EXISTS ops_done_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS idx_job_history_job_id     ON job_history(job_id);
 CREATE INDEX IF NOT EXISTS idx_job_dl_req_job_id      ON job_deadline_requests(job_id);
 
