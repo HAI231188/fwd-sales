@@ -5,6 +5,8 @@ import JobDetailModal from '../components/JobDetailModal';
 import CreateJobModal from '../components/CreateJobModal';
 import AssignmentModal from '../components/AssignmentModal';
 import JobListModal from '../components/JobListModal';
+import FilteredTable from '../components/FilteredTable';
+import DateRangeFilter from '../components/DateRangeFilter';
 import {
   getJobStats, getJobs, getDeadlineRequests, getLogStaff,
   assignJob, setJobDeadline, reviewDeadlineRequest, createJob,
@@ -83,6 +85,22 @@ const ALL_COLS = [
   { key: 'ops',          label: 'OPS' },
   { key: 'notes',        label: 'Ghi chú' },
 ];
+const FILTER_CONFIG = {
+  job_code:  { filterType: 'text' },
+  si_number: { filterType: 'text' },
+  customer:  { filterType: 'text', accessor: j => j.customer_name || '' },
+  service:   { filterType: 'select', options: [
+    { value: 'tk', label: 'TK' }, { value: 'truck', label: 'Xe' }, { value: 'both', label: 'TK+Xe' },
+  ]},
+  tk_status: { filterType: 'select', options: [
+    { value: 'chua_truyen', label: 'Chưa truyền' }, { value: 'dang_lam', label: 'Đang làm' },
+    { value: 'thong_quan', label: 'Thông quan' }, { value: 'giai_phong', label: 'Giải phóng' },
+    { value: 'bao_quan', label: 'Bảo quan' },
+  ]},
+  cus: { filterType: 'text', accessor: j => j.cus_name || '' },
+  ops: { filterType: 'text', accessor: j => j.ops_name || '' },
+};
+
 const LS_COL_KEY = 'tp_grid_columns';
 function loadVisibleCols() {
   const allKeys = ALL_COLS.map(c => c.key);
@@ -385,6 +403,7 @@ export default function LogDashboardTP() {
   const [visibleCols, setVisibleCols] = useState(loadVisibleCols);
   const [showColMenu, setShowColMenu] = useState(false);
   const [jobListFilter, setJobListFilter] = useState(null);
+  const [completedRange, setCompletedRange] = useState({});
 
   function toggleCol(key) {
     setVisibleCols(prev => {
@@ -406,9 +425,17 @@ export default function LogDashboardTP() {
 
   const { data: stats } = useQuery({ queryKey: ['jobStats'], queryFn: getJobStats, refetchInterval: pollInterval });
   const { data: settings } = useQuery({ queryKey: ['jobSettings'], queryFn: getJobSettings, refetchInterval: pollInterval });
-  const { data: jobs = [], isLoading } = useQuery({
-    queryKey: ['jobs', tab], queryFn: () => getJobs({ tab }), refetchInterval: pollInterval,
+  const { data: pendingJobs = [], isLoading: isLoadingPending } = useQuery({
+    queryKey: ['jobs', 'pending'], queryFn: () => getJobs({ tab: 'pending' }), refetchInterval: pollInterval,
   });
+  const { data: completedJobs = [], isLoading: isLoadingCompleted } = useQuery({
+    queryKey: ['jobs', 'completed', completedRange],
+    queryFn: () => getJobs({ tab: 'completed', ...completedRange }),
+    enabled: tab === 'completed',
+    refetchInterval: pollInterval,
+  });
+  const jobs = tab === 'completed' ? completedJobs : pendingJobs;
+  const isLoading = tab === 'completed' ? isLoadingCompleted : isLoadingPending;
   const { data: dlData } = useQuery({
     queryKey: ['deadlineRequests'], queryFn: getDeadlineRequests,
     enabled: showDeadline,
@@ -525,14 +552,21 @@ export default function LogDashboardTP() {
 
         {/* Jobs grid */}
         <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-          <div style={{ padding: '0 20px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <div className="tabs" style={{ marginBottom: 0 }}>
-              <button className={`tab ${tab === 'pending' ? 'active' : ''}`} onClick={() => setTab('pending')}>
-                CV Pending
-              </button>
-              <button className={`tab ${tab === 'completed' ? 'active' : ''}`} onClick={() => setTab('completed')}>
-                CV Hoàn thành (3 ngày)
-              </button>
+          <div style={{ padding: '0 20px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <div className="tabs" style={{ marginBottom: 0 }}>
+                <button className={`tab ${tab === 'pending' ? 'active' : ''}`} onClick={() => setTab('pending')}>
+                  CV Pending
+                </button>
+                <button className={`tab ${tab === 'completed' ? 'active' : ''}`} onClick={() => setTab('completed')}>
+                  CV Hoàn thành
+                </button>
+              </div>
+              {tab === 'completed' && (
+                <div style={{ paddingBottom: 4 }}>
+                  <DateRangeFilter onChange={setCompletedRange} />
+                </div>
+              )}
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, paddingRight: 4 }}>
               {tab === 'pending' && (
@@ -579,21 +613,18 @@ export default function LogDashboardTP() {
           <div style={{ overflowX: 'auto' }}>
             {isLoading ? (
               <div style={{ padding: 40, textAlign: 'center' }}><span className="spinner" /></div>
-            ) : (
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-                <thead>
-                  <tr style={{ background: 'var(--bg)', borderBottom: '2px solid var(--border)' }}>
-                    {ALL_COLS.filter(c => visibleCols.includes(c.key)).map(c => (
-                      <th key={c.key} style={{ padding: '10px 8px', textAlign: 'left', fontWeight: 600, color: 'var(--text-2)', fontSize: 11, whiteSpace: 'nowrap' }}>{c.label}</th>
-                    ))}
-                    <th style={{ padding: '10px 8px' }} />
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredJobs.length === 0 && (
-                    <tr><td colSpan={visibleCols.length + 1} style={{ textAlign: 'center', padding: 40, color: 'var(--text-3)' }}>Không có job nào</td></tr>
-                  )}
-                  {filteredJobs.map((j, i) => {
+            ) : (() => {
+              const ftColumns = ALL_COLS
+                .filter(c => visibleCols.includes(c.key))
+                .map(c => ({ ...c, ...(FILTER_CONFIG[c.key] || {}) }));
+              return (
+                <FilteredTable
+                  columns={ftColumns}
+                  data={filteredJobs}
+                  emptyText="Không có job nào"
+                  extraHeaderCells={<th style={{ padding: '10px 8px' }} />}
+                  tableStyle={{ fontSize: 13 }}
+                  renderRow={(j, i) => {
                     const waitingAssign = (j.service_type === 'tk' || j.service_type === 'both') && !j.cus_id;
                     const tkBg = j.tk_flow === 'xanh' ? 'rgba(34,197,94,0.06)' :
                                  j.tk_flow === 'vang' ? 'rgba(217,119,6,0.06)' :
@@ -633,7 +664,7 @@ export default function LogDashboardTP() {
                     return (
                       <tr key={j.id} style={{ borderBottom: '1px solid var(--border)', background: rowBg }}
                         onDoubleClick={() => setDetailJobId(j.id)}>
-                        {ALL_COLS.filter(c => visibleCols.includes(c.key)).map(c => cell(c.key))}
+                        {ftColumns.map(c => cell(c.key))}
                         <td style={{ ...cs, whiteSpace: 'nowrap' }}>
                           {tab === 'pending' && (
                             <button className="btn btn-ghost btn-sm btn-icon"
@@ -649,10 +680,10 @@ export default function LogDashboardTP() {
                         </td>
                       </tr>
                     );
-                  })}
-                </tbody>
-              </table>
-            )}
+                  }}
+                />
+              );
+            })()}
           </div>
         </div>
       </div>

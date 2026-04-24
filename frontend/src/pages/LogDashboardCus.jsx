@@ -4,6 +4,8 @@ import Navbar from '../components/Navbar';
 import JobDetailModal from '../components/JobDetailModal';
 import CreateJobModal from '../components/CreateJobModal';
 import JobListModal from '../components/JobListModal';
+import FilteredTable from '../components/FilteredTable';
+import DateRangeFilter from '../components/DateRangeFilter';
 import {
   getJobStats, getJobs, updateJobTk, updateJob, confirmJob, requestDeadline, completeJob,
   requestJobDelete, createJob,
@@ -194,6 +196,34 @@ function OpsPartnerCell({ job, onSave }) {
   );
 }
 
+const CUS_FILTER_COLS = [
+  { key: 'stt',              label: 'STT' },
+  { key: 'created_at',       label: 'Ngày' },
+  { key: 'job_code',         label: 'Job',            filterType: 'text' },
+  { key: 'si_number',        label: 'Mã SI',          filterType: 'text' },
+  { key: 'customer_name',    label: 'Khách hàng',     filterType: 'text', accessor: j => j.customer_name || '' },
+  { key: 'ops_col',          label: 'Tên OPS',        filterType: 'text', accessor: j => j.ops_name || j.ops_partner || '' },
+  { key: 'etd_eta',          label: 'ETD / ETA' },
+  { key: 'deadline',         label: 'Deadline' },
+  { key: 'tk_datetime',      label: 'Ngày giờ TK' },
+  { key: 'tk_number',        label: 'Số TK',          filterType: 'text' },
+  { key: 'tk_flow',          label: 'Luồng TK',       filterType: 'select', options: [
+    { value: 'xanh', label: 'Xanh' }, { value: 'vang', label: 'Vàng' }, { value: 'do', label: 'Đỏ' },
+  ]},
+  { key: 'tk_status',        label: 'Trạng thái TK',  filterType: 'select', options: [
+    { value: 'chua_truyen', label: 'Chưa truyền' }, { value: 'dang_lam', label: 'Đang làm' },
+    { value: 'thong_quan', label: 'Thông quan' }, { value: 'giai_phong', label: 'Giải phóng' },
+    { value: 'bao_quan', label: 'Bảo quan' },
+  ]},
+  { key: 'tq_datetime',      label: 'Ngày giờ TQ' },
+  { key: 'other_svc',        label: 'Dịch vụ khác' },
+  { key: 'delivery_dt',      label: 'Ngày giao hàng' },
+  { key: 'delivery_loc',     label: 'Địa điểm giao' },
+  { key: 'truck_booked',     label: 'Đặt xe' },
+  { key: 'ht',               label: 'HT' },
+  { key: 'notes',            label: 'Ghi chú' },
+];
+
 function DeadlineRequestModal({ job, onClose, onSubmit }) {
   const [proposed, setProposed] = useState('');
   const [reason, setReason] = useState('');
@@ -234,13 +264,22 @@ export default function LogDashboardCus() {
   const [deadlineReqJob, setDeadlineReqJob] = useState(null);
   const [showCreate, setShowCreate] = useState(false);
   const [jobListFilter, setJobListFilter] = useState(null);
+  const [completedRange, setCompletedRange] = useState({});
 
   const { data: stats } = useQuery({ queryKey: ['jobStats'], queryFn: getJobStats, refetchInterval: 30000 });
-  const { data: jobs = [], isLoading } = useQuery({
-    queryKey: ['jobs', tab],
-    queryFn: () => getJobs({ tab }),
+  const { data: pendingJobs = [], isLoading: isLoadingPending } = useQuery({
+    queryKey: ['jobs', 'pending'],
+    queryFn: () => getJobs({ tab: 'pending' }),
     refetchInterval: 30000,
   });
+  const { data: completedJobs = [], isLoading: isLoadingCompleted } = useQuery({
+    queryKey: ['jobs', 'completed', completedRange],
+    queryFn: () => getJobs({ tab: 'completed', ...completedRange }),
+    enabled: tab === 'completed',
+    refetchInterval: 30000,
+  });
+  const jobs = tab === 'completed' ? completedJobs : pendingJobs;
+  const isLoading = tab === 'completed' ? isLoadingCompleted : isLoadingPending;
 
   const tkMut = useMutation({
     mutationFn: ({ jobId, data }) => updateJobTk(jobId, data),
@@ -278,12 +317,6 @@ export default function LogDashboardCus() {
     return true;
   }
 
-  const HEADERS = [
-    'STT','Ngày','Job','Mã SI','Khách hàng','Tên OPS','ETD / ETA','Deadline',
-    'Ngày giờ TK','Số TK','Luồng TK','Trạng thái TK','Ngày giờ TQ',
-    'Dịch vụ khác','Ngày giao hàng','Địa điểm giao','Đặt xe','HT','Ghi chú','',
-  ];
-
   return (
     <div className="page">
       <Navbar />
@@ -303,30 +336,28 @@ export default function LogDashboardCus() {
 
         {/* Job grid */}
         <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-          <div style={{ padding: '0 20px', borderBottom: '1px solid var(--border)' }}>
+          <div style={{ padding: '0 20px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
             <div className="tabs" style={{ marginBottom: 0 }}>
               <button className={`tab ${tab === 'pending' ? 'active' : ''}`} onClick={() => setTab('pending')}>Đang làm</button>
-              <button className={`tab ${tab === 'completed' ? 'active' : ''}`} onClick={() => setTab('completed')}>Hoàn thành (3 ngày)</button>
+              <button className={`tab ${tab === 'completed' ? 'active' : ''}`} onClick={() => setTab('completed')}>Hoàn thành</button>
             </div>
+            {tab === 'completed' && (
+              <div style={{ paddingBottom: 4 }}>
+                <DateRangeFilter onChange={setCompletedRange} />
+              </div>
+            )}
           </div>
 
           <div style={{ overflowX: 'auto' }}>
             {isLoading ? (
               <div style={{ padding: 40, textAlign: 'center' }}><span className="spinner" /></div>
             ) : (
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-                <thead>
-                  <tr style={{ background: 'var(--bg)', borderBottom: '2px solid var(--border)' }}>
-                    {HEADERS.map((h, i) => (
-                      <th key={i} style={{ padding: '10px 8px', textAlign: 'left', fontWeight: 600, color: 'var(--text-2)', fontSize: 11, whiteSpace: 'nowrap' }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {jobs.length === 0 && (
-                    <tr><td colSpan={HEADERS.length} style={{ textAlign: 'center', padding: 40, color: 'var(--text-3)' }}>Không có job nào</td></tr>
-                  )}
-                  {jobs.map((j, i) => {
+              <FilteredTable
+                columns={CUS_FILTER_COLS}
+                data={jobs}
+                emptyText="Không có job nào"
+                tableStyle={{ fontSize: 13 }}
+                renderRow={(j, i) => {
                     const svc = parseJson(j.services_completed);
                     const os = parseJson(j.other_services);
                     const isTk = j.service_type === 'tk' || j.service_type === 'both';
@@ -455,9 +486,8 @@ export default function LogDashboardCus() {
                         </td>
                       </tr>
                     );
-                  })}
-                </tbody>
-              </table>
+                  }}
+                />
             )}
           </div>
         </div>

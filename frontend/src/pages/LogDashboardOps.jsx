@@ -3,6 +3,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import Navbar from '../components/Navbar';
 import JobDetailModal from '../components/JobDetailModal';
 import JobListModal from '../components/JobListModal';
+import FilteredTable from '../components/FilteredTable';
+import DateRangeFilter from '../components/DateRangeFilter';
 import { getJobStats, getJobs, completeOpsTask, completeJob, requestJobDelete } from '../api';
 
 const TK_STATUS_LABEL = {
@@ -59,6 +61,47 @@ function StatCard({ label, value, color, onClick }) {
   );
 }
 
+const TK_STATUS_OPTS = [
+  { value: 'chua_truyen', label: 'Chưa truyền' }, { value: 'dang_lam', label: 'Đang làm' },
+  { value: 'thong_quan', label: 'Thông quan' }, { value: 'giai_phong', label: 'Giải phóng' },
+  { value: 'bao_quan', label: 'Bảo quan' },
+];
+
+const FOLLOW_TQ_COLS = [
+  { key: 'created_at',    label: 'Ngày' },
+  { key: 'job_code',      label: 'Job',           filterType: 'text' },
+  { key: 'si_number',     label: 'Mã SI',         filterType: 'text' },
+  { key: 'customer_name', label: 'Khách hàng',    filterType: 'text', accessor: j => j.customer_name || '' },
+  { key: 'cargo',         label: 'Số cont / Loại cont' },
+  { key: 'etd_eta',       label: 'ETD / ETA' },
+  { key: 'deadline',      label: 'Hạn lệnh' },
+  { key: 'tk_flow',       label: 'Luồng TK' },
+  { key: 'tk_status',     label: 'Trạng thái TK', filterType: 'select', options: TK_STATUS_OPTS },
+  { key: 'tq_datetime',   label: 'Ngày giờ TQ' },
+  { key: 'notes',         label: 'Ghi chú' },
+];
+
+const DOI_LENH_COLS = [
+  { key: 'created_at',    label: 'Ngày' },
+  { key: 'job_code',      label: 'Job',           filterType: 'text' },
+  { key: 'si_number',     label: 'Mã SI',         filterType: 'text' },
+  { key: 'customer_name', label: 'Khách hàng',    filterType: 'text', accessor: j => j.customer_name || '' },
+  { key: 'cargo',         label: 'Số cont / Loại cont' },
+  { key: 'deadline',      label: 'Hạn lệnh' },
+  { key: 'ops_task_info', label: 'Cảng / Nội dung CV / Deadline / HT / Ghi chú', },
+];
+
+const HOAN_THANH_COLS = [
+  { key: 'created_at',    label: 'Ngày' },
+  { key: 'job_code',      label: 'Job',           filterType: 'text' },
+  { key: 'si_number',     label: 'Mã SI',         filterType: 'text' },
+  { key: 'customer_name', label: 'Khách hàng',    filterType: 'text', accessor: j => j.customer_name || '' },
+  { key: 'cargo',         label: 'Số cont' },
+  { key: 'etd_eta',       label: 'ETD / ETA' },
+  { key: 'tk_status',     label: 'Trạng thái TK', filterType: 'select', options: TK_STATUS_OPTS },
+  { key: 'tq_datetime',   label: 'Ngày TQ' },
+];
+
 const TH = ({ children }) => (
   <th style={{ padding: '10px 8px', textAlign: 'left', fontWeight: 600, color: 'var(--text-2)', fontSize: 11, whiteSpace: 'nowrap', background: 'var(--bg)', borderBottom: '2px solid var(--border)' }}>
     {children}
@@ -73,6 +116,7 @@ export default function LogDashboardOps() {
   const [tab, setTab] = useState('follow_tq');
   const [detailJobId, setDetailJobId] = useState(null);
   const [jobListFilter, setJobListFilter] = useState(null);
+  const [completedRange, setCompletedRange] = useState({});
 
   const { data: stats } = useQuery({ queryKey: ['jobStats'], queryFn: getJobStats, refetchInterval: 30000 });
   const { data: pendingJobs = [], isLoading } = useQuery({
@@ -81,8 +125,8 @@ export default function LogDashboardOps() {
     refetchInterval: 30000,
   });
   const { data: completedJobs = [] } = useQuery({
-    queryKey: ['jobs', 'completed'],
-    queryFn: () => getJobs({ tab: 'completed' }),
+    queryKey: ['jobs', 'completed', completedRange],
+    queryFn: () => getJobs({ tab: 'completed', ...completedRange }),
     enabled: tab === 'hoan_thanh',
   });
 
@@ -130,152 +174,106 @@ export default function LogDashboardOps() {
         </div>
 
         <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-          <div style={{ padding: '0 20px', borderBottom: '1px solid var(--border)' }}>
+          <div style={{ padding: '0 20px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
             <div className="tabs" style={{ marginBottom: 0 }}>
               <button className={`tab ${tab === 'follow_tq' ? 'active' : ''}`} onClick={() => setTab('follow_tq')}>Follow thông quan</button>
               <button className={`tab ${tab === 'doi_lenh' ? 'active' : ''}`} onClick={() => setTab('doi_lenh')}>Đổi lệnh & việc khác</button>
-              <button className={`tab ${tab === 'hoan_thanh' ? 'active' : ''}`} onClick={() => setTab('hoan_thanh')}>Hoàn thành (3 ngày)</button>
+              <button className={`tab ${tab === 'hoan_thanh' ? 'active' : ''}`} onClick={() => setTab('hoan_thanh')}>Hoàn thành</button>
             </div>
+            {tab === 'hoan_thanh' && (
+              <div style={{ paddingBottom: 4 }}>
+                <DateRangeFilter onChange={setCompletedRange} />
+              </div>
+            )}
           </div>
 
           <div style={{ overflowX: 'auto' }}>
             {isLoading && tab !== 'hoan_thanh' ? (
               <div style={{ padding: 40, textAlign: 'center' }}><span className="spinner" /></div>
             ) : tab === 'follow_tq' ? (
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead>
-                  <tr>
-                    <TH>Ngày</TH><TH>Job</TH><TH>Mã SI</TH><TH>Khách hàng</TH>
-                    <TH>Số cont / Loại cont</TH><TH>ETD / ETA</TH>
-                    <TH>Hạn lệnh</TH><TH>Luồng TK</TH><TH>Trạng thái TK</TH>
-                    <TH>Ngày giờ TQ</TH><TH>Ghi chú</TH><TH></TH>
+              <FilteredTable
+                columns={FOLLOW_TQ_COLS}
+                data={displayJobs}
+                emptyText="Không có job nào"
+                extraHeaderCells={<TH></TH>}
+                renderRow={j => (
+                  <tr key={j.id} style={{ background: rowBg(j) }} onDoubleClick={() => setDetailJobId(j.id)}>
+                    <TD style={{ whiteSpace: 'nowrap', fontSize: 12 }}>{fmtDate(j.created_at)}</TD>
+                    <TD style={{ fontWeight: 600, color: 'var(--info)', whiteSpace: 'nowrap' }}>{j.job_code || `#${j.id}`}</TD>
+                    <TD style={{ whiteSpace: 'nowrap', fontSize: 12, color: 'var(--text-2)' }}>{j.si_number || '—'}</TD>
+                    <TD style={{ maxWidth: 140 }}>{j.customer_name}</TD>
+                    <TD style={{ whiteSpace: 'nowrap', fontSize: 12 }}>{fmtCargo(j)}</TD>
+                    <TD style={{ whiteSpace: 'nowrap', color: 'var(--text-2)', fontSize: 12 }}>{fmtDate(j.etd)}<br />{fmtDate(j.eta)}</TD>
+                    <TD style={{ whiteSpace: 'nowrap', ...deadlineStyle(j.deadline) }}>{j.deadline ? fmtDt(j.deadline) : '—'}</TD>
+                    <TD style={{ color: 'var(--text-2)' }}>{j.tk_flow || '—'}</TD>
+                    <TD>
+                      <span style={{ color: TK_STATUS_COLOR[j.tk_status] || 'var(--text-2)', fontWeight: 500, fontSize: 12 }}>
+                        {TK_STATUS_LABEL[j.tk_status] || '—'}
+                      </span>
+                    </TD>
+                    <TD style={{ whiteSpace: 'nowrap', fontSize: 12 }}>{fmtDt(j.tq_datetime)}</TD>
+                    <TD style={{ color: 'var(--text-2)', maxWidth: 160, fontSize: 12 }}>{j.tk_notes || '—'}</TD>
+                    <TD style={{ whiteSpace: 'nowrap' }}>
+                      <button className="btn btn-ghost btn-sm btn-icon" title="Yêu cầu xóa job" style={{ color: 'var(--danger)' }}
+                        onClick={() => { if (window.confirm(`Gửi yêu cầu xóa job ${j.job_code || '#' + j.id}?`)) deleteReqMut.mutate({ id: j.id, reason: null }); }}>🗑</button>
+                      <button className="btn btn-ghost btn-sm btn-icon" onClick={() => setDetailJobId(j.id)}>🔍</button>
+                    </TD>
                   </tr>
-                </thead>
-                <tbody>
-                  {displayJobs.length === 0 && (
-                    <tr><td colSpan={12} style={{ textAlign: 'center', padding: 40, color: 'var(--text-3)' }}>Không có job nào</td></tr>
-                  )}
-                  {displayJobs.map(j => (
-                    <tr key={j.id} style={{ background: rowBg(j) }} onDoubleClick={() => setDetailJobId(j.id)}>
-                      <TD style={{ whiteSpace: 'nowrap', fontSize: 12 }}>{fmtDate(j.created_at)}</TD>
-                      <TD style={{ fontWeight: 600, color: 'var(--info)', whiteSpace: 'nowrap' }}>{j.job_code || `#${j.id}`}</TD>
-                      <TD style={{ whiteSpace: 'nowrap', fontSize: 12, color: 'var(--text-2)' }}>{j.si_number || '—'}</TD>
-                      <TD style={{ maxWidth: 140 }}>{j.customer_name}</TD>
-                      <TD style={{ whiteSpace: 'nowrap', fontSize: 12 }}>
-                        {fmtCargo(j)}
-                      </TD>
-                      <TD style={{ whiteSpace: 'nowrap', color: 'var(--text-2)', fontSize: 12 }}>
-                        {fmtDate(j.etd)}<br />{fmtDate(j.eta)}
-                      </TD>
-                      <TD style={{ whiteSpace: 'nowrap', ...deadlineStyle(j.deadline) }}>
-                        {j.deadline ? fmtDt(j.deadline) : '—'}
-                      </TD>
-                      <TD style={{ color: 'var(--text-2)' }}>{j.tk_flow || '—'}</TD>
-                      <TD>
-                        <span style={{ color: TK_STATUS_COLOR[j.tk_status] || 'var(--text-2)', fontWeight: 500, fontSize: 12 }}>
-                          {TK_STATUS_LABEL[j.tk_status] || '—'}
-                        </span>
-                      </TD>
-                      <TD style={{ whiteSpace: 'nowrap', fontSize: 12 }}>{fmtDt(j.tq_datetime)}</TD>
-                      <TD style={{ color: 'var(--text-2)', maxWidth: 160, fontSize: 12 }}>{j.tk_notes || '—'}</TD>
-                      <TD style={{ whiteSpace: 'nowrap' }}>
-                        <button className="btn btn-ghost btn-sm btn-icon"
-                          title="Yêu cầu xóa job" style={{ color: 'var(--danger)' }}
-                          onClick={() => {
-                            if (window.confirm(`Gửi yêu cầu xóa job ${j.job_code || '#' + j.id}?`)) {
-                              deleteReqMut.mutate({ id: j.id, reason: null });
-                            }
-                          }}>🗑</button>
-                        <button className="btn btn-ghost btn-sm btn-icon" onClick={() => setDetailJobId(j.id)}>🔍</button>
-                      </TD>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                )}
+              />
             ) : tab === 'doi_lenh' ? (
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead>
-                  <tr>
-                    <TH>Ngày</TH><TH>Job</TH><TH>Mã SI</TH><TH>Khách hàng</TH>
-                    <TH>Số cont / Loại cont</TH><TH>Hạn lệnh</TH>
-                    <TH>Cảng đổi lệnh</TH><TH>Nội dung CV</TH>
-                    <TH>Deadline task</TH><TH>Hoàn thành</TH><TH>Ghi chú</TH><TH></TH>
+              <FilteredTable
+                columns={DOI_LENH_COLS}
+                data={displayJobs}
+                emptyText="Không có job nào"
+                extraHeaderCells={<TH></TH>}
+                renderRow={j => (
+                  <tr key={j.id} style={{ background: rowBg(j) }} onDoubleClick={() => setDetailJobId(j.id)}>
+                    <TD style={{ whiteSpace: 'nowrap', fontSize: 12 }}>{fmtDate(j.created_at)}</TD>
+                    <TD style={{ fontWeight: 600, color: 'var(--info)', whiteSpace: 'nowrap' }}>{j.job_code || `#${j.id}`}</TD>
+                    <TD style={{ whiteSpace: 'nowrap', fontSize: 12, color: 'var(--text-2)' }}>{j.si_number || '—'}</TD>
+                    <TD style={{ maxWidth: 140 }}>{j.customer_name}</TD>
+                    <TD style={{ whiteSpace: 'nowrap', fontSize: 12 }}>{fmtCargo(j)}</TD>
+                    <TD style={{ whiteSpace: 'nowrap', ...deadlineStyle(j.deadline) }}>{j.deadline ? fmtDt(j.deadline) : '—'}</TD>
+                    <TD colSpan={5} style={{ color: 'var(--text-3)', fontSize: 12 }}>
+                      Mở chi tiết để xem &amp; hoàn thành công việc OPS
+                    </TD>
+                    <TD style={{ whiteSpace: 'nowrap' }}>
+                      <button className="btn btn-ghost btn-sm btn-icon" title="Yêu cầu xóa job" style={{ color: 'var(--danger)' }}
+                        onClick={() => { if (window.confirm(`Gửi yêu cầu xóa job ${j.job_code || '#' + j.id}?`)) deleteReqMut.mutate({ id: j.id, reason: null }); }}>🗑</button>
+                      <button className="btn btn-ghost btn-sm btn-icon" onClick={() => setDetailJobId(j.id)}>🔍</button>
+                    </TD>
                   </tr>
-                </thead>
-                <tbody>
-                  {displayJobs.length === 0 && (
-                    <tr><td colSpan={12} style={{ textAlign: 'center', padding: 40, color: 'var(--text-3)' }}>Không có job nào</td></tr>
-                  )}
-                  {displayJobs.map(j => (
-                    <tr key={j.id} style={{ background: rowBg(j) }} onDoubleClick={() => setDetailJobId(j.id)}>
-                      <TD style={{ whiteSpace: 'nowrap', fontSize: 12 }}>{fmtDate(j.created_at)}</TD>
-                      <TD style={{ fontWeight: 600, color: 'var(--info)', whiteSpace: 'nowrap' }}>{j.job_code || `#${j.id}`}</TD>
-                      <TD style={{ whiteSpace: 'nowrap', fontSize: 12, color: 'var(--text-2)' }}>{j.si_number || '—'}</TD>
-                      <TD style={{ maxWidth: 140 }}>{j.customer_name}</TD>
-                      <TD style={{ whiteSpace: 'nowrap', fontSize: 12 }}>
-                        {fmtCargo(j)}
-                      </TD>
-                      <TD style={{ whiteSpace: 'nowrap', ...deadlineStyle(j.deadline) }}>
-                        {j.deadline ? fmtDt(j.deadline) : '—'}
-                      </TD>
-                      <TD colSpan={5} style={{ color: 'var(--text-3)', fontSize: 12 }}>
-                        Mở chi tiết để xem &amp; hoàn thành công việc OPS
-                      </TD>
-                      <TD style={{ whiteSpace: 'nowrap' }}>
-                        <button className="btn btn-ghost btn-sm btn-icon"
-                          title="Yêu cầu xóa job" style={{ color: 'var(--danger)' }}
-                          onClick={() => {
-                            if (window.confirm(`Gửi yêu cầu xóa job ${j.job_code || '#' + j.id}?`)) {
-                              deleteReqMut.mutate({ id: j.id, reason: null });
-                            }
-                          }}>🗑</button>
-                        <button className="btn btn-ghost btn-sm btn-icon" onClick={() => setDetailJobId(j.id)}>🔍</button>
-                      </TD>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                )}
+              />
             ) : (
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead>
-                  <tr>
-                    <TH>Ngày</TH><TH>Job</TH><TH>Mã SI</TH><TH>Khách hàng</TH>
-                    <TH>Số cont</TH><TH>ETD / ETA</TH>
-                    <TH>Trạng thái TK</TH><TH>Ngày TQ</TH><TH></TH>
+              <FilteredTable
+                columns={HOAN_THANH_COLS}
+                data={completedJobs}
+                emptyText="Không có job hoàn thành"
+                extraHeaderCells={<TH></TH>}
+                renderRow={j => (
+                  <tr key={j.id} style={{ borderBottom: '1px solid var(--border)' }} onDoubleClick={() => setDetailJobId(j.id)}>
+                    <TD style={{ fontSize: 12 }}>{fmtDate(j.created_at)}</TD>
+                    <TD style={{ fontWeight: 600, color: 'var(--primary)' }}>{j.job_code || `#${j.id}`}</TD>
+                    <TD style={{ whiteSpace: 'nowrap', fontSize: 12, color: 'var(--text-2)' }}>{j.si_number || '—'}</TD>
+                    <TD>{j.customer_name}</TD>
+                    <TD style={{ fontSize: 12 }}>{fmtCargo(j)}</TD>
+                    <TD style={{ color: 'var(--text-2)', fontSize: 12 }}>{fmtDate(j.etd)} / {fmtDate(j.eta)}</TD>
+                    <TD>
+                      <span style={{ color: TK_STATUS_COLOR[j.tk_status] || 'var(--text-2)', fontWeight: 500, fontSize: 12 }}>
+                        {TK_STATUS_LABEL[j.tk_status] || '—'}
+                      </span>
+                    </TD>
+                    <TD style={{ fontSize: 12 }}>{fmtDt(j.tq_datetime)}</TD>
+                    <TD style={{ whiteSpace: 'nowrap' }}>
+                      <button className="btn btn-ghost btn-sm btn-icon" title="Yêu cầu xóa job" style={{ color: 'var(--danger)' }}
+                        onClick={() => { if (window.confirm(`Gửi yêu cầu xóa job ${j.job_code || '#' + j.id}?`)) deleteReqMut.mutate({ id: j.id, reason: null }); }}>🗑</button>
+                      <button className="btn btn-ghost btn-sm btn-icon" onClick={() => setDetailJobId(j.id)}>🔍</button>
+                    </TD>
                   </tr>
-                </thead>
-                <tbody>
-                  {completedJobs.length === 0 && (
-                    <tr><td colSpan={9} style={{ textAlign: 'center', padding: 40, color: 'var(--text-3)' }}>Không có job hoàn thành trong 3 ngày qua</td></tr>
-                  )}
-                  {completedJobs.map(j => (
-                    <tr key={j.id} style={{ borderBottom: '1px solid var(--border)' }} onDoubleClick={() => setDetailJobId(j.id)}>
-                      <TD style={{ fontSize: 12 }}>{fmtDate(j.created_at)}</TD>
-                      <TD style={{ fontWeight: 600, color: 'var(--primary)' }}>{j.job_code || `#${j.id}`}</TD>
-                      <TD style={{ whiteSpace: 'nowrap', fontSize: 12, color: 'var(--text-2)' }}>{j.si_number || '—'}</TD>
-                      <TD>{j.customer_name}</TD>
-                      <TD style={{ fontSize: 12 }}>{fmtCargo(j)}</TD>
-                      <TD style={{ color: 'var(--text-2)', fontSize: 12 }}>{fmtDate(j.etd)} / {fmtDate(j.eta)}</TD>
-                      <TD>
-                        <span style={{ color: TK_STATUS_COLOR[j.tk_status] || 'var(--text-2)', fontWeight: 500, fontSize: 12 }}>
-                          {TK_STATUS_LABEL[j.tk_status] || '—'}
-                        </span>
-                      </TD>
-                      <TD style={{ fontSize: 12 }}>{fmtDt(j.tq_datetime)}</TD>
-                      <TD style={{ whiteSpace: 'nowrap' }}>
-                        <button className="btn btn-ghost btn-sm btn-icon"
-                          title="Yêu cầu xóa job" style={{ color: 'var(--danger)' }}
-                          onClick={() => {
-                            if (window.confirm(`Gửi yêu cầu xóa job ${j.job_code || '#' + j.id}?`)) {
-                              deleteReqMut.mutate({ id: j.id, reason: null });
-                            }
-                          }}>🗑</button>
-                        <button className="btn btn-ghost btn-sm btn-icon" onClick={() => setDetailJobId(j.id)}>🔍</button>
-                      </TD>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                )}
+              />
             )}
           </div>
         </div>

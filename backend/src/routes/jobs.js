@@ -467,7 +467,7 @@ router.get('/filtered', requireAuth, async (req, res) => {
 // GET /api/jobs/
 router.get('/', requireAuth, async (req, res) => {
   const { role, id: userId } = req.user;
-  const { tab } = req.query;
+  const { tab, from_date, to_date } = req.query;
   const isCompleted = tab === 'completed';
 
   const conditions = [];
@@ -477,22 +477,35 @@ router.get('/', requireAuth, async (req, res) => {
   conditions.push(`j.deleted_at IS NULL`);
   conditions.push(`j.status = $${idx++}`);
   params.push(isCompleted ? 'completed' : 'pending');
-  if (isCompleted) {
-    conditions.push(`j.updated_at >= NOW() - INTERVAL '3 days'`);
-  }
 
-  if (role === 'dieu_do') {
-    conditions.push(`ja.dieu_do_id = $${idx++}`);
-    params.push(userId);
-  } else if (CUS_ROLES.includes(role)) {
-    conditions.push(`ja.cus_id = $${idx++}`);
-    params.push(userId);
-  } else if (role === 'ops') {
-    conditions.push(`ja.ops_id = $${idx++}`);
-    params.push(userId);
-  } else if (role === 'sales') {
-    conditions.push(`j.sales_id = $${idx++}`);
-    params.push(userId);
+  if (isCompleted) {
+    // Feature 2: date range — default last 3 days when no params supplied
+    if (from_date) {
+      conditions.push(`j.updated_at >= $${idx++}::date`);
+      params.push(from_date.replace(/'/g, ''));
+    }
+    if (to_date) {
+      conditions.push(`j.updated_at < $${idx++}::date + INTERVAL '1 day'`);
+      params.push(to_date.replace(/'/g, ''));
+    }
+    if (!from_date && !to_date) {
+      conditions.push(`j.updated_at >= NOW() - INTERVAL '3 days'`);
+    }
+    // Feature 1: no role filtering for completed tab — all LOG roles see all completed jobs
+  } else {
+    if (role === 'dieu_do') {
+      conditions.push(`ja.dieu_do_id = $${idx++}`);
+      params.push(userId);
+    } else if (CUS_ROLES.includes(role)) {
+      conditions.push(`ja.cus_id = $${idx++}`);
+      params.push(userId);
+    } else if (role === 'ops') {
+      conditions.push(`ja.ops_id = $${idx++}`);
+      params.push(userId);
+    } else if (role === 'sales') {
+      conditions.push(`j.sales_id = $${idx++}`);
+      params.push(userId);
+    }
   }
 
   const WHERE = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';

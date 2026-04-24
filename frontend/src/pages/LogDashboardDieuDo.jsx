@@ -4,6 +4,8 @@ import Navbar from '../components/Navbar';
 import JobDetailModal from '../components/JobDetailModal';
 import CreateJobModal from '../components/CreateJobModal';
 import JobListModal from '../components/JobListModal';
+import FilteredTable from '../components/FilteredTable';
+import DateRangeFilter from '../components/DateRangeFilter';
 import { getJobStats, getJobs, updateJobTruck, completeJobTruck, requestJobDelete, createJob } from '../api';
 
 function fmtDate(val) {
@@ -76,19 +78,47 @@ function InlineInput({ value, onSave, type = 'text', placeholder }) {
   );
 }
 
+const DD_COLS = [
+  { key: 'created_at',    label: 'Ngày' },
+  { key: 'job_code',      label: 'Job',            filterType: 'text' },
+  { key: 'si_number',     label: 'Mã SI',          filterType: 'text' },
+  { key: 'customer_name', label: 'Khách hàng',     filterType: 'text', accessor: j => j.customer_name || '' },
+  { key: 'cargo',         label: 'Cont / Tons' },
+  { key: 'etd_eta',       label: 'ETD / ETA' },
+  { key: 'deadline',      label: 'Hạn lệnh' },
+  { key: 'transport',     label: 'Tên vận tải',    filterType: 'text', accessor: j => j.transport_name || '' },
+  { key: 'planned_dt',    label: 'KH ngày giờ' },
+  { key: 'actual_dt',     label: 'TH ngày giờ' },
+  { key: 'vehicle',       label: 'Số xe',          filterType: 'text', accessor: j => j.vehicle_number || '' },
+  { key: 'pickup_loc',    label: 'Địa điểm lấy' },
+  { key: 'delivery_loc',  label: 'Địa điểm giao' },
+  { key: 'cost',          label: 'Cước' },
+  { key: 'ht',            label: 'HT' },
+  { key: 'notes',         label: 'Ghi chú' },
+];
+
 export default function LogDashboardDieuDo() {
   const qc = useQueryClient();
   const [tab, setTab] = useState('pending');
   const [detailJobId, setDetailJobId] = useState(null);
   const [showCreate, setShowCreate] = useState(false);
   const [jobListFilter, setJobListFilter] = useState(null);
+  const [completedRange, setCompletedRange] = useState({});
 
   const { data: stats } = useQuery({ queryKey: ['jobStats'], queryFn: getJobStats, refetchInterval: 30000 });
-  const { data: jobs = [], isLoading } = useQuery({
-    queryKey: ['jobs', tab],
-    queryFn: () => getJobs({ tab }),
+  const { data: pendingJobs = [], isLoading: isLoadingPending } = useQuery({
+    queryKey: ['jobs', 'pending'],
+    queryFn: () => getJobs({ tab: 'pending' }),
     refetchInterval: 30000,
   });
+  const { data: completedJobs = [], isLoading: isLoadingCompleted } = useQuery({
+    queryKey: ['jobs', 'completed', completedRange],
+    queryFn: () => getJobs({ tab: 'completed', ...completedRange }),
+    enabled: tab === 'completed',
+    refetchInterval: 30000,
+  });
+  const jobs = tab === 'completed' ? completedJobs : pendingJobs;
+  const isLoading = tab === 'completed' ? isLoadingCompleted : isLoadingPending;
 
   const truckMut = useMutation({
     mutationFn: ({ jobId, data }) => updateJobTruck(jobId, data),
@@ -111,13 +141,6 @@ export default function LogDashboardDieuDo() {
     return !!(j.transport_name && j.vehicle_number && j.truck_delivery_location && j.cost);
   }
 
-  const HEADERS = [
-    'Ngày', 'Job', 'Mã SI', 'Khách hàng', 'Cont / Tons',
-    'ETD / ETA', 'Hạn lệnh',
-    'Tên vận tải', 'KH ngày giờ', 'TH ngày giờ',
-    'Số xe', 'Địa điểm lấy', 'Địa điểm giao', 'Cước', 'HT', 'Ghi chú', '',
-  ];
-
   return (
     <div className="page">
       <Navbar />
@@ -136,118 +159,114 @@ export default function LogDashboardDieuDo() {
         </div>
 
         <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-          <div style={{ padding: '0 20px', borderBottom: '1px solid var(--border)' }}>
+          <div style={{ padding: '0 20px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
             <div className="tabs" style={{ marginBottom: 0 }}>
               <button className={`tab ${tab === 'pending' ? 'active' : ''}`} onClick={() => setTab('pending')}>Đang làm</button>
-              <button className={`tab ${tab === 'completed' ? 'active' : ''}`} onClick={() => setTab('completed')}>Hoàn thành (3 ngày)</button>
+              <button className={`tab ${tab === 'completed' ? 'active' : ''}`} onClick={() => setTab('completed')}>Hoàn thành</button>
             </div>
+            {tab === 'completed' && (
+              <div style={{ paddingBottom: 4 }}>
+                <DateRangeFilter onChange={setCompletedRange} />
+              </div>
+            )}
           </div>
 
           <div style={{ overflowX: 'auto' }}>
             {isLoading ? (
               <div style={{ padding: 40, textAlign: 'center' }}><span className="spinner" /></div>
             ) : (
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-                <thead>
-                  <tr style={{ background: 'var(--bg)', borderBottom: '2px solid var(--border)' }}>
-                    {HEADERS.map((h, i) => (
-                      <th key={i} style={{ padding: '10px 8px', textAlign: 'left', fontWeight: 600, color: 'var(--text-2)', fontSize: 11, whiteSpace: 'nowrap' }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {jobs.length === 0 && (
-                    <tr><td colSpan={HEADERS.length} style={{ textAlign: 'center', padding: 40, color: 'var(--text-3)' }}>Không có job nào</td></tr>
-                  )}
-                  {jobs.map(j => {
-                    const planned = j.planned_datetime;
-                    const isPastDue = planned && new Date(planned) < Date.now() && !j.truck_completed_at;
-                    const isWarnSoon = planned && !isPastDue && (new Date(planned) - Date.now()) < 24 * 3600 * 1000;
-                    const rowBg = isPastDue ? 'rgba(239,68,68,0.04)' : isWarnSoon ? 'rgba(217,119,6,0.04)' : '';
+              <FilteredTable
+                columns={DD_COLS}
+                data={jobs}
+                emptyText="Không có job nào"
+                tableStyle={{ fontSize: 13 }}
+                renderRow={(j) => {
+                  const planned = j.planned_datetime;
+                  const isPastDue = planned && new Date(planned) < Date.now() && !j.truck_completed_at;
+                  const isWarnSoon = planned && !isPastDue && (new Date(planned) - Date.now()) < 24 * 3600 * 1000;
+                  const rowBg = isPastDue ? 'rgba(239,68,68,0.04)' : isWarnSoon ? 'rgba(217,119,6,0.04)' : '';
+                  const cs = { padding: '8px 8px' };
 
-                    return (
-                      <tr key={j.id} style={{ borderBottom: '1px solid var(--border)', background: rowBg }}
-                        onDoubleClick={() => setDetailJobId(j.id)}>
-                        <td style={{ padding: '8px 8px', whiteSpace: 'nowrap', fontSize: 12 }}>{fmtDate(j.created_at)}</td>
-                        <td style={{ padding: '8px 8px', whiteSpace: 'nowrap', fontWeight: 600, color: 'var(--info)' }}>
-                          {j.job_code || `#${j.id}`}
-                        </td>
-                        <td style={{ padding: '8px 8px', whiteSpace: 'nowrap', fontSize: 12, color: 'var(--text-2)' }}>{j.si_number || '—'}</td>
-                        <td style={{ padding: '8px 8px', maxWidth: 140 }}>{j.customer_name}</td>
-                        <td style={{ padding: '8px 8px', whiteSpace: 'nowrap', fontSize: 12 }}>
-                          {fmtCargo(j)}
-                          {j.tons && <div style={{ color: 'var(--text-3)' }}>{j.tons} tấn</div>}
-                        </td>
-                        <td style={{ padding: '8px 8px', whiteSpace: 'nowrap', color: 'var(--text-2)', fontSize: 12 }}>
-                          {fmtDate(j.etd)}<br />{fmtDate(j.eta)}
-                        </td>
-                        <td style={{ padding: '8px 8px', whiteSpace: 'nowrap', ...deadlineStyle(j.deadline) }}>
-                          {j.deadline
-                            ? new Date(j.deadline).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
-                            : '—'}
-                        </td>
-                        <td style={{ padding: '8px 6px', minWidth: 130 }}>
-                          <InlineInput value={j.transport_name} placeholder="Nhập vận tải..."
-                            onSave={v => truckMut.mutate({ jobId: j.id, data: { transport_name: v } })} />
-                        </td>
-                        <td style={{ padding: '8px 6px', minWidth: 155 }}>
-                          <InlineInput type="datetime-local" value={toDatetimeLocal(j.planned_datetime)}
-                            onSave={v => truckMut.mutate({ jobId: j.id, data: { planned_datetime: v } })} />
-                        </td>
-                        <td style={{ padding: '8px 6px', minWidth: 155 }}>
-                          <InlineInput type="datetime-local" value={toDatetimeLocal(j.actual_datetime)}
-                            onSave={v => truckMut.mutate({ jobId: j.id, data: { actual_datetime: v } })} />
-                        </td>
-                        <td style={{ padding: '8px 6px', minWidth: 80 }}>
-                          <InlineInput value={j.vehicle_number} placeholder="Số xe..."
-                            onSave={v => truckMut.mutate({ jobId: j.id, data: { vehicle_number: v } })} />
-                        </td>
-                        <td style={{ padding: '8px 6px', minWidth: 130 }}>
-                          <InlineInput value={j.pickup_location} placeholder="Địa điểm lấy..."
-                            onSave={v => truckMut.mutate({ jobId: j.id, data: { pickup_location: v } })} />
-                        </td>
-                        <td style={{ padding: '8px 6px', minWidth: 130 }}>
-                          <InlineInput value={j.truck_delivery_location} placeholder="Địa điểm giao..."
-                            onSave={v => truckMut.mutate({ jobId: j.id, data: { delivery_location: v } })} />
-                        </td>
-                        <td style={{ padding: '8px 6px', minWidth: 90 }}>
-                          <InlineInput value={j.cost ? String(j.cost) : ''} type="number" placeholder="Cước..."
-                            onSave={v => truckMut.mutate({ jobId: j.id, data: { cost: v ? Number(v) : null } })} />
-                        </td>
-                        <td style={{ padding: '8px 8px', textAlign: 'center' }}>
-                          {tab === 'pending' ? (
-                            <button className="btn btn-primary btn-sm" style={{ padding: '3px 10px', fontSize: 11 }}
-                              disabled={!canComplete(j)}
-                              title={canComplete(j) ? 'Hoàn thành' : 'Cần: vận tải, số xe, địa điểm giao, cước'}
-                              onClick={() => canComplete(j) && completeMut.mutate(j.id)}>
-                              HT
-                            </button>
-                          ) : (
-                            <span style={{ color: 'var(--primary)', fontSize: 16 }}>✓</span>
-                          )}
-                        </td>
-                        <td style={{ padding: '8px 6px', minWidth: 120 }}>
-                          <InlineInput value={j.truck_notes}
-                            onSave={v => truckMut.mutate({ jobId: j.id, data: { notes: v } })} />
-                        </td>
-                        <td style={{ padding: '8px 8px', whiteSpace: 'nowrap' }}>
-                          {tab === 'pending' && (
-                            <button className="btn btn-ghost btn-sm btn-icon"
-                              title="Yêu cầu xóa job" style={{ color: 'var(--danger)' }}
-                              onClick={() => {
-                                if (window.confirm(`Gửi yêu cầu xóa job ${j.job_code || '#' + j.id}?`)) {
-                                  deleteReqMut.mutate({ id: j.id, reason: null });
-                                }
-                              }}>🗑</button>
-                          )}
-                          <button className="btn btn-ghost btn-sm btn-icon" title="Chi tiết"
-                            onClick={() => setDetailJobId(j.id)}>🔍</button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                  return (
+                    <tr key={j.id} style={{ borderBottom: '1px solid var(--border)', background: rowBg }}
+                      onDoubleClick={() => setDetailJobId(j.id)}>
+                      <td style={{ ...cs, whiteSpace: 'nowrap', fontSize: 12 }}>{fmtDate(j.created_at)}</td>
+                      <td style={{ ...cs, whiteSpace: 'nowrap', fontWeight: 600, color: 'var(--info)' }}>{j.job_code || `#${j.id}`}</td>
+                      <td style={{ ...cs, whiteSpace: 'nowrap', fontSize: 12, color: 'var(--text-2)' }}>{j.si_number || '—'}</td>
+                      <td style={{ ...cs, maxWidth: 140 }}>{j.customer_name}</td>
+                      <td style={{ ...cs, whiteSpace: 'nowrap', fontSize: 12 }}>
+                        {fmtCargo(j)}
+                        {j.tons && <div style={{ color: 'var(--text-3)' }}>{j.tons} tấn</div>}
+                      </td>
+                      <td style={{ ...cs, whiteSpace: 'nowrap', color: 'var(--text-2)', fontSize: 12 }}>
+                        {fmtDate(j.etd)}<br />{fmtDate(j.eta)}
+                      </td>
+                      <td style={{ ...cs, whiteSpace: 'nowrap', ...deadlineStyle(j.deadline) }}>
+                        {j.deadline
+                          ? new Date(j.deadline).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+                          : '—'}
+                      </td>
+                      <td style={{ padding: '8px 6px', minWidth: 130 }}>
+                        <InlineInput value={j.transport_name} placeholder="Nhập vận tải..."
+                          onSave={v => truckMut.mutate({ jobId: j.id, data: { transport_name: v } })} />
+                      </td>
+                      <td style={{ padding: '8px 6px', minWidth: 155 }}>
+                        <InlineInput type="datetime-local" value={toDatetimeLocal(j.planned_datetime)}
+                          onSave={v => truckMut.mutate({ jobId: j.id, data: { planned_datetime: v } })} />
+                      </td>
+                      <td style={{ padding: '8px 6px', minWidth: 155 }}>
+                        <InlineInput type="datetime-local" value={toDatetimeLocal(j.actual_datetime)}
+                          onSave={v => truckMut.mutate({ jobId: j.id, data: { actual_datetime: v } })} />
+                      </td>
+                      <td style={{ padding: '8px 6px', minWidth: 80 }}>
+                        <InlineInput value={j.vehicle_number} placeholder="Số xe..."
+                          onSave={v => truckMut.mutate({ jobId: j.id, data: { vehicle_number: v } })} />
+                      </td>
+                      <td style={{ padding: '8px 6px', minWidth: 130 }}>
+                        <InlineInput value={j.pickup_location} placeholder="Địa điểm lấy..."
+                          onSave={v => truckMut.mutate({ jobId: j.id, data: { pickup_location: v } })} />
+                      </td>
+                      <td style={{ padding: '8px 6px', minWidth: 130 }}>
+                        <InlineInput value={j.truck_delivery_location} placeholder="Địa điểm giao..."
+                          onSave={v => truckMut.mutate({ jobId: j.id, data: { delivery_location: v } })} />
+                      </td>
+                      <td style={{ padding: '8px 6px', minWidth: 90 }}>
+                        <InlineInput value={j.cost ? String(j.cost) : ''} type="number" placeholder="Cước..."
+                          onSave={v => truckMut.mutate({ jobId: j.id, data: { cost: v ? Number(v) : null } })} />
+                      </td>
+                      <td style={{ ...cs, textAlign: 'center' }}>
+                        {tab === 'pending' ? (
+                          <button className="btn btn-primary btn-sm" style={{ padding: '3px 10px', fontSize: 11 }}
+                            disabled={!canComplete(j)}
+                            title={canComplete(j) ? 'Hoàn thành' : 'Cần: vận tải, số xe, địa điểm giao, cước'}
+                            onClick={() => canComplete(j) && completeMut.mutate(j.id)}>
+                            HT
+                          </button>
+                        ) : (
+                          <span style={{ color: 'var(--primary)', fontSize: 16 }}>✓</span>
+                        )}
+                      </td>
+                      <td style={{ padding: '8px 6px', minWidth: 120 }}>
+                        <InlineInput value={j.truck_notes}
+                          onSave={v => truckMut.mutate({ jobId: j.id, data: { notes: v } })} />
+                      </td>
+                      <td style={{ ...cs, whiteSpace: 'nowrap' }}>
+                        {tab === 'pending' && (
+                          <button className="btn btn-ghost btn-sm btn-icon"
+                            title="Yêu cầu xóa job" style={{ color: 'var(--danger)' }}
+                            onClick={() => {
+                              if (window.confirm(`Gửi yêu cầu xóa job ${j.job_code || '#' + j.id}?`)) {
+                                deleteReqMut.mutate({ id: j.id, reason: null });
+                              }
+                            }}>🗑</button>
+                        )}
+                        <button className="btn btn-ghost btn-sm btn-icon" title="Chi tiết"
+                          onClick={() => setDetailJobId(j.id)}>🔍</button>
+                      </td>
+                    </tr>
+                  );
+                }}
+              />
             )}
           </div>
         </div>
