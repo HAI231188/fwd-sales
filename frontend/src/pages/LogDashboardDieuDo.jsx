@@ -118,7 +118,12 @@ export default function LogDashboardDieuDo() {
     enabled: tab === 'completed',
     refetchInterval: 30000,
   });
-  const jobs = tab === 'completed' ? completedJobs : pendingJobs;
+  const coKhXeJobs = pendingJobs.filter(j => !!j.planned_datetime);
+  const chuaKhXeJobs = pendingJobs.filter(j => !j.planned_datetime);
+  const jobs = tab === 'completed' ? completedJobs
+    : tab === 'co_kh_xe' ? coKhXeJobs
+    : tab === 'chua_kh_xe' ? chuaKhXeJobs
+    : pendingJobs;
   const isLoading = tab === 'completed' ? isLoadingCompleted : isLoadingPending;
 
   const truckMut = useMutation({
@@ -151,18 +156,70 @@ export default function LogDashboardDieuDo() {
           <button className="btn btn-primary btn-sm" onClick={() => setShowCreate(true)}>+ Tạo Job Mới</button>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12, marginBottom: 24 }}>
-          <StatCard label="Tổng job truck đang xử lý" value={stats?.total_active} color="var(--info)" onClick={() => setJobListFilter('truck_total')} />
-          <StatCard label="Đã đặt xe" value={stats?.da_dat_xe} color="var(--primary)" onClick={() => setJobListFilter('truck_booked')} />
-          <StatCard label="Chưa đặt xe" value={stats?.chua_dat_xe} color="var(--warning)" onClick={() => setJobListFilter('truck_not_booked')} />
-          <StatCard label="Cảnh báo quá hạn" value={stats?.warn_overdue} color="var(--danger)" onClick={() => setJobListFilter('truck_warning')} />
-          <StatCard label="Chưa hoàn thành" value={stats?.chua_hoan_thanh} color="var(--text-2)" onClick={() => setJobListFilter('truck_pending')} />
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 24 }}>
+          {/* Card 1: Tổng job — 3 rows with per-row click */}
+          <div className="card" style={{ padding: '14px 16px' }}>
+            <div style={{ fontSize: 11, color: 'var(--text-2)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 10 }}>Tổng job truck đang xử lý</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {[
+                { label: 'Tổng', value: stats?.tong_job, color: 'var(--info)', filter: 'truck_total' },
+                { label: 'Đã có KH xe', value: stats?.tong_co_kh_xe, color: 'var(--primary)', filter: 'dd_co_kh_xe' },
+                { label: 'Chưa có KH xe', value: stats?.tong_chua_kh_xe, color: 'var(--warning)', filter: 'dd_chua_kh_xe' },
+              ].map(r => (
+                <div key={r.label} onClick={() => setJobListFilter(r.filter)}
+                  style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '5px 8px', borderRadius: 8, background: `${r.color}12`, border: `1px solid ${r.color}30`, cursor: 'pointer' }}>
+                  <span style={{ fontSize: 11, color: r.color, fontWeight: 600 }}>{r.label}</span>
+                  <span style={{ fontSize: 20, fontWeight: 700, color: r.color, fontFamily: 'var(--font-display)' }}>{r.value ?? '—'}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Card 2: Đã đặt xe — 2 rows */}
+          <div className="card" style={{ padding: '14px 16px' }}>
+            <div style={{ fontSize: 11, color: 'var(--text-2)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 10 }}>Đã đặt xe</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {[
+                { label: 'Có KH xe', value: stats?.da_dat_xe_co_kh, color: 'var(--primary)', filter: 'dd_co_kh_xe' },
+                { label: 'Có vận tải', value: stats?.da_dat_xe_da_dat, color: 'var(--info)', filter: 'truck_booked' },
+              ].map(r => (
+                <div key={r.label} onClick={() => setJobListFilter(r.filter)}
+                  style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '5px 8px', borderRadius: 8, background: `${r.color}12`, border: `1px solid ${r.color}30`, cursor: 'pointer' }}>
+                  <span style={{ fontSize: 11, color: r.color, fontWeight: 600 }}>{r.label}</span>
+                  <span style={{ fontSize: 20, fontWeight: 700, color: r.color, fontFamily: 'var(--font-display)' }}>{r.value ?? '—'}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Card 3: Cảnh báo — 3 rows */}
+          <div className="card" style={{ padding: '14px 16px' }}>
+            <div style={{ fontSize: 11, color: 'var(--text-2)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 10 }}>Cảnh báo</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {[
+                { label: 'Chưa vận tải (24h)', value: stats?.canh_bao_chua_van_tai, color: 'var(--warning)', filter: 'dd_canh_bao_chua_van_tai' },
+                { label: 'Chưa đổi lệnh', value: stats?.canh_bao_chua_doi_lenh, color: 'var(--purple)', filter: 'dd_canh_bao_chua_doi_lenh' },
+                { label: 'Chưa hoàn thành', value: stats?.canh_bao_chua_hoan_thanh, color: 'var(--danger)', filter: 'dd_canh_bao_chua_hoan_thanh' },
+              ].map(r => (
+                <div key={r.label} onClick={() => setJobListFilter(r.filter)}
+                  style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '5px 8px', borderRadius: 8, background: `${r.color}12`, border: `1px solid ${r.color}30`, cursor: 'pointer' }}>
+                  <span style={{ fontSize: 11, color: r.color, fontWeight: 600 }}>{r.label}</span>
+                  <span style={{ fontSize: 20, fontWeight: 700, color: r.color, fontFamily: 'var(--font-display)' }}>{r.value ?? '—'}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Card 4: Sắp hạn */}
+          <StatCard label="Sắp hạn (48h)" value={stats?.sap_han} color="var(--danger)" onClick={() => setJobListFilter('dd_sap_han')} />
         </div>
 
         <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
           <div style={{ padding: '0 20px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
             <div className="tabs" style={{ marginBottom: 0 }}>
               <button className={`tab ${tab === 'pending' ? 'active' : ''}`} onClick={() => setTab('pending')}>Đang làm</button>
+              <button className={`tab ${tab === 'co_kh_xe' ? 'active' : ''}`} onClick={() => setTab('co_kh_xe')}>Đã có KH xe</button>
+              <button className={`tab ${tab === 'chua_kh_xe' ? 'active' : ''}`} onClick={() => setTab('chua_kh_xe')}>Chưa có KH xe</button>
               <button className={`tab ${tab === 'completed' ? 'active' : ''}`} onClick={() => setTab('completed')}>Hoàn thành</button>
             </div>
             {tab === 'completed' && (

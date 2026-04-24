@@ -20,6 +20,12 @@ const FILTER_TITLES = {
   truck_not_booked: 'Chưa đặt xe',
   truck_warning: 'Cảnh báo quá hạn',
   truck_pending: 'Chưa hoàn thành',
+  dd_co_kh_xe: 'Đã có KH xe',
+  dd_chua_kh_xe: 'Chưa có KH xe',
+  dd_canh_bao_chua_van_tai: 'Cảnh báo: chưa có vận tải',
+  dd_canh_bao_chua_doi_lenh: 'Cảnh báo: chưa đổi lệnh',
+  dd_canh_bao_chua_hoan_thanh: 'Cảnh báo: chưa hoàn thành',
+  dd_sap_han: 'Sắp hạn (48h)',
   // OPS
   ops_total: 'Tổng job đang quản lý',
   ops_waiting_tq_doilenh: 'Chờ thông quan',
@@ -54,7 +60,7 @@ function deadlineStyle(dl, filterType) {
 }
 
 function getColumns(filterType) {
-  if (filterType?.startsWith('truck_')) {
+  if (filterType?.startsWith('truck_') || filterType?.startsWith('dd_')) {
     return [
       { key: 'job_code',               label: 'Số job' },
       { key: 'created_at',             label: 'Ngày tạo' },

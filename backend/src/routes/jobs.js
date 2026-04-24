@@ -98,18 +98,28 @@ router.get('/stats', requireAuth, async (req, res) => {
         staff:                 staff.rows,
       });
     } else if (role === 'dieu_do') {
-      const [total, daDat, chuaDat, warnOverdue] = await Promise.all([
-        db.query(`SELECT COUNT(*) AS v FROM job_truck jt JOIN jobs j ON j.id = jt.job_id JOIN job_assignments ja ON ja.job_id = j.id WHERE ja.dieu_do_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL AND jt.completed_at IS NULL`, [userId]),
-        db.query(`SELECT COUNT(*) AS v FROM job_truck jt JOIN jobs j ON j.id = jt.job_id JOIN job_assignments ja ON ja.job_id = j.id WHERE ja.dieu_do_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL AND jt.completed_at IS NULL AND jt.transport_name IS NOT NULL AND jt.vehicle_number IS NOT NULL`, [userId]),
-        db.query(`SELECT COUNT(*) AS v FROM job_truck jt JOIN jobs j ON j.id = jt.job_id JOIN job_assignments ja ON ja.job_id = j.id WHERE ja.dieu_do_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL AND jt.completed_at IS NULL AND jt.planned_datetime IS NOT NULL AND (jt.transport_name IS NULL OR jt.transport_name = '')`, [userId]),
-        db.query(`SELECT COUNT(*) AS v FROM job_truck jt JOIN jobs j ON j.id = jt.job_id JOIN job_assignments ja ON ja.job_id = j.id WHERE ja.dieu_do_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL AND jt.completed_at IS NULL AND jt.planned_datetime <= NOW() + INTERVAL '24 hours'`, [userId]),
+      const BASE = `FROM job_truck jt JOIN jobs j ON j.id = jt.job_id JOIN job_assignments ja ON ja.job_id = j.id WHERE ja.dieu_do_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL`;
+      const [tongJob, coKhXe, chuaKhXe, datXe, canhBaoVanTai, canhBaoDoiLenh, canhBaoHoanThanh, sapHan] = await Promise.all([
+        db.query(`SELECT COUNT(*) AS v ${BASE}`, [userId]),
+        db.query(`SELECT COUNT(*) AS v ${BASE} AND jt.planned_datetime IS NOT NULL`, [userId]),
+        db.query(`SELECT COUNT(*) AS v ${BASE} AND jt.planned_datetime IS NULL`, [userId]),
+        db.query(`SELECT COUNT(*) AS v ${BASE} AND jt.transport_name IS NOT NULL`, [userId]),
+        db.query(`SELECT COUNT(*) AS v ${BASE} AND jt.planned_datetime BETWEEN NOW() AND NOW() + INTERVAL '24 hours' AND (jt.transport_name IS NULL OR jt.transport_name = '')`, [userId]),
+        db.query(`SELECT COUNT(*) AS v ${BASE} AND jt.transport_name IS NOT NULL AND j.destination = 'hai_phong' AND COALESCE(ja.ops_done, FALSE) = FALSE`, [userId]),
+        db.query(`SELECT COUNT(*) AS v ${BASE} AND jt.planned_datetime < NOW()`, [userId]),
+        db.query(`SELECT COUNT(*) AS v ${BASE} AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '48 hours'`, [userId]),
       ]);
+      const cv = r => parseInt(r.rows[0].v);
       res.json({
-        total_active:    parseInt(total.rows[0].v),
-        da_dat_xe:       parseInt(daDat.rows[0].v),
-        chua_dat_xe:     parseInt(chuaDat.rows[0].v),
-        warn_overdue:    parseInt(warnOverdue.rows[0].v),
-        chua_hoan_thanh: parseInt(total.rows[0].v),
+        tong_job:                 cv(tongJob),
+        tong_co_kh_xe:            cv(coKhXe),
+        tong_chua_kh_xe:          cv(chuaKhXe),
+        da_dat_xe_co_kh:          cv(coKhXe),
+        da_dat_xe_da_dat:         cv(datXe),
+        canh_bao_chua_van_tai:    cv(canhBaoVanTai),
+        canh_bao_chua_doi_lenh:   cv(canhBaoDoiLenh),
+        canh_bao_chua_hoan_thanh: cv(canhBaoHoanThanh),
+        sap_han:                  cv(sapHan),
       });
     } else if (CUS_ROLES.includes(role)) {
       const [total, choXacNhan, sapHan, quaHan] = await Promise.all([
@@ -418,6 +428,12 @@ router.get('/filtered', requireAuth, async (req, res) => {
     case 'truck_booked':     extraWhere = `AND jtr.transport_name IS NOT NULL AND jtr.vehicle_number IS NOT NULL`; break;
     case 'truck_not_booked': extraWhere = `AND jtr.planned_datetime IS NOT NULL AND (jtr.transport_name IS NULL OR jtr.transport_name = '')`; break;
     case 'truck_warning':    extraWhere = `AND jtr.completed_at IS NULL AND jtr.planned_datetime <= NOW() + INTERVAL '24 hours'`; break;
+    case 'dd_co_kh_xe':      extraWhere = `AND jtr.planned_datetime IS NOT NULL`; break;
+    case 'dd_chua_kh_xe':    extraWhere = `AND jtr.planned_datetime IS NULL`; break;
+    case 'dd_canh_bao_chua_van_tai':   extraWhere = `AND jtr.planned_datetime BETWEEN NOW() AND NOW() + INTERVAL '24 hours' AND (jtr.transport_name IS NULL OR jtr.transport_name = '')`; break;
+    case 'dd_canh_bao_chua_doi_lenh':  extraWhere = `AND jtr.transport_name IS NOT NULL AND j.destination = 'hai_phong' AND COALESCE(ja.ops_done, FALSE) = FALSE`; break;
+    case 'dd_canh_bao_chua_hoan_thanh':extraWhere = `AND jtr.planned_datetime < NOW()`; break;
+    case 'dd_sap_han':       extraWhere = `AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '48 hours'`; break;
     // OPS filters
     case 'ops_waiting_tq_doilenh': extraWhere = `AND jt.tk_status = 'dang_lam'`; break;
     case 'ops_waiting_doilenh':
