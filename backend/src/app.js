@@ -40,45 +40,6 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// TEMP DEBUG — remove after investigation
-app.get('/api/debug/recent-jobs', async (req, res) => {
-  const db = require('./db');
-  try {
-    const { rows } = await db.query(`
-      SELECT
-        j.id, j.job_code, j.service_type, j.destination, j.created_at,
-        ja.cus_id,      u_cus.name  AS cus_name,
-        ja.ops_id,      u_ops.name  AS ops_name,
-        ja.dieu_do_id,  u_dd.name   AS dieu_do_name,
-        COALESCE(
-          (SELECT json_agg(json_build_object(
-             'role', role,
-             'reason', reason,
-             'fallback_used', fallback_used,
-             'ai_cost_usd', ai_cost_usd,
-             'created_at', created_at
-           ) ORDER BY id DESC)
-           FROM ai_assignment_logs
-           WHERE job_id = j.id
-           LIMIT 4),
-          '[]'::json
-        ) AS ai_logs
-      FROM jobs j
-      LEFT JOIN LATERAL (
-        SELECT * FROM job_assignments WHERE job_id = j.id ORDER BY id DESC LIMIT 1
-      ) ja ON true
-      LEFT JOIN users u_cus ON u_cus.id = ja.cus_id
-      LEFT JOIN users u_ops ON u_ops.id = ja.ops_id
-      LEFT JOIN users u_dd  ON u_dd.id  = ja.dieu_do_id
-      ORDER BY j.id DESC
-      LIMIT 10
-    `);
-    res.json(rows);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
 // Serve frontend — always, whenever the dist folder exists
 if (hasFrontend) {
   app.use(express.static(frontendPath));
