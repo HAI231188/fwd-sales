@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, Component } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   LineChart, Line, BarChart, Bar, PieChart, Pie, Cell,
@@ -6,6 +6,25 @@ import {
 } from 'recharts';
 import { getJobOverview } from '../api';
 
+// ─── Error Boundary ──────────────────────────────────────────────────────────
+class ChartErrorBoundary extends Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(error) { return { error }; }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="card" style={{ marginBottom: 20, padding: 24, textAlign: 'center', color: 'var(--text-2)' }}>
+          <div style={{ fontSize: 32, marginBottom: 8 }}>⚠️</div>
+          <div style={{ fontSize: 14 }}>Không thể tải biểu đồ tổng quan</div>
+          <div style={{ fontSize: 12, marginTop: 4, color: 'var(--text-3)' }}>{String(this.state.error.message)}</div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+// ─── Constants ───────────────────────────────────────────────────────────────
 const PRESETS = [
   { label: '7 ngày', value: '7d' },
   { label: '30 ngày', value: '30d' },
@@ -15,6 +34,7 @@ const PRESETS = [
 
 const COLORS = ['#22c55e', '#3b82f6', '#d97706', '#ef4444', '#7c3aed', '#ec4899'];
 
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 function localDate(d) {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
@@ -35,44 +55,40 @@ function buildRange(preset, customFrom, customTo) {
   if (preset === 'custom') {
     return { from: customFrom, to: customTo };
   }
-  // 30d default
   const from = new Date(now); from.setDate(from.getDate() - 29);
   return { from: localDate(from), to: localDate(now) };
 }
 
 function fmtDay(dateStr) {
   if (!dateStr) return '';
-  const [, m, d] = dateStr.split('-');
-  return `${d}/${m}`;
+  const parts = String(dateStr).slice(0, 10).split('-');
+  return `${parts[2]}/${parts[1]}`;
 }
 
-const CustomLineTooltip = ({ active, payload, label }) => {
-  if (!active || !payload?.length) return null;
+// ─── Tooltip components ───────────────────────────────────────────────────────
+const LineTooltip = ({ active, payload, label }) => {
+  if (!active || !Array.isArray(payload) || !payload.length) return null;
   return (
     <div style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: 8, padding: '8px 12px', fontSize: 12 }}>
       <div style={{ fontWeight: 600, marginBottom: 4 }}>{label}</div>
-      {payload.map(p => (
-        <div key={p.name} style={{ color: p.color }}>{p.name}: {p.value}</div>
-      ))}
+      {payload.map(p => <div key={p.name} style={{ color: p.color }}>{p.name}: {p.value}</div>)}
     </div>
   );
 };
 
-const CustomBarTooltip = ({ active, payload, label }) => {
-  if (!active || !payload?.length) return null;
+const BarTooltip = ({ active, payload, label }) => {
+  if (!active || !Array.isArray(payload) || !payload.length) return null;
   return (
     <div style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: 8, padding: '8px 12px', fontSize: 12 }}>
       <div style={{ fontWeight: 600, marginBottom: 4 }}>{label}</div>
-      {payload.map(p => (
-        <div key={p.name} style={{ color: p.fill }}>{p.name}: {p.value}</div>
-      ))}
+      {payload.map(p => <div key={p.name} style={{ color: p.fill }}>{p.name}: {p.value}</div>)}
     </div>
   );
 };
 
 const RADIAN = Math.PI / 180;
-function renderCustomLabel({ cx, cy, midAngle, innerRadius, outerRadius, percent }) {
-  if (percent < 0.05) return null;
+function PieLabel({ cx, cy, midAngle, innerRadius, outerRadius, percent }) {
+  if (!percent || percent < 0.05) return null;
   const r = innerRadius + (outerRadius - innerRadius) * 0.5;
   const x = cx + r * Math.cos(-midAngle * RADIAN);
   const y = cy + r * Math.sin(-midAngle * RADIAN);
@@ -83,7 +99,8 @@ function renderCustomLabel({ cx, cy, midAngle, innerRadius, outerRadius, percent
   );
 }
 
-export default function TP_OverviewSection() {
+// ─── Inner chart component ────────────────────────────────────────────────────
+function TP_OverviewInner() {
   const [preset, setPreset] = useState('30d');
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
@@ -97,41 +114,40 @@ export default function TP_OverviewSection() {
     enabled: !!rangeReady,
   });
 
+  // daily_stats: [{date, created, completed}]
   const dailyData = useMemo(() => {
-    if (!data?.daily_stats) return [];
-    return data.daily_stats.map(d => ({ ...d, day: fmtDay(d.date) }));
+    const rows = Array.isArray(data?.daily_stats) ? data.daily_stats : [];
+    return rows.map(d => ({ ...d, day: fmtDay(d.date) }));
   }, [data]);
 
+  // staff_distribution: [{name, role, pending, completed}]
   const staffData = useMemo(() => {
-    if (!data?.staff_distribution) return [];
-    return data.staff_distribution;
+    return Array.isArray(data?.staff_distribution) ? data.staff_distribution : [];
   }, [data]);
 
-  const staffNames = useMemo(() => {
-    const names = new Set();
-    staffData.forEach(row => Object.keys(row).forEach(k => { if (k !== 'date' && k !== 'day') names.add(k); }));
-    return [...names];
-  }, [staffData]);
-
+  // completion_status: {on_time, late, in_progress}  → convert to [{name, value}]
   const statusData = useMemo(() => {
-    if (!data?.completion_status) return [];
-    return data.completion_status;
+    const cs = data?.completion_status;
+    if (!cs || typeof cs !== 'object' || Array.isArray(cs)) return [];
+    return [
+      { name: 'Đúng hạn', value: Number(cs.on_time) || 0 },
+      { name: 'Trễ hạn',  value: Number(cs.late) || 0 },
+      { name: 'Đang xử lý', value: Number(cs.in_progress) || 0 },
+    ];
   }, [data]);
 
   const totalStatus = statusData.reduce((s, d) => s + (d.value || 0), 0);
 
   return (
     <div className="card" style={{ marginBottom: 20 }}>
+      {/* Header + preset selector */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12, marginBottom: 20 }}>
         <h3 style={{ fontSize: 15, fontWeight: 700 }}>Tổng quan</h3>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           {PRESETS.map(p => (
-            <button
-              key={p.value}
-              onClick={() => setPreset(p.value)}
+            <button key={p.value} onClick={() => setPreset(p.value)}
               className={`btn btn-sm ${preset === p.value ? 'btn-primary' : 'btn-ghost'}`}
-              style={{ fontSize: 12 }}
-            >
+              style={{ fontSize: 12 }}>
               {p.label}
             </button>
           ))}
@@ -152,7 +168,7 @@ export default function TP_OverviewSection() {
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 24 }}>
 
-          {/* Chart 1: Job trend line */}
+          {/* Chart 1: Job trend */}
           <div>
             <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)', marginBottom: 12 }}>Số job theo thời gian</div>
             <ResponsiveContainer width="100%" height={220}>
@@ -160,7 +176,7 @@ export default function TP_OverviewSection() {
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
                 <XAxis dataKey="day" tick={{ fontSize: 11, fill: 'var(--text-2)' }} />
                 <YAxis tick={{ fontSize: 11, fill: 'var(--text-2)' }} allowDecimals={false} />
-                <Tooltip content={<CustomLineTooltip />} />
+                <Tooltip content={<LineTooltip />} />
                 <Legend iconSize={10} wrapperStyle={{ fontSize: 11 }} />
                 <Line type="monotone" dataKey="created" name="Tạo mới" stroke="#3b82f6" strokeWidth={2} dot={false} />
                 <Line type="monotone" dataKey="completed" name="Hoàn thành" stroke="#22c55e" strokeWidth={2} dot={false} />
@@ -168,39 +184,35 @@ export default function TP_OverviewSection() {
             </ResponsiveContainer>
           </div>
 
-          {/* Chart 2: Stacked bar by staff */}
+          {/* Chart 2: Per-staff workload bar */}
           <div>
-            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)', marginBottom: 12 }}>Phân bổ job theo nhân viên</div>
-            <ResponsiveContainer width="100%" height={220}>
-              <BarChart data={staffData} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-                <XAxis dataKey="day" tick={{ fontSize: 11, fill: 'var(--text-2)' }} />
-                <YAxis tick={{ fontSize: 11, fill: 'var(--text-2)' }} allowDecimals={false} />
-                <Tooltip content={<CustomBarTooltip />} />
-                <Legend iconSize={10} wrapperStyle={{ fontSize: 11 }} />
-                {staffNames.map((name, i) => (
-                  <Bar key={name} dataKey={name} name={name} stackId="a" fill={COLORS[i % COLORS.length]} />
-                ))}
-              </BarChart>
-            </ResponsiveContainer>
+            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)', marginBottom: 12 }}>Khối lượng công việc theo nhân viên</div>
+            {staffData.length === 0 ? (
+              <div className="empty-state" style={{ padding: 40 }}><p>Chưa có dữ liệu</p></div>
+            ) : (
+              <ResponsiveContainer width="100%" height={220}>
+                <BarChart data={staffData} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                  <XAxis dataKey="name" tick={{ fontSize: 10, fill: 'var(--text-2)' }} />
+                  <YAxis tick={{ fontSize: 11, fill: 'var(--text-2)' }} allowDecimals={false} />
+                  <Tooltip content={<BarTooltip />} />
+                  <Legend iconSize={10} wrapperStyle={{ fontSize: 11 }} />
+                  <Bar dataKey="pending" name="Đang xử lý" fill="#d97706" />
+                  <Bar dataKey="completed" name="Hoàn thành" fill="#22c55e" />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
           </div>
 
-          {/* Chart 3: Donut — completion status */}
+          {/* Chart 3: Completion status donut */}
           <div>
             <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)', marginBottom: 12 }}>Trạng thái hoàn thành</div>
             <div style={{ position: 'relative' }}>
               <ResponsiveContainer width="100%" height={220}>
                 <PieChart>
-                  <Pie
-                    data={statusData}
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={60}
-                    outerRadius={90}
-                    dataKey="value"
-                    labelLine={false}
-                    label={renderCustomLabel}
-                  >
+                  <Pie data={statusData} cx="50%" cy="50%"
+                    innerRadius={60} outerRadius={90} dataKey="value"
+                    labelLine={false} label={PieLabel}>
                     {statusData.map((entry, i) => (
                       <Cell key={entry.name} fill={COLORS[i % COLORS.length]} />
                     ))}
@@ -210,11 +222,7 @@ export default function TP_OverviewSection() {
                 </PieChart>
               </ResponsiveContainer>
               {totalStatus > 0 && (
-                <div style={{
-                  position: 'absolute', top: '50%', left: '50%',
-                  transform: 'translate(-50%, -60%)',
-                  textAlign: 'center', pointerEvents: 'none',
-                }}>
+                <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -60%)', textAlign: 'center', pointerEvents: 'none' }}>
                   <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--text)' }}>{totalStatus}</div>
                   <div style={{ fontSize: 10, color: 'var(--text-2)' }}>job</div>
                 </div>
@@ -226,4 +234,8 @@ export default function TP_OverviewSection() {
       )}
     </div>
   );
+}
+
+export default function TP_OverviewSection() {
+  return <ChartErrorBoundary><TP_OverviewInner /></ChartErrorBoundary>;
 }
