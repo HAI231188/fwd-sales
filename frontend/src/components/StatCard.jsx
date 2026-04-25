@@ -40,10 +40,13 @@ export default function StatCard({ label, value, icon, color = 'var(--primary)',
           ) : rows ? (
             <div style={{ display: 'flex', gap: 10, marginTop: 2 }}>
               {rows.map((r, i) => (
-                <div key={i} style={{
-                  flex: 1, padding: '6px 8px', borderRadius: 8,
-                  background: `${r.color}12`, border: `1px solid ${r.color}30`,
-                }}>
+                <div key={i}
+                  onClick={r.onClick ? (e => { e.stopPropagation(); r.onClick(); }) : undefined}
+                  style={{
+                    flex: 1, padding: '6px 8px', borderRadius: 8,
+                    background: `${r.color}12`, border: `1px solid ${r.color}30`,
+                    cursor: r.onClick ? 'pointer' : 'inherit',
+                  }}>
                   <div style={{ fontSize: 22, fontWeight: 700, fontFamily: 'var(--font-display)', color: r.color, lineHeight: 1 }}>
                     {r.value ?? '—'}
                   </div>

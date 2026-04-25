@@ -32,7 +32,7 @@ router.get('/stats', requireAuth, async (req, res) => {
   const { role, id: userId } = req.user;
   try {
     if (role === 'truong_phong_log') {
-      const [total, waitingCus, waitingOps, cusConfirmPend, deadlineAdj, noDeadline, overdue, warnSoon, missingInfo, deleteReqs, staff] = await Promise.all([
+      const [total, waitingCus, waitingOps, cusConfirmPend, deadlineAdj, noDeadline, overdue, warnSoon, missingInfo, deleteReqs, staff, tkPend, truckPend] = await Promise.all([
         db.query(`SELECT COUNT(*) AS v FROM jobs WHERE status = 'pending' AND deleted_at IS NULL`),
         db.query(`
           SELECT COUNT(*) AS v FROM jobs j
@@ -83,6 +83,8 @@ router.get('/stats', requireAuth, async (req, res) => {
           GROUP BY u.id, u.name, u.role, u.code, u.avatar_color
           ORDER BY u.role, u.name
         `, [['cus','cus1','cus2','cus3','ops','dieu_do']]),
+        db.query(`SELECT COUNT(*) AS v FROM jobs j LEFT JOIN job_tk jt ON jt.job_id = j.id WHERE j.status = 'pending' AND j.deleted_at IS NULL AND j.service_type IN ('tk','both') AND (jt.id IS NULL OR jt.completed_at IS NULL)`),
+        db.query(`SELECT COUNT(*) AS v FROM jobs j LEFT JOIN job_truck jtr ON jtr.job_id = j.id WHERE j.status = 'pending' AND j.deleted_at IS NULL AND j.service_type IN ('truck','both') AND (jtr.id IS NULL OR jtr.completed_at IS NULL)`),
       ]);
       res.json({
         total_pending:         parseInt(total.rows[0].v),
@@ -96,6 +98,8 @@ router.get('/stats', requireAuth, async (req, res) => {
         missing_info:          parseInt(missingInfo.rows[0].v),
         delete_requests:       parseInt(deleteReqs.rows[0].v),
         staff:                 staff.rows,
+        tk_pending:            parseInt(tkPend.rows[0].v),
+        truck_pending:         parseInt(truckPend.rows[0].v),
       });
     } else if (role === 'dieu_do') {
       const BASE = `FROM job_truck jt JOIN jobs j ON j.id = jt.job_id JOIN job_assignments ja ON ja.job_id = j.id WHERE ja.dieu_do_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL`;
@@ -508,7 +512,9 @@ router.get('/filtered', requireAuth, async (req, res) => {
     // TP filters
     case 'warning':   extraWhere = `AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '48 hours'`; break;
     case 'missing':   extraWhere = `AND (j.pol IS NULL OR j.pod IS NULL OR j.cont_number IS NULL OR j.han_lenh IS NULL)`; break;
-    case 'overdue':   extraWhere = `AND j.deadline < NOW()`; break;
+    case 'overdue':        extraWhere = `AND j.deadline < NOW()`; break;
+    case 'tp_tk_pending':    extraWhere = `AND j.service_type IN ('tk','both') AND (jt.id IS NULL OR jt.completed_at IS NULL)`; break;
+    case 'tp_truck_pending': extraWhere = `AND j.service_type IN ('truck','both') AND (jtr.id IS NULL OR jtr.completed_at IS NULL)`; break;
     // CUS filters
     case 'cus_waiting_confirm': extraWhere = `AND ja.cus_id IS NOT NULL AND ja.cus_confirm_status = 'pending'`; break;
     case 'cus_near_deadline':   extraWhere = `AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '24 hours'`; break;

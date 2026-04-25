@@ -5,7 +5,9 @@ import JobDetailModal from './JobDetailModal';
 
 const FILTER_TITLES = {
   // TP
-  pending: 'Tổng job pending',
+  pending:          'Tổng job pending',
+  tp_tk_pending:    'TK pending',
+  tp_truck_pending: 'Đặt xe pending',
   warning: 'Sắp hạn (48h)',
   missing: 'Thiếu thông tin',
   overdue: 'Quá deadline',

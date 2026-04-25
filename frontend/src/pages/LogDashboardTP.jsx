@@ -492,8 +492,12 @@ export default function LogDashboardTP() {
 
         {/* Stat cards */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 12, marginBottom: 24 }}>
-          <StatCard label="Tổng job pending" value={stats?.total_pending} color="var(--info)"
-            onClick={() => setJobListFilter('pending')} />
+          <StatCard label="Tổng job pending" color="var(--info)"
+            rows={[
+              { label: 'Tổng pending',   value: stats?.total_pending, color: 'var(--info)',    onClick: () => setJobListFilter('pending') },
+              { label: 'TK pending',     value: stats?.tk_pending,    color: 'var(--warning)', onClick: () => setJobListFilter('tp_tk_pending') },
+              { label: 'Đặt xe pending', value: stats?.truck_pending, color: '#7c3aed',        onClick: () => setJobListFilter('tp_truck_pending') },
+            ]} />
           <StatCard label="Chờ phân CUS" value={stats?.waiting_cus} color="var(--warning)"
             badge={modeLabel}
             onClick={() => setShowAssignment('cus')} />
