@@ -311,12 +311,35 @@ export default function LogDashboardCus() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['jobs'] }),
   });
 
+  function getMissingFields(j) {
+    const missing = [];
+    if (!j.han_lenh)    missing.push('Hạn lệnh');
+    if (!j.tk_flow)     missing.push('Luồng TK');
+    if (!j.tk_number)   missing.push('Số TK');
+    if (!j.tk_datetime) missing.push('Ngày TK');
+    if (!j.ops_id && !j.ops_partner) missing.push('OPS');
+    return missing;
+  }
+
   function canComplete(j) {
     const terminal = ['thong_quan', 'giai_phong', 'bao_quan'];
     if (!terminal.includes(j.tk_status)) return false;
-    if (j.service_type === 'both' && (!j.delivery_datetime || !j.delivery_location)) return false;
+    if (getMissingFields(j).length > 0) return false;
     return true;
   }
+
+  function htTooltip(j) {
+    const terminal = ['thong_quan', 'giai_phong', 'bao_quan'];
+    if (!terminal.includes(j.tk_status)) return 'Chưa đủ điều kiện (cần TK đạt TQ/GP/BQ)';
+    const m = getMissingFields(j);
+    if (m.length) return `Vui lòng nhập đủ thông tin: ${m.join(', ')}`;
+    return 'Hoàn thành phần CUS';
+  }
+
+  function canBookTruck(j) {
+    return !!(j.delivery_datetime && j.delivery_location);
+  }
+  const missingInputStyle = { boxShadow: 'inset 0 0 0 1px var(--danger)', borderRadius: 4 };
 
   return (
     <div className="page">
@@ -385,7 +408,7 @@ export default function LogDashboardCus() {
                         </td>
                         <td style={{ padding: '8px 8px', whiteSpace: 'nowrap', fontSize: 12, color: 'var(--text-2)' }}>{j.si_number || '—'}</td>
                         <td style={{ padding: '8px 8px', maxWidth: 140 }}>{j.customer_name}</td>
-                        <td style={{ padding: '8px 6px', minWidth: 80 }}>
+                        <td style={{ padding: '8px 6px', minWidth: 80, ...(!j.ops_id && !j.ops_partner ? missingInputStyle : {}) }}>
                           <OpsPartnerCell job={j} onSave={v => opsMut.mutate({ id: j.id, data: { ops_partner: v } })} />
                         </td>
                         <td style={{ padding: '8px 8px', whiteSpace: 'nowrap', color: 'var(--text-2)', fontSize: 12 }}>
@@ -411,15 +434,18 @@ export default function LogDashboardCus() {
 
                         {isTk ? (
                           <>
-                            <td style={{ padding: '8px 6px', minWidth: 150 }}>
+                            <td style={{ padding: '8px 6px', minWidth: 150, ...(!j.tk_datetime ? missingInputStyle : {}) }}
+                              title={!j.tk_datetime ? 'Thiếu Ngày TK' : undefined}>
                               <InlineInput type="datetime-local" value={toDatetimeLocal(j.tk_datetime)}
                                 onSave={v => tkMut.mutate({ jobId: j.id, data: { tk_datetime: v } })} />
                             </td>
-                            <td style={{ padding: '8px 6px', minWidth: 80 }}>
+                            <td style={{ padding: '8px 6px', minWidth: 80, ...(!j.tk_number ? missingInputStyle : {}) }}
+                              title={!j.tk_number ? 'Thiếu Số TK' : undefined}>
                               <InlineInput value={j.tk_number}
                                 onSave={v => tkMut.mutate({ jobId: j.id, data: { tk_number: v } })} />
                             </td>
-                            <td style={{ padding: '8px 6px', minWidth: 70 }}>
+                            <td style={{ padding: '8px 6px', minWidth: 70, ...(!j.tk_flow ? missingInputStyle : {}) }}
+                              title={!j.tk_flow ? 'Thiếu Luồng TK' : undefined}>
                               <InlineFlowSelect value={j.tk_flow}
                                 onSave={v => tkMut.mutate({ jobId: j.id, data: { tk_flow: v } })} />
                             </td>
@@ -462,13 +488,17 @@ export default function LogDashboardCus() {
                         </td>
                         <td style={{ padding: '8px 8px', textAlign: 'center' }}>
                           <input type="checkbox" checked={!!j.truck_booked}
+                            disabled={!canBookTruck(j) && !j.truck_booked}
+                            title={!canBookTruck(j) && !j.truck_booked
+                              ? 'Nhập thời gian và địa điểm giao trước khi đặt xe'
+                              : 'Đặt xe'}
                             onChange={e => tkMut.mutate({ jobId: j.id, data: { truck_booked: e.target.checked } })} />
                         </td>
                         <td style={{ padding: '8px 8px', textAlign: 'center' }}>
                           {tab === 'pending' ? (
                             <button className="btn btn-primary btn-sm" style={{ padding: '3px 10px', fontSize: 11 }}
                               disabled={!canComplete(j)}
-                              title={canComplete(j) ? 'Đánh dấu hoàn thành' : 'Chưa đủ điều kiện (cần TK đạt TQ/GP/BQ)'}
+                              title={htTooltip(j)}
                               onClick={() => canComplete(j) && completeMut.mutate(j.id)}>
                               HT
                             </button>

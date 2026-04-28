@@ -711,6 +711,10 @@ export default function JobDetailModal({ jobId, onClose }) {
                           </ERow>
                           <ERow label="Đặt xe">
                             <input type="checkbox" checked={!!tk.truck_booked}
+                              disabled={(!tk.delivery_datetime || !tk.delivery_location) && !tk.truck_booked}
+                              title={(!tk.delivery_datetime || !tk.delivery_location) && !tk.truck_booked
+                                ? 'Nhập thời gian và địa điểm giao trước khi đặt xe'
+                                : 'Đặt xe'}
                               onChange={e => tkMut.mutate({ truck_booked: e.target.checked })} />
                           </ERow>
                           {activeSvcKeys.length > 0 && (

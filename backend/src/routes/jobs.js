@@ -26,6 +26,52 @@ function withTimeout(promise, ms) {
   return Promise.race([promise, timeout]);
 }
 
+// ─── Auto job completion check ────────────────────────────────────────────────
+// Call after any sub-task completion event (CUS HT, DieuDo HT, OPS done).
+// Decides whether the parent job is fully done based on service_type, destination,
+// sub-task completed_at columns, and ja.ops_done.
+async function checkAndCompleteJob(client, jobId, changedBy) {
+  const { rows } = await client.query(`
+    SELECT j.id, j.status, j.service_type, j.destination,
+           jt.completed_at  AS tk_completed_at,
+           jtr.completed_at AS truck_completed_at,
+           COALESCE(ja.ops_done, FALSE) AS ops_done
+    FROM jobs j
+    LEFT JOIN job_tk jt ON jt.job_id = j.id
+    LEFT JOIN job_truck jtr ON jtr.job_id = j.id
+    LEFT JOIN job_assignments ja ON ja.job_id = j.id
+    WHERE j.id = $1 AND j.deleted_at IS NULL
+  `, [jobId]);
+  if (!rows[0]) return false;
+  const j = rows[0];
+  if (j.status === 'completed') return false;
+
+  const tkDone    = !!j.tk_completed_at;
+  const truckDone = !!j.truck_completed_at;
+  const opsDone   = !!j.ops_done;
+
+  let ready = false;
+  if (j.service_type === 'tk')         ready = tkDone;
+  else if (j.service_type === 'truck') ready = truckDone;
+  else if (j.service_type === 'both')  ready = tkDone && truckDone;
+
+  // Hai Phong destination + truck involvement also requires OPS sign-off
+  if (ready
+      && j.destination === 'hai_phong'
+      && (j.service_type === 'truck' || j.service_type === 'both')) {
+    ready = ready && opsDone;
+  }
+
+  if (!ready) return false;
+
+  await client.query(
+    `UPDATE jobs SET status = 'completed', updated_at = NOW() WHERE id = $1`,
+    [jobId]
+  );
+  await recordHistory(client, jobId, changedBy, 'status', 'pending', 'completed');
+  return true;
+}
+
 // ─── Staff stats query helpers ─────────────────────────────────────────────────
 // scope: { userId } → single row for that user; {} → all matching role users.
 function queryCusStaffStats(scope) {
@@ -40,8 +86,11 @@ function queryCusStaffStats(scope) {
       COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND j.deadline < NOW()) AS overdue,
       COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '24 hours') AS near_deadline,
       COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND (
-        j.han_lenh IS NULL OR jt.tk_flow IS NULL OR jt.tk_number IS NULL OR jt.tk_datetime IS NULL
-        OR (ja.ops_id IS NULL AND j.ops_partner IS NULL)
+        j.han_lenh IS NULL
+        OR jt.tk_flow IS NULL OR jt.tk_flow = ''
+        OR jt.tk_number IS NULL OR jt.tk_number = ''
+        OR jt.tk_datetime IS NULL
+        OR (ja.ops_id IS NULL AND (j.ops_partner IS NULL OR j.ops_partner = ''))
       )) AS missing_info
     FROM users u
     LEFT JOIN job_assignments ja ON ja.cus_id = u.id
@@ -595,7 +644,13 @@ router.get('/filtered', requireAuth, async (req, res) => {
         break;
       case 'staff_cus_missing_info':
         staffField = 'cus_id';
-        extraWhere = `AND (j.han_lenh IS NULL OR jt.tk_flow IS NULL OR jt.tk_number IS NULL OR jt.tk_datetime IS NULL OR (ja.ops_id IS NULL AND j.ops_partner IS NULL))`;
+        extraWhere = `AND (
+          j.han_lenh IS NULL
+          OR jt.tk_flow IS NULL OR jt.tk_flow = ''
+          OR jt.tk_number IS NULL OR jt.tk_number = ''
+          OR jt.tk_datetime IS NULL
+          OR (ja.ops_id IS NULL AND (j.ops_partner IS NULL OR j.ops_partner = ''))
+        )`;
         break;
       case 'staff_dd_pending':
         staffField = 'dieu_do_id';
@@ -1526,6 +1581,16 @@ router.patch('/:id/tk', requireAuth, async (req, res) => {
     const { rows: cur } = await client.query(`SELECT * FROM job_tk WHERE job_id = $1`, [req.params.id]);
     if (!cur[0]) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Không tìm thấy TK' }); }
 
+    // Validate truck_booked precondition: cannot tick without delivery info
+    if (req.body.truck_booked === true) {
+      const newDeliveryDt  = req.body.delivery_datetime !== undefined ? req.body.delivery_datetime : cur[0].delivery_datetime;
+      const newDeliveryLoc = req.body.delivery_location !== undefined ? req.body.delivery_location : cur[0].delivery_location;
+      if (!newDeliveryDt || !newDeliveryLoc) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'Nhập thời gian và địa điểm giao trước khi đặt xe' });
+      }
+    }
+
     const sets = []; const params = []; let idx = 1;
     for (const f of FIELDS) {
       if (req.body[f] === undefined) continue;
@@ -1541,6 +1606,25 @@ router.patch('/:id/tk', requireAuth, async (req, res) => {
     const terminalStatuses = ['thong_quan', 'giai_phong', 'bao_quan'];
     if (req.body.tk_status && terminalStatuses.includes(req.body.tk_status) && !cur[0].completed_at) {
       await client.query(`UPDATE job_tk SET completed_at = NOW() WHERE job_id = $1`, [req.params.id]);
+    }
+
+    // Sync to job_truck when CUS ticks "Đặt xe"
+    if (req.body.truck_booked === true) {
+      const plannedDt    = rows[0].delivery_datetime;
+      const deliveryLoc  = rows[0].delivery_location;
+      const { rows: trk } = await client.query(`SELECT id FROM job_truck WHERE job_id = $1`, [req.params.id]);
+      if (trk[0]) {
+        await client.query(
+          `UPDATE job_truck SET planned_datetime = $1, delivery_location = $2 WHERE job_id = $3`,
+          [plannedDt, deliveryLoc, req.params.id]
+        );
+      } else {
+        await client.query(
+          `INSERT INTO job_truck (job_id, planned_datetime, delivery_location) VALUES ($1, $2, $3)`,
+          [req.params.id, plannedDt, deliveryLoc]
+        );
+      }
+      await recordHistory(client, req.params.id, req.user.id, 'truck_synced_from_tk', null, `${plannedDt} | ${deliveryLoc}`);
     }
 
     await client.query('COMMIT');
@@ -1583,18 +1667,30 @@ router.patch('/:id/truck', requireAuth, async (req, res) => {
   }
 });
 
-// PATCH /api/jobs/:id/truck/complete
+// PATCH /api/jobs/:id/truck/complete  — DieuDo marks the truck side complete
 router.patch('/:id/truck/complete', requireAuth, async (req, res) => {
+  if (req.user.role !== 'dieu_do') {
+    return res.status(403).json({ error: 'Không có quyền' });
+  }
   const client = await db.pool.connect();
   try {
     await client.query('BEGIN');
+    const { rows: ja } = await client.query(
+      `SELECT dieu_do_id FROM job_assignments WHERE job_id = $1`,
+      [req.params.id]
+    );
+    if (!ja[0] || ja[0].dieu_do_id !== req.user.id) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: 'Không có quyền' });
+    }
     const { rows } = await client.query(
       `UPDATE job_truck SET completed_at = NOW() WHERE job_id = $1 AND completed_at IS NULL RETURNING *`,
       [req.params.id]
     );
     await recordHistory(client, req.params.id, req.user.id, 'truck_completed', null, 'completed');
+    const completed = await checkAndCompleteJob(client, req.params.id, req.user.id);
     await client.query('COMMIT');
-    res.json(rows[0] || {});
+    res.json({ ok: true, truck: rows[0] || {}, job_completed: completed });
   } catch (err) {
     await client.query('ROLLBACK');
     res.status(500).json({ error: err.message });
@@ -1708,8 +1804,9 @@ router.post('/:id/ops-done', requireAuth, async (req, res) => {
       [req.params.id]
     );
     await recordHistory(client, req.params.id, req.user.id, 'ops_done', 'false', 'true');
+    const completed = await checkAndCompleteJob(client, req.params.id, req.user.id);
     await client.query('COMMIT');
-    res.json({ ok: true });
+    res.json({ ok: true, job_completed: completed });
   } catch (err) {
     await client.query('ROLLBACK');
     res.status(500).json({ error: err.message });
@@ -1718,15 +1815,59 @@ router.post('/:id/ops-done', requireAuth, async (req, res) => {
   }
 });
 
-// PATCH /api/jobs/:id/complete
+// PATCH /api/jobs/:id/complete  — CUS marks the TK side complete
 router.patch('/:id/complete', requireAuth, async (req, res) => {
+  if (!CUS_ROLES.includes(req.user.role)) {
+    return res.status(403).json({ error: 'Không có quyền' });
+  }
   const client = await db.pool.connect();
   try {
     await client.query('BEGIN');
-    await client.query(`UPDATE jobs SET status = 'completed', updated_at = NOW() WHERE id = $1 AND deleted_at IS NULL`, [req.params.id]);
-    await recordHistory(client, req.params.id, req.user.id, 'status', 'pending', 'completed');
+    const { rows } = await client.query(`
+      SELECT j.id, j.han_lenh, j.ops_partner,
+             jt.id AS tk_id, jt.tk_flow, jt.tk_number, jt.tk_datetime, jt.tk_status, jt.completed_at AS tk_completed_at,
+             ja.cus_id, ja.ops_id
+      FROM jobs j
+      LEFT JOIN job_tk jt ON jt.job_id = j.id
+      LEFT JOIN job_assignments ja ON ja.job_id = j.id
+      WHERE j.id = $1 AND j.deleted_at IS NULL
+    `, [req.params.id]);
+    if (!rows[0]) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Không tìm thấy job' }); }
+    const j = rows[0];
+
+    if (j.cus_id !== req.user.id) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: 'Không có quyền' });
+    }
+
+    const terminal = ['thong_quan', 'giai_phong', 'bao_quan'];
+    if (!terminal.includes(j.tk_status)) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'TK chưa thông quan / giải phóng / bảo quan' });
+    }
+
+    const missing = [];
+    if (!j.han_lenh)    missing.push('Hạn lệnh');
+    if (!j.tk_flow)     missing.push('Luồng TK');
+    if (!j.tk_number)   missing.push('Số TK');
+    if (!j.tk_datetime) missing.push('Ngày TK');
+    if (!j.ops_id && !j.ops_partner) missing.push('OPS');
+    if (missing.length) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: `Vui lòng nhập đủ thông tin: ${missing.join(', ')}` });
+    }
+
+    if (!j.tk_completed_at) {
+      await client.query(
+        `UPDATE job_tk SET completed_at = NOW() WHERE job_id = $1`,
+        [req.params.id]
+      );
+      await recordHistory(client, req.params.id, req.user.id, 'tk_completed', null, 'CUS hoàn thành phần TK');
+    }
+
+    const completed = await checkAndCompleteJob(client, req.params.id, req.user.id);
     await client.query('COMMIT');
-    res.json({ ok: true });
+    res.json({ ok: true, job_completed: completed });
   } catch (err) {
     await client.query('ROLLBACK');
     res.status(500).json({ error: err.message });
