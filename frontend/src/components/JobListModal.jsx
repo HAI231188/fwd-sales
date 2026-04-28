@@ -34,6 +34,27 @@ const FILTER_TITLES = {
   ops_waiting_doilenh: 'Chờ xử lý đổi lệnh',
   ops_near_deadline: 'Sắp hạn (24h)',
   ops_overdue: 'Quá hạn',
+  // Staff drill-down — CUS
+  staff_cus_pending_tk:        'Job pending TK',
+  staff_cus_awaiting_confirm:  'Job chờ xác nhận',
+  staff_cus_chua_truyen:       'Chưa truyền TK',
+  staff_cus_dang_tq:           'Đang chờ thông quan',
+  staff_cus_overdue:           'Quá deadline',
+  staff_cus_near_deadline:     'Sắp hạn (24h)',
+  staff_cus_missing_info:      'Thiếu thông tin',
+  // Staff drill-down — Điều Độ
+  staff_dd_pending:            'Job pending Điều Độ',
+  staff_dd_no_plan:            'Chưa có kế hoạch',
+  staff_dd_has_plan:           'Đã có kế hoạch',
+  staff_dd_booked:             'Đã đặt xe',
+  staff_dd_plan_no_truck:      'Đã có KH chưa đặt xe',
+  staff_dd_urgent_no_truck:    'Sắp giao chưa đặt xe (16h)',
+  staff_dd_overdue_delivery:   'Giao hàng rồi chưa hoàn thành',
+  // Staff drill-down — OPS
+  staff_ops_managing:          'Job quản lý',
+  staff_ops_tq_doi_lenh:       'Chờ TQ + đổi lệnh',
+  staff_ops_doi_lenh:          'Chờ đổi lệnh',
+  staff_ops_near_deadline:     'Sắp quá deadline TQ (4h)',
 };
 
 const TK_STATUS_LABEL = {
@@ -55,14 +76,16 @@ function fmtDt(val) {
 function deadlineStyle(dl, filterType) {
   if (!dl) return {};
   const ms = new Date(dl) - Date.now();
-  if (filterType === 'overdue' || filterType === 'cus_overdue' || filterType === 'ops_overdue' || ms < 0)
-    return { color: 'var(--danger)', fontWeight: 600 };
+  if (
+    filterType === 'overdue' || filterType === 'cus_overdue' || filterType === 'ops_overdue' ||
+    filterType === 'staff_cus_overdue' || ms < 0
+  ) return { color: 'var(--danger)', fontWeight: 600 };
   if (ms < 48 * 3600 * 1000) return { color: 'var(--warning)', fontWeight: 600 };
   return {};
 }
 
 function getColumns(filterType) {
-  if (filterType?.startsWith('truck_') || filterType?.startsWith('dd_')) {
+  if (filterType?.startsWith('truck_') || filterType?.startsWith('dd_') || filterType?.startsWith('staff_dd_')) {
     return [
       { key: 'job_code',               label: 'Số job' },
       { key: 'created_at',             label: 'Ngày tạo' },
@@ -75,7 +98,7 @@ function getColumns(filterType) {
       { key: 'truck_delivery_location',label: 'Địa điểm giao' },
     ];
   }
-  if (filterType?.startsWith('ops_')) {
+  if (filterType?.startsWith('ops_') || filterType?.startsWith('staff_ops_')) {
     return [
       { key: 'job_code',          label: 'Số job' },
       { key: 'created_at',        label: 'Ngày tạo' },
@@ -87,8 +110,8 @@ function getColumns(filterType) {
       { key: 'ops_tasks_pending', label: 'CV chờ xử lý' },
     ];
   }
-  if (filterType?.startsWith('cus_')) {
-    return [
+  if (filterType?.startsWith('cus_') || filterType?.startsWith('staff_cus_')) {
+    const cols = [
       { key: 'job_code',      label: 'Số job' },
       { key: 'created_at',   label: 'Ngày tạo' },
       { key: 'customer_name',label: 'Khách hàng' },
@@ -98,6 +121,8 @@ function getColumns(filterType) {
       { key: 'tq_datetime',  label: 'Ngày TQ' },
       { key: 'ops_name',     label: 'OPS' },
     ];
+    if (filterType === 'staff_cus_missing_info') cols.push({ key: 'missing_fields', label: 'Thiếu' });
+    return cols;
   }
   // TP default
   const cols = [
@@ -179,15 +204,16 @@ const TD = ({ children, style }) => (
   <td style={{ padding: '8px 10px', ...style }}>{children}</td>
 );
 
-export default function JobListModal({ filterType, onClose }) {
+export default function JobListModal({ filterType, staffId, staffName, onClose }) {
   const [detailJobId, setDetailJobId] = useState(null);
 
   const { data: jobs = [], isLoading } = useQuery({
-    queryKey: ['filteredJobs', filterType],
-    queryFn: () => getFilteredJobs(filterType),
+    queryKey: ['filteredJobs', filterType, staffId || null],
+    queryFn: () => getFilteredJobs(filterType, staffId),
   });
 
-  const title = FILTER_TITLES[filterType] || filterType;
+  const baseTitle = FILTER_TITLES[filterType] || filterType;
+  const title = staffName ? `${baseTitle} — ${staffName}` : baseTitle;
   const columns = getColumns(filterType);
 
   return (

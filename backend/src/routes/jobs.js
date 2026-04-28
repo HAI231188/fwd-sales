@@ -32,7 +32,7 @@ router.get('/stats', requireAuth, async (req, res) => {
   const { role, id: userId } = req.user;
   try {
     if (role === 'truong_phong_log') {
-      const [total, waitingCus, waitingOps, cusConfirmPend, deadlineAdj, noDeadline, overdue, warnSoon, missingInfo, deleteReqs, staff, tkPend, truckPend] = await Promise.all([
+      const [total, waitingCus, waitingOps, cusConfirmPend, deadlineAdj, noDeadline, overdue, warnSoon, missingInfo, deleteReqs, cusStats, dieuDoStats, opsStats, tkPend, truckPend] = await Promise.all([
         db.query(`SELECT COUNT(*) AS v FROM jobs WHERE status = 'pending' AND deleted_at IS NULL`),
         db.query(`
           SELECT COUNT(*) AS v FROM jobs j
@@ -62,27 +62,60 @@ router.get('/stats', requireAuth, async (req, res) => {
         db.query(`SELECT COUNT(*) AS v FROM jobs WHERE status = 'pending' AND deleted_at IS NULL AND deadline BETWEEN NOW() AND NOW() + INTERVAL '48 hours'`),
         db.query(`SELECT COUNT(*) AS v FROM jobs WHERE status = 'pending' AND deleted_at IS NULL AND (pol IS NULL OR pod IS NULL OR cont_number IS NULL OR han_lenh IS NULL)`),
         db.query(`SELECT COUNT(*) AS v FROM job_delete_requests WHERE status = 'pending'`),
+        // CUS staff stats
         db.query(`
           SELECT u.id, u.name, u.role, u.code, u.avatar_color,
-            COUNT(ja.id) FILTER (WHERE j.status = 'pending' AND j.deleted_at IS NULL) AS pending,
-            COUNT(ja.id) FILTER (WHERE j.status = 'pending' AND j.deleted_at IS NULL AND j.deadline < NOW()) AS overdue,
-            COUNT(ja.id) FILTER (WHERE j.status = 'pending' AND j.deleted_at IS NULL AND ja.cus_id IS NOT NULL AND ja.cus_confirm_status = 'pending') AS awaiting_confirm,
-            COUNT(ja.id) FILTER (WHERE j.status = 'pending' AND j.deleted_at IS NULL AND (
-              (u.role != 'dieu_do' AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '48 hours')
-              OR (u.role = 'dieu_do'
-                  AND jtr.planned_datetime IS NOT NULL
-                  AND jtr.planned_datetime <= NOW() + INTERVAL '24 hours'
-                  AND (jtr.transport_name IS NULL OR jtr.transport_name = '')
-                  AND jtr.completed_at IS NULL)
-            )) AS warning
+            COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND j.service_type IN ('tk','both')) AS pending_tk,
+            COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND ja.cus_confirm_status = 'pending') AS awaiting_confirm,
+            COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND (jt.tk_status IS NULL OR jt.tk_status = 'chua_truyen')) AS chua_truyen,
+            COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND jt.tk_status = 'dang_lam') AS dang_tq,
+            COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND j.deadline < NOW()) AS overdue,
+            COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '24 hours') AS near_deadline,
+            COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND (
+              j.han_lenh IS NULL OR jt.tk_flow IS NULL OR jt.tk_number IS NULL OR jt.tk_datetime IS NULL
+              OR (ja.ops_id IS NULL AND j.ops_partner IS NULL)
+            )) AS missing_info
           FROM users u
-          LEFT JOIN job_assignments ja ON (ja.cus_id = u.id OR ja.ops_id = u.id OR ja.dieu_do_id = u.id)
+          LEFT JOIN job_assignments ja ON ja.cus_id = u.id
           LEFT JOIN jobs j ON j.id = ja.job_id
-          LEFT JOIN job_truck jtr ON jtr.job_id = j.id
+          LEFT JOIN job_tk jt ON jt.job_id = j.id
           WHERE u.role = ANY($1)
           GROUP BY u.id, u.name, u.role, u.code, u.avatar_color
-          ORDER BY u.role, u.name
-        `, [['cus','cus1','cus2','cus3','ops','dieu_do']]),
+          ORDER BY u.name
+        `, [['cus','cus1','cus2','cus3']]),
+        // Điều Độ staff stats
+        db.query(`
+          SELECT u.id, u.name, u.role, u.code, u.avatar_color,
+            COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL) AS pending_dd,
+            COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND jtr.planned_datetime IS NULL) AS no_plan,
+            COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND jtr.planned_datetime IS NOT NULL) AS has_plan,
+            COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND jtr.transport_name IS NOT NULL) AS booked,
+            COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND jtr.planned_datetime IS NOT NULL AND jtr.transport_name IS NULL) AS plan_no_truck,
+            COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND jtr.planned_datetime BETWEEN NOW() AND NOW() + INTERVAL '16 hours' AND jtr.transport_name IS NULL) AS urgent_no_truck,
+            COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND jtr.planned_datetime < NOW() AND jtr.completed_at IS NULL) AS overdue_delivery
+          FROM users u
+          LEFT JOIN job_assignments ja ON ja.dieu_do_id = u.id
+          LEFT JOIN jobs j ON j.id = ja.job_id
+          LEFT JOIN job_truck jtr ON jtr.job_id = j.id
+          WHERE u.role = 'dieu_do'
+          GROUP BY u.id, u.name, u.role, u.code, u.avatar_color
+          ORDER BY u.name
+        `),
+        // OPS staff stats
+        db.query(`
+          SELECT u.id, u.name, u.role, u.code, u.avatar_color,
+            COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL) AS managing,
+            COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND j.service_type = 'both' AND j.destination = 'hai_phong' AND COALESCE(ja.ops_done, FALSE) = FALSE) AS tq_doi_lenh,
+            COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND j.service_type = 'truck' AND j.destination = 'hai_phong' AND COALESCE(ja.ops_done, FALSE) = FALSE) AS doi_lenh,
+            COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '4 hours' AND (jt.tk_status IS NULL OR jt.tk_status IN ('chua_truyen','dang_lam'))) AS near_deadline
+          FROM users u
+          LEFT JOIN job_assignments ja ON ja.ops_id = u.id
+          LEFT JOIN jobs j ON j.id = ja.job_id
+          LEFT JOIN job_tk jt ON jt.job_id = j.id
+          WHERE u.role = 'ops'
+          GROUP BY u.id, u.name, u.role, u.code, u.avatar_color
+          ORDER BY u.name
+        `),
         db.query(`SELECT COUNT(*) AS v FROM jobs j LEFT JOIN job_tk jt ON jt.job_id = j.id WHERE j.status = 'pending' AND j.deleted_at IS NULL AND j.service_type IN ('tk','both') AND (jt.id IS NULL OR jt.completed_at IS NULL)`),
         db.query(`SELECT COUNT(*) AS v FROM jobs j LEFT JOIN job_truck jtr ON jtr.job_id = j.id WHERE j.status = 'pending' AND j.deleted_at IS NULL AND j.service_type IN ('truck','both') AND (jtr.id IS NULL OR jtr.completed_at IS NULL)`),
       ]);
@@ -97,7 +130,9 @@ router.get('/stats', requireAuth, async (req, res) => {
         warn_soon:             parseInt(warnSoon.rows[0].v),
         missing_info:          parseInt(missingInfo.rows[0].v),
         delete_requests:       parseInt(deleteReqs.rows[0].v),
-        staff:                 staff.rows,
+        cus_stats:             cusStats.rows,
+        dieu_do_stats:         dieuDoStats.rows,
+        ops_stats:             opsStats.rows,
         tk_pending:            parseInt(tkPend.rows[0].v),
         truck_pending:         parseInt(truckPend.rows[0].v),
       });
@@ -492,6 +527,126 @@ router.get('/filtered', requireAuth, async (req, res) => {
   let idx = 1;
   let baseWhere = '';
   let extraWhere = '';
+
+  // staff_* filters: TP-only, scope by an explicit staff_id query param
+  if (typeof type === 'string' && type.startsWith('staff_')) {
+    if (role !== 'truong_phong_log') return res.status(403).json({ error: 'Không có quyền' });
+    const staffId = parseInt(req.query.staff_id, 10);
+    if (!staffId) return res.status(400).json({ error: 'staff_id required' });
+    let staffField;
+    switch (type) {
+      case 'staff_cus_pending_tk':
+        staffField = 'cus_id';
+        extraWhere = `AND j.service_type IN ('tk','both')`;
+        break;
+      case 'staff_cus_awaiting_confirm':
+        staffField = 'cus_id';
+        extraWhere = `AND ja.cus_confirm_status = 'pending'`;
+        break;
+      case 'staff_cus_chua_truyen':
+        staffField = 'cus_id';
+        extraWhere = `AND (jt.tk_status IS NULL OR jt.tk_status = 'chua_truyen')`;
+        break;
+      case 'staff_cus_dang_tq':
+        staffField = 'cus_id';
+        extraWhere = `AND jt.tk_status = 'dang_lam'`;
+        break;
+      case 'staff_cus_overdue':
+        staffField = 'cus_id';
+        extraWhere = `AND j.deadline < NOW()`;
+        break;
+      case 'staff_cus_near_deadline':
+        staffField = 'cus_id';
+        extraWhere = `AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '24 hours'`;
+        break;
+      case 'staff_cus_missing_info':
+        staffField = 'cus_id';
+        extraWhere = `AND (j.han_lenh IS NULL OR jt.tk_flow IS NULL OR jt.tk_number IS NULL OR jt.tk_datetime IS NULL OR (ja.ops_id IS NULL AND j.ops_partner IS NULL))`;
+        break;
+      case 'staff_dd_pending':
+        staffField = 'dieu_do_id';
+        break;
+      case 'staff_dd_no_plan':
+        staffField = 'dieu_do_id';
+        extraWhere = `AND jtr.planned_datetime IS NULL`;
+        break;
+      case 'staff_dd_has_plan':
+        staffField = 'dieu_do_id';
+        extraWhere = `AND jtr.planned_datetime IS NOT NULL`;
+        break;
+      case 'staff_dd_booked':
+        staffField = 'dieu_do_id';
+        extraWhere = `AND jtr.transport_name IS NOT NULL`;
+        break;
+      case 'staff_dd_plan_no_truck':
+        staffField = 'dieu_do_id';
+        extraWhere = `AND jtr.planned_datetime IS NOT NULL AND jtr.transport_name IS NULL`;
+        break;
+      case 'staff_dd_urgent_no_truck':
+        staffField = 'dieu_do_id';
+        extraWhere = `AND jtr.planned_datetime BETWEEN NOW() AND NOW() + INTERVAL '16 hours' AND jtr.transport_name IS NULL`;
+        break;
+      case 'staff_dd_overdue_delivery':
+        staffField = 'dieu_do_id';
+        extraWhere = `AND jtr.planned_datetime < NOW() AND jtr.completed_at IS NULL`;
+        break;
+      case 'staff_ops_managing':
+        staffField = 'ops_id';
+        break;
+      case 'staff_ops_tq_doi_lenh':
+        staffField = 'ops_id';
+        extraWhere = `AND j.service_type = 'both' AND j.destination = 'hai_phong' AND COALESCE(ja.ops_done, FALSE) = FALSE`;
+        break;
+      case 'staff_ops_doi_lenh':
+        staffField = 'ops_id';
+        extraWhere = `AND j.service_type = 'truck' AND j.destination = 'hai_phong' AND COALESCE(ja.ops_done, FALSE) = FALSE`;
+        break;
+      case 'staff_ops_near_deadline':
+        staffField = 'ops_id';
+        extraWhere = `AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '4 hours' AND (jt.tk_status IS NULL OR jt.tk_status IN ('chua_truyen','dang_lam'))`;
+        break;
+      default:
+        return res.status(400).json({ error: 'Unknown staff filter' });
+    }
+    baseWhere = `AND ja.${staffField} = $${idx++}`;
+    params.push(staffId);
+
+    try {
+      const { rows } = await db.query(`
+        SELECT j.id, j.job_code, j.created_at, j.customer_name, j.deadline, j.han_lenh,
+               j.pol, j.pod, j.cont_number, j.service_type, j.si_number,
+               ja.cus_id, cus.name AS cus_name,
+               ja.ops_id, ops.name AS ops_name,
+               ja.cus_confirm_status,
+               jt.tk_status, jt.tk_flow, jt.tq_datetime, jt.tk_number, jt.tk_datetime, jt.notes AS tk_notes,
+               jtr.transport_name, jtr.vehicle_number, jtr.planned_datetime,
+               jtr.delivery_location AS truck_delivery_location, jtr.cost,
+               jtr.completed_at AS truck_completed_at,
+               (SELECT string_agg(jot.content, '; ' ORDER BY jot.id)
+                FROM job_ops_task jot WHERE jot.job_id = j.id AND jot.completed = FALSE) AS ops_tasks_pending,
+               TRIM(
+                 CASE WHEN j.han_lenh IS NULL THEN 'Hạn lệnh ' ELSE '' END ||
+                 CASE WHEN jt.tk_flow IS NULL THEN 'Luồng TK ' ELSE '' END ||
+                 CASE WHEN jt.tk_number IS NULL THEN 'Số TK ' ELSE '' END ||
+                 CASE WHEN jt.tk_datetime IS NULL THEN 'Ngày TK ' ELSE '' END ||
+                 CASE WHEN ja.ops_id IS NULL AND j.ops_partner IS NULL THEN 'OPS' ELSE '' END
+               ) AS missing_fields
+        FROM jobs j
+        LEFT JOIN LATERAL (
+          SELECT * FROM job_assignments WHERE job_id = j.id ORDER BY id DESC LIMIT 1
+        ) ja ON true
+        LEFT JOIN users cus ON cus.id = ja.cus_id
+        LEFT JOIN users ops ON ops.id = ja.ops_id
+        LEFT JOIN job_tk jt ON jt.job_id = j.id
+        LEFT JOIN job_truck jtr ON jtr.job_id = j.id
+        WHERE j.status = 'pending' AND j.deleted_at IS NULL ${baseWhere} ${extraWhere}
+        ORDER BY j.deadline ASC NULLS LAST, j.created_at DESC
+      `, params);
+      return res.json(rows);
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  }
 
   if (role === 'truong_phong_log') {
     // no base restriction
