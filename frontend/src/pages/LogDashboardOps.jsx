@@ -5,6 +5,7 @@ import JobDetailModal from '../components/JobDetailModal';
 import JobListModal from '../components/JobListModal';
 import FilteredTable from '../components/FilteredTable';
 import DateRangeFilter from '../components/DateRangeFilter';
+import StaffSection, { OPS_COLS as STAFF_OPS_COLS } from '../components/StaffSection';
 import { getJobStats, getJobs, requestJobDelete, markOpsDone, updateJobTk } from '../api';
 
 const TK_STATUS_LABEL = {
@@ -259,6 +260,14 @@ export default function LogDashboardOps() {
           <StatCard label="Quá hạn" value={stats?.qua_han} color="var(--danger)" onClick={() => setJobListFilter('ops_overdue')} />
         </div>
 
+        {/* Staff section — 1 row for current user */}
+        <StaffSection
+          title="Tình hình OPS"
+          rows={stats?.ops_stats || []}
+          columns={STAFF_OPS_COLS}
+          onCellClick={(s, key) => setJobListFilter({ filterType: key, staffId: s.id, staffName: s.name })}
+        />
+
         <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
           <div style={{ padding: '0 20px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
             <div className="tabs" style={{ marginBottom: 0 }}>
@@ -427,7 +436,14 @@ export default function LogDashboardOps() {
       </div>
 
       {detailJobId && <JobDetailModal jobId={detailJobId} onClose={() => setDetailJobId(null)} />}
-      {jobListFilter && <JobListModal filterType={jobListFilter} onClose={() => setJobListFilter(null)} />}
+      {jobListFilter && (
+        <JobListModal
+          filterType={typeof jobListFilter === 'string' ? jobListFilter : jobListFilter.filterType}
+          staffId={typeof jobListFilter === 'string' ? null : jobListFilter.staffId}
+          staffName={typeof jobListFilter === 'string' ? null : jobListFilter.staffName}
+          onClose={() => setJobListFilter(null)}
+        />
+      )}
     </div>
   );
 }

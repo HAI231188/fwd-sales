@@ -6,6 +6,7 @@ import CreateJobModal from '../components/CreateJobModal';
 import JobListModal from '../components/JobListModal';
 import FilteredTable from '../components/FilteredTable';
 import DateRangeFilter from '../components/DateRangeFilter';
+import StaffSection, { CUS_COLS } from '../components/StaffSection';
 import {
   getJobStats, getJobs, updateJobTk, updateJob, confirmJob, requestDeadline, completeJob,
   requestJobDelete, createJob,
@@ -334,6 +335,14 @@ export default function LogDashboardCus() {
           <StatCard label="Quá hạn" value={stats?.qua_han} color="var(--danger)" onClick={() => setJobListFilter('cus_overdue')} />
         </div>
 
+        {/* Staff section — 1 row for current user */}
+        <StaffSection
+          title="Tình hình CUS"
+          rows={stats?.cus_stats || []}
+          columns={CUS_COLS}
+          onCellClick={(s, key) => setJobListFilter({ filterType: key, staffId: s.id, staffName: s.name })}
+        />
+
         {/* Job grid */}
         <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
           <div style={{ padding: '0 20px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
@@ -495,7 +504,14 @@ export default function LogDashboardCus() {
 
       {detailJobId && <JobDetailModal jobId={detailJobId} onClose={() => setDetailJobId(null)} />}
       {showCreate && <CreateJobModal onClose={() => setShowCreate(false)} onCreated={data => createMut.mutateAsync(data)} />}
-      {jobListFilter && <JobListModal filterType={jobListFilter} onClose={() => setJobListFilter(null)} />}
+      {jobListFilter && (
+        <JobListModal
+          filterType={typeof jobListFilter === 'string' ? jobListFilter : jobListFilter.filterType}
+          staffId={typeof jobListFilter === 'string' ? null : jobListFilter.staffId}
+          staffName={typeof jobListFilter === 'string' ? null : jobListFilter.staffName}
+          onClose={() => setJobListFilter(null)}
+        />
+      )}
       {deadlineReqJob && (
         <DeadlineRequestModal
           job={deadlineReqJob}

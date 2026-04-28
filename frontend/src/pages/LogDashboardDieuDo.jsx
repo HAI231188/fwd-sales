@@ -6,6 +6,7 @@ import CreateJobModal from '../components/CreateJobModal';
 import JobListModal from '../components/JobListModal';
 import FilteredTable from '../components/FilteredTable';
 import DateRangeFilter from '../components/DateRangeFilter';
+import StaffSection, { DD_COLS as STAFF_DD_COLS } from '../components/StaffSection';
 import { getJobStats, getJobs, updateJobTruck, completeJobTruck, requestJobDelete, createJob } from '../api';
 
 function fmtDate(val) {
@@ -214,6 +215,14 @@ export default function LogDashboardDieuDo() {
           <StatCard label="Sắp hạn (48h)" value={stats?.sap_han} color="var(--danger)" onClick={() => setJobListFilter('dd_sap_han')} />
         </div>
 
+        {/* Staff section — 1 row for current user */}
+        <StaffSection
+          title="Tình hình Điều Độ"
+          rows={stats?.dieu_do_stats || []}
+          columns={STAFF_DD_COLS}
+          onCellClick={(s, key) => setJobListFilter({ filterType: key, staffId: s.id, staffName: s.name })}
+        />
+
         <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
           <div style={{ padding: '0 20px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
             <div className="tabs" style={{ marginBottom: 0 }}>
@@ -339,7 +348,14 @@ export default function LogDashboardDieuDo() {
 
       {detailJobId && <JobDetailModal jobId={detailJobId} onClose={() => setDetailJobId(null)} />}
       {showCreate && <CreateJobModal onClose={() => setShowCreate(false)} onCreated={data => createMut.mutateAsync(data)} />}
-      {jobListFilter && <JobListModal filterType={jobListFilter} onClose={() => setJobListFilter(null)} />}
+      {jobListFilter && (
+        <JobListModal
+          filterType={typeof jobListFilter === 'string' ? jobListFilter : jobListFilter.filterType}
+          staffId={typeof jobListFilter === 'string' ? null : jobListFilter.staffId}
+          staffName={typeof jobListFilter === 'string' ? null : jobListFilter.staffName}
+          onClose={() => setJobListFilter(null)}
+        />
+      )}
     </div>
   );
 }

@@ -26,6 +26,74 @@ function withTimeout(promise, ms) {
   return Promise.race([promise, timeout]);
 }
 
+// ─── Staff stats query helpers ─────────────────────────────────────────────────
+// scope: { userId } → single row for that user; {} → all matching role users.
+function queryCusStaffStats(scope) {
+  const where = scope.userId ? `u.id = $1` : `u.role = ANY($1)`;
+  const params = scope.userId ? [scope.userId] : [['cus','cus1','cus2','cus3']];
+  return db.query(`
+    SELECT u.id, u.name, u.role, u.code, u.avatar_color,
+      COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND j.service_type IN ('tk','both')) AS pending_tk,
+      COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND ja.cus_confirm_status = 'pending') AS awaiting_confirm,
+      COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND (jt.tk_status IS NULL OR jt.tk_status = 'chua_truyen')) AS chua_truyen,
+      COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND jt.tk_status = 'dang_lam') AS dang_tq,
+      COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND j.deadline < NOW()) AS overdue,
+      COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '24 hours') AS near_deadline,
+      COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND (
+        j.han_lenh IS NULL OR jt.tk_flow IS NULL OR jt.tk_number IS NULL OR jt.tk_datetime IS NULL
+        OR (ja.ops_id IS NULL AND j.ops_partner IS NULL)
+      )) AS missing_info
+    FROM users u
+    LEFT JOIN job_assignments ja ON ja.cus_id = u.id
+    LEFT JOIN jobs j ON j.id = ja.job_id
+    LEFT JOIN job_tk jt ON jt.job_id = j.id
+    WHERE ${where}
+    GROUP BY u.id, u.name, u.role, u.code, u.avatar_color
+    ORDER BY u.name
+  `, params);
+}
+
+function queryDieuDoStaffStats(scope) {
+  const where = scope.userId ? `u.id = $1` : `u.role = 'dieu_do'`;
+  const params = scope.userId ? [scope.userId] : [];
+  return db.query(`
+    SELECT u.id, u.name, u.role, u.code, u.avatar_color,
+      COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL) AS pending_dd,
+      COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND jtr.planned_datetime IS NULL) AS no_plan,
+      COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND jtr.planned_datetime IS NOT NULL) AS has_plan,
+      COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND jtr.transport_name IS NOT NULL) AS booked,
+      COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND jtr.planned_datetime IS NOT NULL AND jtr.transport_name IS NULL) AS plan_no_truck,
+      COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND jtr.planned_datetime BETWEEN NOW() AND NOW() + INTERVAL '16 hours' AND jtr.transport_name IS NULL) AS urgent_no_truck,
+      COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND jtr.planned_datetime < NOW() AND jtr.completed_at IS NULL) AS overdue_delivery
+    FROM users u
+    LEFT JOIN job_assignments ja ON ja.dieu_do_id = u.id
+    LEFT JOIN jobs j ON j.id = ja.job_id
+    LEFT JOIN job_truck jtr ON jtr.job_id = j.id
+    WHERE ${where}
+    GROUP BY u.id, u.name, u.role, u.code, u.avatar_color
+    ORDER BY u.name
+  `, params);
+}
+
+function queryOpsStaffStats(scope) {
+  const where = scope.userId ? `u.id = $1` : `u.role = 'ops'`;
+  const params = scope.userId ? [scope.userId] : [];
+  return db.query(`
+    SELECT u.id, u.name, u.role, u.code, u.avatar_color,
+      COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL) AS managing,
+      COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND j.service_type = 'both' AND j.destination = 'hai_phong' AND COALESCE(ja.ops_done, FALSE) = FALSE) AS tq_doi_lenh,
+      COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND j.service_type = 'truck' AND j.destination = 'hai_phong' AND COALESCE(ja.ops_done, FALSE) = FALSE) AS doi_lenh,
+      COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '4 hours' AND (jt.tk_status IS NULL OR jt.tk_status IN ('chua_truyen','dang_lam'))) AS near_deadline
+    FROM users u
+    LEFT JOIN job_assignments ja ON ja.ops_id = u.id
+    LEFT JOIN jobs j ON j.id = ja.job_id
+    LEFT JOIN job_tk jt ON jt.job_id = j.id
+    WHERE ${where}
+    GROUP BY u.id, u.name, u.role, u.code, u.avatar_color
+    ORDER BY u.name
+  `, params);
+}
+
 
 // GET /api/jobs/stats
 router.get('/stats', requireAuth, async (req, res) => {
@@ -62,60 +130,9 @@ router.get('/stats', requireAuth, async (req, res) => {
         db.query(`SELECT COUNT(*) AS v FROM jobs WHERE status = 'pending' AND deleted_at IS NULL AND deadline BETWEEN NOW() AND NOW() + INTERVAL '48 hours'`),
         db.query(`SELECT COUNT(*) AS v FROM jobs WHERE status = 'pending' AND deleted_at IS NULL AND (pol IS NULL OR pod IS NULL OR cont_number IS NULL OR han_lenh IS NULL)`),
         db.query(`SELECT COUNT(*) AS v FROM job_delete_requests WHERE status = 'pending'`),
-        // CUS staff stats
-        db.query(`
-          SELECT u.id, u.name, u.role, u.code, u.avatar_color,
-            COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND j.service_type IN ('tk','both')) AS pending_tk,
-            COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND ja.cus_confirm_status = 'pending') AS awaiting_confirm,
-            COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND (jt.tk_status IS NULL OR jt.tk_status = 'chua_truyen')) AS chua_truyen,
-            COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND jt.tk_status = 'dang_lam') AS dang_tq,
-            COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND j.deadline < NOW()) AS overdue,
-            COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '24 hours') AS near_deadline,
-            COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND (
-              j.han_lenh IS NULL OR jt.tk_flow IS NULL OR jt.tk_number IS NULL OR jt.tk_datetime IS NULL
-              OR (ja.ops_id IS NULL AND j.ops_partner IS NULL)
-            )) AS missing_info
-          FROM users u
-          LEFT JOIN job_assignments ja ON ja.cus_id = u.id
-          LEFT JOIN jobs j ON j.id = ja.job_id
-          LEFT JOIN job_tk jt ON jt.job_id = j.id
-          WHERE u.role = ANY($1)
-          GROUP BY u.id, u.name, u.role, u.code, u.avatar_color
-          ORDER BY u.name
-        `, [['cus','cus1','cus2','cus3']]),
-        // Điều Độ staff stats
-        db.query(`
-          SELECT u.id, u.name, u.role, u.code, u.avatar_color,
-            COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL) AS pending_dd,
-            COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND jtr.planned_datetime IS NULL) AS no_plan,
-            COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND jtr.planned_datetime IS NOT NULL) AS has_plan,
-            COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND jtr.transport_name IS NOT NULL) AS booked,
-            COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND jtr.planned_datetime IS NOT NULL AND jtr.transport_name IS NULL) AS plan_no_truck,
-            COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND jtr.planned_datetime BETWEEN NOW() AND NOW() + INTERVAL '16 hours' AND jtr.transport_name IS NULL) AS urgent_no_truck,
-            COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND jtr.planned_datetime < NOW() AND jtr.completed_at IS NULL) AS overdue_delivery
-          FROM users u
-          LEFT JOIN job_assignments ja ON ja.dieu_do_id = u.id
-          LEFT JOIN jobs j ON j.id = ja.job_id
-          LEFT JOIN job_truck jtr ON jtr.job_id = j.id
-          WHERE u.role = 'dieu_do'
-          GROUP BY u.id, u.name, u.role, u.code, u.avatar_color
-          ORDER BY u.name
-        `),
-        // OPS staff stats
-        db.query(`
-          SELECT u.id, u.name, u.role, u.code, u.avatar_color,
-            COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL) AS managing,
-            COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND j.service_type = 'both' AND j.destination = 'hai_phong' AND COALESCE(ja.ops_done, FALSE) = FALSE) AS tq_doi_lenh,
-            COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND j.service_type = 'truck' AND j.destination = 'hai_phong' AND COALESCE(ja.ops_done, FALSE) = FALSE) AS doi_lenh,
-            COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '4 hours' AND (jt.tk_status IS NULL OR jt.tk_status IN ('chua_truyen','dang_lam'))) AS near_deadline
-          FROM users u
-          LEFT JOIN job_assignments ja ON ja.ops_id = u.id
-          LEFT JOIN jobs j ON j.id = ja.job_id
-          LEFT JOIN job_tk jt ON jt.job_id = j.id
-          WHERE u.role = 'ops'
-          GROUP BY u.id, u.name, u.role, u.code, u.avatar_color
-          ORDER BY u.name
-        `),
+        queryCusStaffStats({}),
+        queryDieuDoStaffStats({}),
+        queryOpsStaffStats({}),
         db.query(`SELECT COUNT(*) AS v FROM jobs j LEFT JOIN job_tk jt ON jt.job_id = j.id WHERE j.status = 'pending' AND j.deleted_at IS NULL AND j.service_type IN ('tk','both') AND (jt.id IS NULL OR jt.completed_at IS NULL)`),
         db.query(`SELECT COUNT(*) AS v FROM jobs j LEFT JOIN job_truck jtr ON jtr.job_id = j.id WHERE j.status = 'pending' AND j.deleted_at IS NULL AND j.service_type IN ('truck','both') AND (jtr.id IS NULL OR jtr.completed_at IS NULL)`),
       ]);
@@ -138,7 +155,7 @@ router.get('/stats', requireAuth, async (req, res) => {
       });
     } else if (role === 'dieu_do') {
       const BASE = `FROM job_truck jt JOIN jobs j ON j.id = jt.job_id JOIN job_assignments ja ON ja.job_id = j.id WHERE ja.dieu_do_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL`;
-      const [tongJob, coKhXe, chuaKhXe, datXe, canhBaoVanTai, canhBaoDoiLenh, canhBaoHoanThanh, sapHan] = await Promise.all([
+      const [tongJob, coKhXe, chuaKhXe, datXe, canhBaoVanTai, canhBaoDoiLenh, canhBaoHoanThanh, sapHan, dieuDoStats] = await Promise.all([
         db.query(`SELECT COUNT(*) AS v ${BASE}`, [userId]),
         db.query(`SELECT COUNT(*) AS v ${BASE} AND jt.planned_datetime IS NOT NULL`, [userId]),
         db.query(`SELECT COUNT(*) AS v ${BASE} AND jt.planned_datetime IS NULL`, [userId]),
@@ -147,6 +164,7 @@ router.get('/stats', requireAuth, async (req, res) => {
         db.query(`SELECT COUNT(*) AS v ${BASE} AND jt.transport_name IS NOT NULL AND j.destination = 'hai_phong' AND COALESCE(ja.ops_done, FALSE) = FALSE`, [userId]),
         db.query(`SELECT COUNT(*) AS v ${BASE} AND jt.planned_datetime < NOW()`, [userId]),
         db.query(`SELECT COUNT(*) AS v ${BASE} AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '48 hours'`, [userId]),
+        queryDieuDoStaffStats({ userId }),
       ]);
       const cv = r => parseInt(r.rows[0].v);
       res.json({
@@ -159,27 +177,31 @@ router.get('/stats', requireAuth, async (req, res) => {
         canh_bao_chua_doi_lenh:   cv(canhBaoDoiLenh),
         canh_bao_chua_hoan_thanh: cv(canhBaoHoanThanh),
         sap_han:                  cv(sapHan),
+        dieu_do_stats:            dieuDoStats.rows,
       });
     } else if (CUS_ROLES.includes(role)) {
-      const [total, choXacNhan, sapHan, quaHan] = await Promise.all([
+      const [total, choXacNhan, sapHan, quaHan, cusStats] = await Promise.all([
         db.query(`SELECT COUNT(*) AS v FROM job_assignments ja JOIN jobs j ON j.id = ja.job_id WHERE ja.cus_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL`, [userId]),
         db.query(`SELECT COUNT(*) AS v FROM job_assignments ja JOIN jobs j ON j.id = ja.job_id WHERE ja.cus_id = $1 AND j.deleted_at IS NULL AND ja.cus_confirm_status = 'pending'`, [userId]),
         db.query(`SELECT COUNT(*) AS v FROM job_assignments ja JOIN jobs j ON j.id = ja.job_id WHERE ja.cus_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '24 hours'`, [userId]),
         db.query(`SELECT COUNT(*) AS v FROM job_assignments ja JOIN jobs j ON j.id = ja.job_id WHERE ja.cus_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL AND j.deadline < NOW()`, [userId]),
+        queryCusStaffStats({ userId }),
       ]);
       res.json({
         total_active:  parseInt(total.rows[0].v),
         cho_xac_nhan:  parseInt(choXacNhan.rows[0].v),
         sap_han:       parseInt(sapHan.rows[0].v),
         qua_han:       parseInt(quaHan.rows[0].v),
+        cus_stats:     cusStats.rows,
       });
     } else if (role === 'ops') {
-      const [total, choTqDoiLenh, choDoiLenh, sapHan, quaHan] = await Promise.all([
+      const [total, choTqDoiLenh, choDoiLenh, sapHan, quaHan, opsStats] = await Promise.all([
         db.query(`SELECT COUNT(*) AS v FROM job_assignments ja JOIN jobs j ON j.id = ja.job_id WHERE ja.ops_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL`, [userId]),
         db.query(`SELECT COUNT(*) AS v FROM job_assignments ja JOIN jobs j ON j.id = ja.job_id WHERE ja.ops_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL AND j.destination = 'hai_phong' AND j.service_type IN ('tk','both') AND COALESCE(ja.ops_done, FALSE) = FALSE`, [userId]),
         db.query(`SELECT COUNT(*) AS v FROM job_assignments ja JOIN jobs j ON j.id = ja.job_id WHERE ja.ops_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL AND j.destination = 'hai_phong' AND j.service_type IN ('truck','both') AND COALESCE(ja.ops_done, FALSE) = FALSE`, [userId]),
         db.query(`SELECT COUNT(*) AS v FROM job_assignments ja JOIN jobs j ON j.id = ja.job_id WHERE ja.ops_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '24 hours'`, [userId]),
         db.query(`SELECT COUNT(*) AS v FROM job_assignments ja JOIN jobs j ON j.id = ja.job_id WHERE ja.ops_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL AND j.deadline < NOW()`, [userId]),
+        queryOpsStaffStats({ userId }),
       ]);
       res.json({
         total_managing:  parseInt(total.rows[0].v),
@@ -187,6 +209,7 @@ router.get('/stats', requireAuth, async (req, res) => {
         cho_doi_lenh:    parseInt(choDoiLenh.rows[0].v),
         sap_han:         parseInt(sapHan.rows[0].v),
         qua_han:         parseInt(quaHan.rows[0].v),
+        ops_stats:       opsStats.rows,
       });
     } else {
       res.json({});
@@ -528,11 +551,22 @@ router.get('/filtered', requireAuth, async (req, res) => {
   let baseWhere = '';
   let extraWhere = '';
 
-  // staff_* filters: TP-only, scope by an explicit staff_id query param
+  // staff_* filters: TP can pass any staff_id; other LOG roles can only pass their own.
   if (typeof type === 'string' && type.startsWith('staff_')) {
-    if (role !== 'truong_phong_log') return res.status(403).json({ error: 'Không có quyền' });
     const staffId = parseInt(req.query.staff_id, 10);
     if (!staffId) return res.status(400).json({ error: 'staff_id required' });
+    if (role !== 'truong_phong_log') {
+      // Non-TP: enforce staff_id === own user.id, and the filter family must match the role
+      if (staffId !== userId) return res.status(403).json({ error: 'Không có quyền' });
+      const isCusFilter = type.startsWith('staff_cus_');
+      const isDdFilter  = type.startsWith('staff_dd_');
+      const isOpsFilter = type.startsWith('staff_ops_');
+      const allowed =
+        (CUS_ROLES.includes(role) && isCusFilter) ||
+        (role === 'dieu_do' && isDdFilter) ||
+        (role === 'ops' && isOpsFilter);
+      if (!allowed) return res.status(403).json({ error: 'Không có quyền' });
+    }
     let staffField;
     switch (type) {
       case 'staff_cus_pending_tk':
