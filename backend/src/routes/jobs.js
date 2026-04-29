@@ -131,7 +131,7 @@ function queryOpsStaffStats(scope) {
     SELECT u.id, u.name, u.role, u.code, u.avatar_color,
       COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL) AS managing,
       COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND j.service_type IN ('tk','both') AND j.destination = 'hai_phong' AND COALESCE(ja.ops_done, FALSE) = FALSE) AS tq_doi_lenh,
-      COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND j.service_type = 'truck' AND j.destination = 'hai_phong' AND COALESCE(ja.ops_done, FALSE) = FALSE) AS doi_lenh,
+      COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND j.service_type IN ('truck','both') AND j.destination = 'hai_phong' AND COALESCE(ja.ops_done, FALSE) = FALSE) AS doi_lenh,
       COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '4 hours' AND (jt.tk_status IS NULL OR jt.tk_status IN ('chua_truyen','dang_lam'))) AS near_deadline
     FROM users u
     LEFT JOIN job_assignments ja ON ja.ops_id = u.id
@@ -247,7 +247,7 @@ router.get('/stats', requireAuth, async (req, res) => {
       const [total, choTqDoiLenh, choDoiLenh, sapHan, quaHan, opsStats] = await Promise.all([
         db.query(`SELECT COUNT(*) AS v FROM job_assignments ja JOIN jobs j ON j.id = ja.job_id WHERE ja.ops_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL`, [userId]),
         db.query(`SELECT COUNT(*) AS v FROM job_assignments ja JOIN jobs j ON j.id = ja.job_id WHERE ja.ops_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL AND j.destination = 'hai_phong' AND j.service_type IN ('tk','both') AND COALESCE(ja.ops_done, FALSE) = FALSE`, [userId]),
-        db.query(`SELECT COUNT(*) AS v FROM job_assignments ja JOIN jobs j ON j.id = ja.job_id WHERE ja.ops_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL AND j.destination = 'hai_phong' AND j.service_type = 'truck' AND COALESCE(ja.ops_done, FALSE) = FALSE`, [userId]),
+        db.query(`SELECT COUNT(*) AS v FROM job_assignments ja JOIN jobs j ON j.id = ja.job_id WHERE ja.ops_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL AND j.destination = 'hai_phong' AND j.service_type IN ('truck','both') AND COALESCE(ja.ops_done, FALSE) = FALSE`, [userId]),
         db.query(`SELECT COUNT(*) AS v FROM job_assignments ja JOIN jobs j ON j.id = ja.job_id WHERE ja.ops_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '24 hours'`, [userId]),
         db.query(`SELECT COUNT(*) AS v FROM job_assignments ja JOIN jobs j ON j.id = ja.job_id WHERE ja.ops_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL AND j.deadline < NOW()`, [userId]),
         queryOpsStaffStats({ userId }),
@@ -688,7 +688,7 @@ router.get('/filtered', requireAuth, async (req, res) => {
         break;
       case 'staff_ops_doi_lenh':
         staffField = 'ops_id';
-        extraWhere = `AND j.service_type = 'truck' AND j.destination = 'hai_phong' AND COALESCE(ja.ops_done, FALSE) = FALSE`;
+        extraWhere = `AND j.service_type IN ('truck','both') AND j.destination = 'hai_phong' AND COALESCE(ja.ops_done, FALSE) = FALSE`;
         break;
       case 'staff_ops_near_deadline':
         staffField = 'ops_id';
@@ -780,7 +780,7 @@ router.get('/filtered', requireAuth, async (req, res) => {
       extraWhere = `AND j.destination = 'hai_phong' AND j.service_type IN ('tk','both') AND COALESCE(ja.ops_done, FALSE) = FALSE`;
       break;
     case 'ops_waiting_doilenh':
-      extraWhere = `AND j.destination = 'hai_phong' AND j.service_type = 'truck' AND COALESCE(ja.ops_done, FALSE) = FALSE`;
+      extraWhere = `AND j.destination = 'hai_phong' AND j.service_type IN ('truck','both') AND COALESCE(ja.ops_done, FALSE) = FALSE`;
       break;
     case 'ops_near_deadline': extraWhere = `AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '24 hours'`; break;
     case 'ops_overdue':       extraWhere = `AND j.deadline < NOW()`; break;
