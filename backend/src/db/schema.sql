@@ -422,6 +422,28 @@ CREATE TABLE IF NOT EXISTS notifications (
 CREATE INDEX IF NOT EXISTS idx_notifications_user_id ON notifications(user_id);
 CREATE INDEX IF NOT EXISTS idx_notifications_unread  ON notifications(user_id, read);
 
+-- Idempotent migration: align with spec (body→message, read→read_at)
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='notifications' AND column_name='body')
+     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='notifications' AND column_name='message') THEN
+    ALTER TABLE notifications RENAME COLUMN body TO message;
+  END IF;
+END $$;
+
+ALTER TABLE notifications ADD COLUMN IF NOT EXISTS read_at TIMESTAMPTZ;
+
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='notifications' AND column_name='read') THEN
+    UPDATE notifications SET read_at = created_at WHERE read = TRUE AND read_at IS NULL;
+    ALTER TABLE notifications DROP COLUMN read;
+  END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_notifications_inbox
+  ON notifications(user_id, read_at, created_at DESC);
+
 -- Điều Độ assignment: dieu_do staff assigned per truck/both job
 ALTER TABLE job_assignments ADD COLUMN IF NOT EXISTS dieu_do_id INTEGER REFERENCES users(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS idx_job_assignments_dieu_do_id ON job_assignments(dieu_do_id);

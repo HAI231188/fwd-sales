@@ -102,4 +102,9 @@ export const refreshJobSuggestion = (id, type) => api.post(`/jobs/${id}/refresh-
 export const markOpsDone = (id) => api.post(`/jobs/${id}/ops-done`, {});
 export const getJobOverview = (params) => api.get('/jobs/overview', { params });
 
+// Notifications
+export const getNotifications = () => api.get('/notifications');
+export const getUnreadCount = () => api.get('/notifications/unread-count');
+export const markNotificationsRead = (payload) => api.post('/notifications/mark-read', payload);
+
 export default api;

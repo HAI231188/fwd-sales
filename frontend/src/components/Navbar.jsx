@@ -1,5 +1,6 @@
 import { useAuth } from '../App';
 import { useNavigate } from 'react-router-dom';
+import NotificationBell from './NotificationBell';
 
 const LOG_ROLES = ['truong_phong_log', 'dieu_do', 'cus', 'cus1', 'cus2', 'cus3', 'ops'];
 
@@ -58,6 +59,7 @@ export default function Navbar() {
         {/* User info + actions */}
         {user && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <NotificationBell />
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <div className="avatar" style={{ background: user.avatar_color }}>
                 {user.code}

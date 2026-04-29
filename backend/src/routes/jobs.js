@@ -1040,9 +1040,9 @@ router.post('/', requireAuth, async (req, res) => {
         `, [job.id, cusSuggestion.user_id, req.user.id]);
         await client.query(`INSERT INTO job_tk (job_id, cus_id) VALUES ($1, $2)`, [job.id, cusSuggestion.user_id]);
         await client.query(`
-          INSERT INTO notifications (user_id, type, title, body, job_id)
-          VALUES ($1, 'job_assigned', 'Phân công TK mới', $2, $3)
-        `, [cusSuggestion.user_id, `Bạn được phân công TK cho ${customer_name} (AI tự động)`, job.id]);
+          INSERT INTO notifications (user_id, type, title, message, job_id)
+          VALUES ($1, 'ai_job_assigned', 'AI phân job mới', $2, $3)
+        `, [cusSuggestion.user_id, `Bạn được phân job ${job.job_code || `#${job.id}`} - ${customer_name}`, job.id]);
         await recordHistory(client, job.id, req.user.id, 'cus_assigned', null, cusSuggestion.user_name || String(cusSuggestion.user_id));
       } else {
         // Manual mode or AI failed — leave unassigned, appears in "Chờ phân CUS"
@@ -1062,9 +1062,9 @@ router.post('/', requireAuth, async (req, res) => {
         `, [job.id, opsSuggestion.user_id, req.user.id]);
       }
       await client.query(`
-        INSERT INTO notifications (user_id, type, title, body, job_id)
-        VALUES ($1, 'job_assigned', 'Phân công OPS mới', $2, $3)
-      `, [opsSuggestion.user_id, `Bạn được phân công OPS cho ${customer_name} tại Hải Phòng`, job.id]);
+        INSERT INTO notifications (user_id, type, title, message, job_id)
+        VALUES ($1, 'ai_job_assigned', 'AI phân job mới', $2, $3)
+      `, [opsSuggestion.user_id, `Bạn được phân job ${job.job_code || `#${job.id}`} - ${customer_name}`, job.id]);
       await recordHistory(client, job.id, req.user.id, 'ops_assigned', null, opsSuggestion.user_name || String(opsSuggestion.user_id));
     }
 
@@ -1080,9 +1080,9 @@ router.post('/', requireAuth, async (req, res) => {
         `, [job.id, ddUserId, req.user.id]);
       }
       await client.query(`
-        INSERT INTO notifications (user_id, type, title, body, job_id)
-        VALUES ($1, 'job_assigned', 'Phân công Điều Độ mới', $2, $3)
-      `, [ddUserId, `Bạn được phân công điều độ cho ${customer_name}`, job.id]);
+        INSERT INTO notifications (user_id, type, title, message, job_id)
+        VALUES ($1, 'ai_job_assigned', 'AI phân job mới', $2, $3)
+      `, [ddUserId, `Bạn được phân job ${job.job_code || `#${job.id}`} - ${customer_name}`, job.id]);
       await recordHistory(client, job.id, req.user.id, 'dieu_do_assigned', null, String(ddUserId));
     }
 
@@ -1100,6 +1100,21 @@ router.post('/', requireAuth, async (req, res) => {
     }
 
     await recordHistory(client, job.id, req.user.id, 'job_created', null, customer_name);
+
+    // Trigger G: notify all TP when a sales user creates a job
+    if (req.user.role === 'sales') {
+      const { rows: tps } = await client.query(`SELECT id FROM users WHERE role = 'truong_phong_log'`);
+      const { rows: salesU } = await client.query(`SELECT name FROM users WHERE id = $1`, [req.user.id]);
+      const salesName = salesU[0]?.name || 'Sales';
+      for (const tp of tps) {
+        await client.query(
+          `INSERT INTO notifications (user_id, type, title, message, job_id)
+           VALUES ($1, 'new_job_created', 'Job mới được tạo', $2, $3)`,
+          [tp.id, `${salesName} vừa tạo job ${job.job_code || `#${job.id}`} - ${customer_name}`, job.id]
+        );
+      }
+    }
+
     await client.query('COMMIT');
 
     // Log AI assignments after commit so FK is satisfied
@@ -1267,6 +1282,10 @@ router.post('/:id/assign', requireAuth, async (req, res) => {
       `, [req.params.id, cus_id || null, ops_id || null, req.user.id]);
     }
 
+    const { rows: jobMeta } = await client.query(`SELECT job_code, customer_name FROM jobs WHERE id = $1`, [req.params.id]);
+    const jc = jobMeta[0]?.job_code || `#${req.params.id}`;
+    const jn = jobMeta[0]?.customer_name || '';
+
     if (cus_id) {
       const { rows: tkEx } = await client.query(`SELECT id FROM job_tk WHERE job_id = $1`, [req.params.id]);
       if (tkEx[0]) {
@@ -1276,10 +1295,20 @@ router.post('/:id/assign', requireAuth, async (req, res) => {
       }
       const { rows: cu } = await client.query(`SELECT name FROM users WHERE id = $1`, [cus_id]);
       await recordHistory(client, req.params.id, req.user.id, 'cus_assigned', null, cu[0]?.name);
+      await client.query(
+        `INSERT INTO notifications (user_id, type, title, message, job_id)
+         VALUES ($1, 'manual_job_assigned', 'TP phân job mới', $2, $3)`,
+        [cus_id, `Trưởng phòng phân bạn job ${jc} - ${jn}`, req.params.id]
+      );
     }
     if (ops_id) {
       const { rows: ou } = await client.query(`SELECT name FROM users WHERE id = $1`, [ops_id]);
       await recordHistory(client, req.params.id, req.user.id, 'ops_assigned', null, ou[0]?.name);
+      await client.query(
+        `INSERT INTO notifications (user_id, type, title, message, job_id)
+         VALUES ($1, 'manual_job_assigned', 'TP phân job mới', $2, $3)`,
+        [ops_id, `Trưởng phòng phân bạn job ${jc} - ${jn}`, req.params.id]
+      );
     }
 
     await client.query('COMMIT');
@@ -1330,6 +1359,22 @@ router.patch('/:id/request-deadline', requireAuth, async (req, res) => {
       WHERE job_id = $3 AND cus_id = $4
     `, [reason, proposed_deadline, req.params.id, req.user.id]);
     await recordHistory(client, req.params.id, req.user.id, 'deadline_adj_requested', null, proposed_deadline);
+
+    // Trigger E: notify all TP that CUS proposed a new deadline
+    const { rows: meta } = await client.query(`SELECT job_code FROM jobs WHERE id = $1`, [req.params.id]);
+    const { rows: cusU } = await client.query(`SELECT name FROM users WHERE id = $1`, [req.user.id]);
+    const cusName = cusU[0]?.name || 'CUS';
+    const jc = meta[0]?.job_code || `#${req.params.id}`;
+    const dl = new Date(proposed_deadline).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+    const { rows: tps } = await client.query(`SELECT id FROM users WHERE role = 'truong_phong_log'`);
+    for (const tp of tps) {
+      await client.query(
+        `INSERT INTO notifications (user_id, type, title, message, job_id)
+         VALUES ($1, 'deadline_proposed', 'CUS đề xuất deadline mới', $2, $3)`,
+        [tp.id, `${cusName} đề xuất deadline cho job ${jc}: ${dl}`, req.params.id]
+      );
+    }
+
     await client.query('COMMIT');
     res.json({ ok: true });
   } catch (err) {
@@ -1375,9 +1420,9 @@ router.post('/:id/manual-assign', requireAuth, async (req, res) => {
         await client.query(`INSERT INTO job_tk (job_id, cus_id) VALUES ($1, $2)`, [req.params.id, cus_id]);
       }
       await client.query(`
-        INSERT INTO notifications (user_id, type, title, body, job_id)
-        VALUES ($1, 'job_assigned', 'Phân công TK mới', $2, $3)
-      `, [cus_id, `Bạn được phân công TK cho ${job[0].customer_name} (TP phân công)`, req.params.id]);
+        INSERT INTO notifications (user_id, type, title, message, job_id)
+        VALUES ($1, 'manual_job_assigned', 'TP phân job mới', $2, $3)
+      `, [cus_id, `Trưởng phòng phân bạn job ${job[0].job_code || `#${req.params.id}`} - ${job[0].customer_name}`, req.params.id]);
       await client.query(`
         INSERT INTO ai_assignment_logs (job_id, assigned_user_id, role, reason, ai_cost_usd, fallback_used)
         VALUES ($1, $2, 'cus', 'Manual assignment by TP', 0, true)
@@ -1387,9 +1432,9 @@ router.post('/:id/manual-assign', requireAuth, async (req, res) => {
 
     if (ops_id) {
       await client.query(`
-        INSERT INTO notifications (user_id, type, title, body, job_id)
-        VALUES ($1, 'job_assigned', 'Phân công OPS mới', $2, $3)
-      `, [ops_id, `Bạn được phân công OPS cho ${job[0].customer_name} (TP phân công)`, req.params.id]);
+        INSERT INTO notifications (user_id, type, title, message, job_id)
+        VALUES ($1, 'manual_job_assigned', 'TP phân job mới', $2, $3)
+      `, [ops_id, `Trưởng phòng phân bạn job ${job[0].job_code || `#${req.params.id}`} - ${job[0].customer_name}`, req.params.id]);
       await client.query(`
         INSERT INTO ai_assignment_logs (job_id, assigned_user_id, role, reason, ai_cost_usd, fallback_used)
         VALUES ($1, $2, 'ops', 'Manual assignment by TP', 0, true)
@@ -1502,11 +1547,11 @@ router.patch('/deadline-requests/:rid/review', requireAuth, async (req, res) => 
     }
 
     if (notifyUserId) {
-      const body = action === 'approved'
+      const msg = action === 'approved'
         ? 'Trưởng phòng đã duyệt yêu cầu điều chỉnh deadline'
         : 'Trưởng phòng đã từ chối yêu cầu điều chỉnh deadline. Tiếp tục theo deadline ban đầu.';
-      await db.query(`INSERT INTO notifications (user_id, type, title, body, job_id) VALUES ($1,'deadline_reviewed','Deadline được xem xét',$2,$3)`,
-        [notifyUserId, body, drJobId]);
+      await db.query(`INSERT INTO notifications (user_id, type, title, message, job_id) VALUES ($1,'deadline_reviewed','Deadline được xem xét',$2,$3)`,
+        [notifyUserId, msg, drJobId]);
     }
 
     res.json({ ok: true });
@@ -1538,6 +1583,26 @@ router.patch('/delete-requests/:rid/review', requireAuth, async (req, res) => {
       );
       await recordHistory(client, dr[0].job_id, req.user.id, 'deleted', null, 'approved_delete_request');
     }
+
+    // Trigger G: notify the original requester of the decision
+    if (dr[0].requested_by) {
+      const { rows: meta } = await client.query(`SELECT job_code FROM jobs WHERE id = $1`, [dr[0].job_id]);
+      const jc = meta[0]?.job_code || `#${dr[0].job_id}`;
+      const isApproved = action === 'approved';
+      await client.query(
+        `INSERT INTO notifications (user_id, type, title, message, job_id)
+         VALUES ($1, 'delete_decision', $2, $3, $4)`,
+        [
+          dr[0].requested_by,
+          isApproved ? 'Yêu cầu xóa được duyệt' : 'Yêu cầu xóa bị từ chối',
+          isApproved
+            ? `Trưởng phòng đã duyệt xóa job ${jc}`
+            : `Trưởng phòng đã từ chối xóa job ${jc}`,
+          dr[0].job_id,
+        ]
+      );
+    }
+
     await client.query('COMMIT');
     res.json({ ok: true });
   } catch (err) {
@@ -1767,6 +1832,22 @@ router.post('/:id/delete-request', requireAuth, async (req, res) => {
       [req.params.id, req.user.id, reason || null]
     );
     await recordHistory(client, req.params.id, req.user.id, 'delete_requested', null, String(req.user.id));
+
+    // Trigger F: notify all TP that someone requested deletion
+    const { rows: meta } = await client.query(`SELECT job_code, customer_name FROM jobs WHERE id = $1`, [req.params.id]);
+    const { rows: requesterU } = await client.query(`SELECT name FROM users WHERE id = $1`, [req.user.id]);
+    const requesterName = requesterU[0]?.name || 'Người dùng';
+    const jc = meta[0]?.job_code || `#${req.params.id}`;
+    const reasonText = reason || 'Không có lý do';
+    const { rows: tps } = await client.query(`SELECT id FROM users WHERE role = 'truong_phong_log'`);
+    for (const tp of tps) {
+      await client.query(
+        `INSERT INTO notifications (user_id, type, title, message, job_id)
+         VALUES ($1, 'delete_request', 'Yêu cầu xóa job', $2, $3)`,
+        [tp.id, `${requesterName} yêu cầu xóa job ${jc}. Lý do: ${reasonText}`, req.params.id]
+      );
+    }
+
     await client.query('COMMIT');
     res.status(201).json({ ok: true });
   } catch (err) {
