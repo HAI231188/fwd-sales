@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getFilteredJobs } from '../api';
 import JobDetailModal from './JobDetailModal';
+import { useModalZIndex } from '../hooks/useModalZIndex';
 
 const FILTER_TITLES = {
   // TP
@@ -206,6 +207,7 @@ const TD = ({ children, style }) => (
 
 export default function JobListModal({ filterType, staffId, staffName, onClose }) {
   const [detailJobId, setDetailJobId] = useState(null);
+  const zIndex = useModalZIndex();
 
   const { data: jobs = [], isLoading } = useQuery({
     queryKey: ['filteredJobs', filterType, staffId || null],
@@ -218,7 +220,7 @@ export default function JobListModal({ filterType, staffId, staffName, onClose }
 
   return (
     <>
-      <div className="modal-overlay" style={{ zIndex: 1050 }}
+      <div className="modal-overlay" style={{ zIndex }}
         onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
         <div className="modal modal-lg" style={{ maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}>
           <div className="modal-header">

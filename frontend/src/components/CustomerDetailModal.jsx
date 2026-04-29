@@ -4,6 +4,7 @@ import { format, differenceInDays } from 'date-fns';
 import { getPipelineDetail, updateQuote, quickAddCustomer, addInteractionUpdate, updateCustomer, markUpdateComplete, undoUpdateComplete, markCustomerFollowUpComplete } from '../api';
 import QuoteForm, { EMPTY_QUOTE } from './QuoteForm';
 import toast from 'react-hot-toast';
+import { useModalZIndex } from '../hooks/useModalZIndex';
 
 const STAGE_INFO = {
   new:       { label: 'Khách mới',   icon: '🆕', color: '#3b82f6', bg: '#eff6ff', border: '#bfdbfe' },
@@ -721,6 +722,7 @@ function InteractionFollowUpWidget({ c, pipelineId }) {
 }
 
 export default function CustomerDetailModal({ pipelineId, onClose }) {
+  const zIndex = useModalZIndex();
   const [editingQuoteId, setEditingQuoteId] = useState(null);
   const [showTodayForm, setShowTodayForm] = useState(false);
   const [updatingCustomerId, setUpdatingCustomerId] = useState(null);
@@ -745,7 +747,7 @@ export default function CustomerDetailModal({ pipelineId, onClose }) {
   return (
     <div
       style={{
-        position: 'fixed', inset: 0, zIndex: 1000,
+        position: 'fixed', inset: 0, zIndex,
         background: 'rgba(0,0,0,0.5)',
         display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
         padding: '32px 16px', overflowY: 'auto',

@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { getDrilldown } from '../api';
 import { format } from 'date-fns';
 import CustomerDetailModal from './CustomerDetailModal';
+import { useModalZIndex } from '../hooks/useModalZIndex';
 
 const MODE_ICON = { sea: '🚢', air: '✈️', road: '🚛' };
 const MODE_CLASS = { sea: 'mode-sea', air: 'mode-air', road: 'mode-road' };
@@ -24,9 +25,10 @@ function parseOptions(price, carrier) {
 // Full quote detail modal shown when lead clicks a quote row
 function QuoteDetailModal({ q, onClose }) {
   const options = parseOptions(q.price, q.carrier).filter(o => o.carrier || o.price || o.cost);
+  const zIndex = useModalZIndex();
 
   return (
-    <div className="modal-overlay" style={{ zIndex: 200 }} onClick={e => e.target === e.currentTarget && onClose()}>
+    <div className="modal-overlay" style={{ zIndex }} onClick={e => e.target === e.currentTarget && onClose()}>
       <div className="modal modal-lg">
         <div className="modal-header">
           <div>
@@ -290,6 +292,7 @@ function SectionHeader({ label, count, color, bg, border }) {
 }
 
 export default function DrilldownModal({ type, dateParams, userId, onClose }) {
+  const zIndex = useModalZIndex();
   const config = DRILL_CONFIG[type] || {};
   const [selectedQuote, setSelectedQuote] = useState(null);
   const [filterType, setFilterType] = useState('');
@@ -336,7 +339,7 @@ export default function DrilldownModal({ type, dateParams, userId, onClose }) {
 
   return (
     <>
-      <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="modal-overlay" style={{ zIndex }} onClick={e => e.target === e.currentTarget && onClose()}>
         <div className="modal modal-lg">
           <div className="modal-header">
             <h3>{config.title}</h3>

@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import { quickAddCustomer } from '../api';
 import QuoteForm, { EMPTY_QUOTE } from './QuoteForm';
+import { useModalZIndex } from '../hooks/useModalZIndex';
 
 const SOURCE_OPTIONS = [
   { value: '', label: '— Chọn nguồn —' },
@@ -43,6 +44,7 @@ function serializeQuotes(quotes) {
 }
 
 export default function AddCustomerModal({ onClose }) {
+  const zIndex = useModalZIndex();
   const qc = useQueryClient();
   const [form, setForm] = useState({ ...EMPTY });
   const [quotes, setQuotes] = useState([]);
@@ -75,7 +77,7 @@ export default function AddCustomerModal({ onClose }) {
     return (
       <div
         style={{
-          position: 'fixed', inset: 0, zIndex: 1100,
+          position: 'fixed', inset: 0, zIndex,
           background: 'rgba(0,0,0,0.55)',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           padding: '32px 16px',
@@ -115,7 +117,7 @@ export default function AddCustomerModal({ onClose }) {
   return (
     <div
       style={{
-        position: 'fixed', inset: 0, zIndex: 1100,
+        position: 'fixed', inset: 0, zIndex,
         background: 'rgba(0,0,0,0.55)',
         display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
         padding: '32px 16px', overflowY: 'auto',

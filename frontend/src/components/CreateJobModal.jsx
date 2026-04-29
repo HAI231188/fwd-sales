@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getLogStaff, searchJobCustomers } from '../api';
+import { useModalZIndex } from '../hooks/useModalZIndex';
 
 const CONT_TYPES = ['20DC','40DC','40HC','45HC','20RF','40RF'];
 const OTHER_SVC_KEYS = ['ktcl','kiem_dich','hun_trung','co','khac'];
@@ -16,6 +17,7 @@ const INIT_FORM = {
 };
 
 export default function CreateJobModal({ onClose, onCreated }) {
+  const zIndex = useModalZIndex();
   const { data: staff = [] } = useQuery({ queryKey: ['logStaff'], queryFn: getLogStaff });
   const salesStaff = staff.filter(s => s.role === 'sales' || s.role === 'lead');
 
@@ -116,7 +118,7 @@ export default function CreateJobModal({ onClose, onCreated }) {
   }
 
   return (
-    <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+    <div className="modal-overlay" style={{ zIndex }} onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="modal modal-lg" style={{ maxHeight: '92vh' }}>
         <div className="modal-header">
           <h3>Tạo Job Mới</h3>

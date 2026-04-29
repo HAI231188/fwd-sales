@@ -9,6 +9,7 @@ import FilteredTable from '../components/FilteredTable';
 import DateRangeFilter from '../components/DateRangeFilter';
 import TP_OverviewSection from '../components/TP_OverviewSection';
 import StaffSection, { CUS_COLS, DD_COLS, OPS_COLS } from '../components/StaffSection';
+import { useModalZIndex } from '../hooks/useModalZIndex';
 import {
   getJobStats, getJobs, getDeadlineRequests, getLogStaff,
   assignJob, setJobDeadline, reviewDeadlineRequest, createJob,
@@ -180,13 +181,14 @@ function InlineDeadline({ value, onSave }) {
 
 // ─── Assign Modal ─────────────────────────────────────────────────────────────
 function AssignModal({ job, staff, onClose, onSave }) {
+  const zIndex = useModalZIndex();
   const cusStaff = staff.filter(s => ['cus','cus1','cus2','cus3'].includes(s.role));
   const opsStaff = staff.filter(s => s.role === 'ops');
   const [cusId, setCusId] = useState(String(job.cus_id || ''));
   const [opsId, setOpsId] = useState(String(job.ops_id || ''));
 
   return (
-    <div className="modal-overlay" style={{ zIndex: 1100 }} onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+    <div className="modal-overlay" style={{ zIndex }} onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="modal" style={{ maxWidth: 420 }}>
         <div className="modal-header">
           <h3>Phân công — {job.job_code || `#${job.id}`}</h3>
@@ -227,6 +229,7 @@ function AssignModal({ job, staff, onClose, onSave }) {
 
 // ─── Deadline Modal ───────────────────────────────────────────────────────────
 function DeadlineModal({ data, onClose, onReview, onSetDeadline, onReviewDelete }) {
+  const zIndex = useModalZIndex();
   const [activeTab, setActiveTab] = useState('cus_confirm');
   const [overrides, setOverrides] = useState({});
   const [detailJobId, setDetailJobId] = useState(null);
@@ -243,7 +246,7 @@ function DeadlineModal({ data, onClose, onReview, onSetDeadline, onReviewDelete 
 
   return (
     <>
-      <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="modal-overlay" style={{ zIndex }} onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
         <div className="modal modal-lg" style={{ maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}>
           <div className="modal-header">
             <h3>Chờ xác nhận</h3>

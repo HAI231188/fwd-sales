@@ -5,6 +5,7 @@ import {
   manualAssignJob, getLogStaff, refreshJobSuggestion,
 } from '../api';
 import { useAuth } from '../App';
+import { useModalZIndex } from '../hooks/useModalZIndex';
 
 const MODE_LABEL = { auto: 'Tự động', manual: 'Bán tự động' };
 const SVC_LABEL = { tk: 'TK', truck: 'Xe', both: 'TK+Xe' };
@@ -18,6 +19,7 @@ function fmtDt(val) {
 export default function AssignmentModal({ initialTab = 'cus', onClose }) {
   const qc = useQueryClient();
   const { user } = useAuth();
+  const zIndex = useModalZIndex();
   const [activeTab, setActiveTab] = useState(initialTab);
   const [manualSelections, setManualSelections] = useState({});
   const [refreshedSuggestions, setRefreshedSuggestions] = useState({});
@@ -70,7 +72,7 @@ export default function AssignmentModal({ initialTab = 'cus', onClose }) {
   }
 
   return (
-    <div className="modal-overlay" style={{ zIndex: 1100 }}
+    <div className="modal-overlay" style={{ zIndex }}
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="modal modal-lg" style={{ maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}>
         <div className="modal-header">

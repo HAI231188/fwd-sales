@@ -7,6 +7,7 @@ import JobListModal from '../components/JobListModal';
 import FilteredTable from '../components/FilteredTable';
 import DateRangeFilter from '../components/DateRangeFilter';
 import StaffSection, { CUS_COLS } from '../components/StaffSection';
+import { useModalZIndex } from '../hooks/useModalZIndex';
 import {
   getJobStats, getJobs, updateJobTk, updateJob, confirmJob, requestDeadline, completeJob,
   requestJobDelete, createJob,
@@ -226,10 +227,11 @@ const CUS_FILTER_COLS = [
 ];
 
 function DeadlineRequestModal({ job, onClose, onSubmit }) {
+  const zIndex = useModalZIndex();
   const [proposed, setProposed] = useState('');
   const [reason, setReason] = useState('');
   return (
-    <div className="modal-overlay" style={{ zIndex: 1100 }} onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+    <div className="modal-overlay" style={{ zIndex }} onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="modal" style={{ maxWidth: 480 }}>
         <div className="modal-header">
           <h3>Yêu cầu điều chỉnh deadline</h3>

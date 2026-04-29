@@ -4,6 +4,7 @@ import toast from 'react-hot-toast';
 import { updateQuote, deleteQuote } from '../api';
 import QuoteForm, { EMPTY_QUOTE } from './QuoteForm';
 import CustomerDetailModal from './CustomerDetailModal';
+import { useModalZIndex } from '../hooks/useModalZIndex';
 
 const MODE_ICON = { sea: '🚢', air: '✈️', road: '🚛' };
 const MODE_CLASS = { sea: 'mode-sea', air: 'mode-air', road: 'mode-road' };
@@ -147,6 +148,7 @@ function QuoteCard({ q, canEdit, onEdit, onDelete }) {
 
 // Edit modal — wraps QuoteForm for an existing quote
 function EditQuoteModal({ quote, onClose, onSaved }) {
+  const zIndex = useModalZIndex();
   const [formData, setFormData] = useState({
     ...quote,
     options: parseOptions(quote.price, quote.carrier),
@@ -167,7 +169,7 @@ function EditQuoteModal({ quote, onClose, onSaved }) {
   });
 
   return (
-    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+    <div className="modal-overlay" style={{ zIndex }} onClick={e => e.target === e.currentTarget && onClose()}>
       <div className="modal modal-lg" style={{ maxHeight: '92vh' }}>
         <div className="modal-header">
           <h3>✏️ Chỉnh sửa báo giá</h3>

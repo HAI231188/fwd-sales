@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getJob, updateJobTk, updateJobTruck, updateJob, deleteJob, requestJobDelete, getLogStaff } from '../api';
+import { useModalZIndex } from '../hooks/useModalZIndex';
 import { useAuth } from '../App';
 
 const TK_FLOW_OPTIONS = [
@@ -264,6 +265,7 @@ function FRow({ label, children }) {
 export default function JobDetailModal({ jobId, onClose }) {
   const { user } = useAuth();
   const qc = useQueryClient();
+  const zIndex = useModalZIndex();
 
   const canEditTk = ['cus','cus1','cus2','cus3'].includes(user?.role);
   const canEditStatus = user?.role === 'ops';
@@ -364,7 +366,7 @@ export default function JobDetailModal({ jobId, onClose }) {
   if (!jobId) return null;
 
   return (
-    <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+    <div className="modal-overlay" style={{ zIndex }} onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="modal modal-xl" style={{ maxHeight: '92vh' }}>
         <div className="modal-header">
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
