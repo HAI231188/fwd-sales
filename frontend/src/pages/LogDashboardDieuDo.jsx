@@ -133,7 +133,11 @@ export default function LogDashboardDieuDo() {
   });
   const completeMut = useMutation({
     mutationFn: id => completeJobTruck(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['jobs', 'jobStats'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['jobs'] });
+      qc.invalidateQueries({ queryKey: ['jobStats'] });
+    },
+    onError: (err) => alert(err?.error || err?.message || 'Không thể hoàn thành. Thử lại sau.'),
   });
   const deleteReqMut = useMutation({
     mutationFn: ({ id, reason }) => requestJobDelete(id, reason),
@@ -144,8 +148,26 @@ export default function LogDashboardDieuDo() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['jobs', 'jobStats'] }),
   });
 
+  function getMissingFieldsTruck(j) {
+    const missing = [];
+    if (!j.transport_name || !String(j.transport_name).trim()) missing.push('vận tải');
+    if (!j.vehicle_number || !String(j.vehicle_number).trim()) missing.push('số xe');
+    if (!j.planned_datetime) missing.push('giờ giao');
+    if (!j.truck_delivery_location || !String(j.truck_delivery_location).trim()) missing.push('địa điểm giao');
+    if (j.cost === null || j.cost === undefined || Number(j.cost) <= 0) missing.push('cước phí');
+    return missing;
+  }
+  // 4-state HT logic — priority: completed > missing > waiting-ops > ready
+  function htState(j) {
+    if (j.truck_completed_at) return { kind: 'done' };
+    const missing = getMissingFieldsTruck(j);
+    if (missing.length) return { kind: 'missing', missing };
+    const needsOps = j.destination === 'hai_phong' && (j.service_type === 'truck' || j.service_type === 'both');
+    if (needsOps && !j.ops_done) return { kind: 'wait_ops' };
+    return { kind: 'ready' };
+  }
   function canComplete(j) {
-    return !!(j.transport_name && j.vehicle_number && j.truck_delivery_location && j.cost);
+    return htState(j).kind === 'ready';
   }
 
   return (
@@ -309,16 +331,46 @@ export default function LogDashboardDieuDo() {
                           onSave={v => truckMut.mutate({ jobId: j.id, data: { cost: v ? Number(v) : null } })} />
                       </td>
                       <td style={{ ...cs, textAlign: 'center' }}>
-                        {tab === 'pending' ? (
-                          <button className="btn btn-primary btn-sm" style={{ padding: '3px 10px', fontSize: 11 }}
-                            disabled={!canComplete(j)}
-                            title={canComplete(j) ? 'Hoàn thành' : 'Cần: vận tải, số xe, địa điểm giao, cước'}
-                            onClick={() => canComplete(j) && completeMut.mutate(j.id)}>
-                            HT
-                          </button>
-                        ) : (
+                        {tab === 'completed' ? (
                           <span style={{ color: 'var(--primary)', fontSize: 16 }}>✓</span>
-                        )}
+                        ) : (() => {
+                          const st = htState(j);
+                          if (st.kind === 'done') {
+                            return (
+                              <span title="Đã hoàn thành phần Điều Độ"
+                                style={{ fontSize: 11, color: 'var(--primary)', fontWeight: 600,
+                                         background: 'rgba(34,197,94,0.12)', padding: '3px 6px', borderRadius: 6, whiteSpace: 'nowrap' }}>
+                                ✓ Xong
+                              </span>
+                            );
+                          }
+                          if (st.kind === 'missing') {
+                            return (
+                              <button className="btn btn-ghost btn-sm" disabled
+                                title={`Vui lòng nhập đủ thông tin: ${st.missing.join(', ')}`}
+                                style={{ padding: '3px 10px', fontSize: 11, color: 'var(--danger)', borderColor: 'var(--danger)' }}>
+                                Thiếu: {st.missing[0]}{st.missing.length > 1 ? '…' : ''}
+                              </button>
+                            );
+                          }
+                          if (st.kind === 'wait_ops') {
+                            return (
+                              <button className="btn btn-ghost btn-sm" disabled
+                                title="Chờ OPS xác nhận đã đổi lệnh xong"
+                                style={{ padding: '3px 10px', fontSize: 11, color: 'var(--warning)', borderColor: 'var(--warning)' }}>
+                                Chờ OPS đổi lệnh
+                              </button>
+                            );
+                          }
+                          return (
+                            <button className="btn btn-primary btn-sm"
+                              title="Hoàn thành phần Điều Độ"
+                              style={{ padding: '3px 10px', fontSize: 11 }}
+                              onClick={() => completeMut.mutate(j.id)}>
+                              HT
+                            </button>
+                          );
+                        })()}
                       </td>
                       <td style={{ padding: '8px 6px', minWidth: 120 }}>
                         <InlineInput value={j.truck_notes}

@@ -211,7 +211,7 @@ router.get('/stats', requireAuth, async (req, res) => {
         db.query(`SELECT COUNT(*) AS v ${BASE} AND jt.transport_name IS NOT NULL`, [userId]),
         db.query(`SELECT COUNT(*) AS v ${BASE} AND jt.planned_datetime BETWEEN NOW() AND NOW() + INTERVAL '24 hours' AND (jt.transport_name IS NULL OR jt.transport_name = '')`, [userId]),
         db.query(`SELECT COUNT(*) AS v ${BASE} AND jt.transport_name IS NOT NULL AND j.destination = 'hai_phong' AND COALESCE(ja.ops_done, FALSE) = FALSE`, [userId]),
-        db.query(`SELECT COUNT(*) AS v ${BASE} AND jt.planned_datetime < NOW()`, [userId]),
+        db.query(`SELECT COUNT(*) AS v ${BASE} AND jt.planned_datetime < NOW() AND jt.completed_at IS NULL`, [userId]),
         db.query(`SELECT COUNT(*) AS v ${BASE} AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '48 hours'`, [userId]),
         queryDieuDoStaffStats({ userId }),
       ]);
@@ -773,7 +773,7 @@ router.get('/filtered', requireAuth, async (req, res) => {
     case 'dd_chua_kh_xe':    extraWhere = `AND jtr.planned_datetime IS NULL`; break;
     case 'dd_canh_bao_chua_van_tai':   extraWhere = `AND jtr.planned_datetime BETWEEN NOW() AND NOW() + INTERVAL '24 hours' AND (jtr.transport_name IS NULL OR jtr.transport_name = '')`; break;
     case 'dd_canh_bao_chua_doi_lenh':  extraWhere = `AND jtr.transport_name IS NOT NULL AND j.destination = 'hai_phong' AND COALESCE(ja.ops_done, FALSE) = FALSE`; break;
-    case 'dd_canh_bao_chua_hoan_thanh':extraWhere = `AND jtr.planned_datetime < NOW()`; break;
+    case 'dd_canh_bao_chua_hoan_thanh':extraWhere = `AND jtr.planned_datetime < NOW() AND jtr.completed_at IS NULL`; break;
     case 'dd_sap_han':       extraWhere = `AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '48 hours'`; break;
     // OPS filters — must match the corresponding stat-card WHERE clauses exactly (CLAUDE.md L5)
     case 'ops_waiting_tq_doilenh':
@@ -1740,22 +1740,54 @@ router.patch('/:id/truck/complete', requireAuth, async (req, res) => {
   const client = await db.pool.connect();
   try {
     await client.query('BEGIN');
-    const { rows: ja } = await client.query(
-      `SELECT dieu_do_id FROM job_assignments WHERE job_id = $1`,
-      [req.params.id]
-    );
-    if (!ja[0] || ja[0].dieu_do_id !== req.user.id) {
+    const { rows } = await client.query(`
+      SELECT j.id, j.service_type, j.destination,
+             ja.dieu_do_id, COALESCE(ja.ops_done, FALSE) AS ops_done,
+             jtr.transport_name, jtr.vehicle_number, jtr.planned_datetime,
+             jtr.delivery_location, jtr.cost, jtr.completed_at
+      FROM jobs j
+      LEFT JOIN job_assignments ja ON ja.job_id = j.id
+      LEFT JOIN job_truck jtr ON jtr.job_id = j.id
+      WHERE j.id = $1 AND j.deleted_at IS NULL
+    `, [req.params.id]);
+    if (!rows[0]) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Không tìm thấy job' }); }
+    const j = rows[0];
+
+    if (j.dieu_do_id !== req.user.id) {
       await client.query('ROLLBACK');
       return res.status(403).json({ error: 'Không có quyền' });
     }
-    const { rows } = await client.query(
-      `UPDATE job_truck SET completed_at = NOW() WHERE job_id = $1 AND completed_at IS NULL RETURNING *`,
-      [req.params.id]
-    );
-    await recordHistory(client, req.params.id, req.user.id, 'truck_completed', null, 'completed');
+
+    const missing = [];
+    if (!j.transport_name || !String(j.transport_name).trim()) missing.push('vận tải');
+    if (!j.vehicle_number || !String(j.vehicle_number).trim()) missing.push('số xe');
+    if (!j.planned_datetime) missing.push('giờ giao');
+    if (!j.delivery_location || !String(j.delivery_location).trim()) missing.push('địa điểm giao');
+    if (j.cost === null || j.cost === undefined || Number(j.cost) <= 0) missing.push('cước phí');
+    if (missing.length) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: `Vui lòng nhập đủ thông tin: ${missing.join(', ')}` });
+    }
+
+    if (j.destination === 'hai_phong'
+        && (j.service_type === 'truck' || j.service_type === 'both')
+        && !j.ops_done) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'OPS chưa đổi lệnh xong' });
+    }
+
+    let truckRow = null;
+    if (!j.completed_at) {
+      const { rows: upd } = await client.query(
+        `UPDATE job_truck SET completed_at = NOW() WHERE job_id = $1 AND completed_at IS NULL RETURNING *`,
+        [req.params.id]
+      );
+      truckRow = upd[0] || null;
+      await recordHistory(client, req.params.id, req.user.id, 'truck_completed', null, 'DieuDo hoàn thành phần truck');
+    }
     const completed = await checkAndCompleteJob(client, req.params.id, req.user.id);
     await client.query('COMMIT');
-    res.json({ ok: true, truck: rows[0] || {}, job_completed: completed });
+    res.json({ ok: true, truck: truckRow || {}, job_completed: completed });
   } catch (err) {
     await client.query('ROLLBACK');
     res.status(500).json({ error: err.message });
