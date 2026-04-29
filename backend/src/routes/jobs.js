@@ -130,7 +130,7 @@ function queryOpsStaffStats(scope) {
   return db.query(`
     SELECT u.id, u.name, u.role, u.code, u.avatar_color,
       COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL) AS managing,
-      COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND j.service_type = 'both' AND j.destination = 'hai_phong' AND COALESCE(ja.ops_done, FALSE) = FALSE) AS tq_doi_lenh,
+      COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND j.service_type IN ('tk','both') AND j.destination = 'hai_phong' AND COALESCE(ja.ops_done, FALSE) = FALSE) AS tq_doi_lenh,
       COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND j.service_type = 'truck' AND j.destination = 'hai_phong' AND COALESCE(ja.ops_done, FALSE) = FALSE) AS doi_lenh,
       COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '4 hours' AND (jt.tk_status IS NULL OR jt.tk_status IN ('chua_truyen','dang_lam'))) AS near_deadline
     FROM users u
@@ -247,7 +247,7 @@ router.get('/stats', requireAuth, async (req, res) => {
       const [total, choTqDoiLenh, choDoiLenh, sapHan, quaHan, opsStats] = await Promise.all([
         db.query(`SELECT COUNT(*) AS v FROM job_assignments ja JOIN jobs j ON j.id = ja.job_id WHERE ja.ops_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL`, [userId]),
         db.query(`SELECT COUNT(*) AS v FROM job_assignments ja JOIN jobs j ON j.id = ja.job_id WHERE ja.ops_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL AND j.destination = 'hai_phong' AND j.service_type IN ('tk','both') AND COALESCE(ja.ops_done, FALSE) = FALSE`, [userId]),
-        db.query(`SELECT COUNT(*) AS v FROM job_assignments ja JOIN jobs j ON j.id = ja.job_id WHERE ja.ops_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL AND j.destination = 'hai_phong' AND j.service_type IN ('truck','both') AND COALESCE(ja.ops_done, FALSE) = FALSE`, [userId]),
+        db.query(`SELECT COUNT(*) AS v FROM job_assignments ja JOIN jobs j ON j.id = ja.job_id WHERE ja.ops_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL AND j.destination = 'hai_phong' AND j.service_type = 'truck' AND COALESCE(ja.ops_done, FALSE) = FALSE`, [userId]),
         db.query(`SELECT COUNT(*) AS v FROM job_assignments ja JOIN jobs j ON j.id = ja.job_id WHERE ja.ops_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '24 hours'`, [userId]),
         db.query(`SELECT COUNT(*) AS v FROM job_assignments ja JOIN jobs j ON j.id = ja.job_id WHERE ja.ops_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL AND j.deadline < NOW()`, [userId]),
         queryOpsStaffStats({ userId }),
@@ -684,7 +684,7 @@ router.get('/filtered', requireAuth, async (req, res) => {
         break;
       case 'staff_ops_tq_doi_lenh':
         staffField = 'ops_id';
-        extraWhere = `AND j.service_type = 'both' AND j.destination = 'hai_phong' AND COALESCE(ja.ops_done, FALSE) = FALSE`;
+        extraWhere = `AND j.service_type IN ('tk','both') AND j.destination = 'hai_phong' AND COALESCE(ja.ops_done, FALSE) = FALSE`;
         break;
       case 'staff_ops_doi_lenh':
         staffField = 'ops_id';
@@ -775,10 +775,12 @@ router.get('/filtered', requireAuth, async (req, res) => {
     case 'dd_canh_bao_chua_doi_lenh':  extraWhere = `AND jtr.transport_name IS NOT NULL AND j.destination = 'hai_phong' AND COALESCE(ja.ops_done, FALSE) = FALSE`; break;
     case 'dd_canh_bao_chua_hoan_thanh':extraWhere = `AND jtr.planned_datetime < NOW()`; break;
     case 'dd_sap_han':       extraWhere = `AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '48 hours'`; break;
-    // OPS filters
-    case 'ops_waiting_tq_doilenh': extraWhere = `AND jt.tk_status = 'dang_lam'`; break;
+    // OPS filters — must match the corresponding stat-card WHERE clauses exactly (CLAUDE.md L5)
+    case 'ops_waiting_tq_doilenh':
+      extraWhere = `AND j.destination = 'hai_phong' AND j.service_type IN ('tk','both') AND COALESCE(ja.ops_done, FALSE) = FALSE`;
+      break;
     case 'ops_waiting_doilenh':
-      extraWhere = `AND EXISTS (SELECT 1 FROM job_ops_task jot WHERE jot.job_id = j.id AND jot.ops_id = $1 AND jot.completed = FALSE)`;
+      extraWhere = `AND j.destination = 'hai_phong' AND j.service_type = 'truck' AND COALESCE(ja.ops_done, FALSE) = FALSE`;
       break;
     case 'ops_near_deadline': extraWhere = `AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '24 hours'`; break;
     case 'ops_overdue':       extraWhere = `AND j.deadline < NOW()`; break;

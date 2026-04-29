@@ -180,12 +180,12 @@ export default function LogDashboardOps() {
   );
   const dlJobs = pendingJobs.filter(j =>
     j.destination === 'hai_phong' &&
-    (j.service_type === 'truck' || j.service_type === 'both') &&
+    j.service_type === 'truck' &&
     !j.ops_done
   );
   const todayJobs = pendingJobs.filter(j =>
     j.destination === 'hai_phong' &&
-    (j.service_type === 'truck' || j.service_type === 'both') &&
+    j.service_type === 'truck' &&
     j.planned_datetime &&
     localDate(new Date(j.planned_datetime)) === tomorrow
   );
