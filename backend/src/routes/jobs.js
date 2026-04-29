@@ -162,7 +162,7 @@ router.get('/stats', requireAuth, async (req, res) => {
           LEFT JOIN job_assignments ja ON ja.job_id = j.id
           WHERE j.status = 'pending' AND j.deleted_at IS NULL
             AND j.destination = 'hai_phong'
-            AND j.service_type IN ('truck','both')
+            AND j.service_type IN ('tk','truck','both')
             AND (ja.ops_id IS NULL OR ja.id IS NULL)`),
         db.query(`
           SELECT COUNT(*) AS v FROM job_assignments ja
@@ -473,7 +473,7 @@ router.get('/waiting-assignments', requireAuth, async (req, res) => {
         LEFT JOIN job_assignments ja ON ja.job_id = j.id
         WHERE j.status = 'pending' AND j.deleted_at IS NULL
           AND j.destination = 'hai_phong'
-          AND j.service_type IN ('truck','both')
+          AND j.service_type IN ('tk','truck','both')
           AND (ja.ops_id IS NULL OR ja.id IS NULL)
         ORDER BY j.created_at ASC
         LIMIT 10
@@ -944,7 +944,7 @@ router.post('/', requireAuth, async (req, res) => {
     const settingsRes = await db.query(`SELECT assignment_mode FROM log_settings WHERE id = 1`);
     const mode = settingsRes.rows[0]?.assignment_mode || 'auto';
     const isTk = service_type === 'tk' || service_type === 'both';
-    const needsOps = destination === 'hai_phong' && (service_type === 'truck' || service_type === 'both');
+    const needsOps = destination === 'hai_phong' && ['tk','truck','both'].includes(service_type);
 
     let cusSuggestion = null;
     let opsSuggestion = null;
@@ -1086,18 +1086,16 @@ router.post('/', requireAuth, async (req, res) => {
       await recordHistory(client, job.id, req.user.id, 'dieu_do_assigned', null, String(ddUserId));
     }
 
-    // Auto-generate job_ops_task rows for Hải Phòng truck/both jobs
-    if (destination === 'hai_phong' && (service_type === 'truck' || service_type === 'both')) {
+    // Auto-generate job_ops_task rows for Hải Phòng jobs
+    //   tk    → thong_quan_doi_lenh (OPS handles TQ + đổi lệnh on behalf of CUS)
+    //   truck → doi_lenh (DieuDo + truck side)
+    //   both  → thong_quan_doi_lenh (single task covers TQ + đổi lệnh follow-through)
+    if (destination === 'hai_phong' && ['tk','truck','both'].includes(service_type)) {
       const opsUserId = opsSuggestion?.user_id || null;
-      if (service_type === 'both') {
-        await client.query(
-          `INSERT INTO job_ops_task (job_id, ops_id, task_type) VALUES ($1, $2, 'thong_quan_doi_lenh')`,
-          [job.id, opsUserId]
-        );
-      }
+      const taskType = service_type === 'truck' ? 'doi_lenh' : 'thong_quan_doi_lenh';
       await client.query(
-        `INSERT INTO job_ops_task (job_id, ops_id, task_type) VALUES ($1, $2, 'doi_lenh')`,
-        [job.id, opsUserId]
+        `INSERT INTO job_ops_task (job_id, ops_id, task_type) VALUES ($1, $2, $3)`,
+        [job.id, opsUserId, taskType]
       );
     }
 

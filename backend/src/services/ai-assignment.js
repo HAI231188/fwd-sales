@@ -220,7 +220,7 @@ async function assignCus(jobData, pool) {
 
 // Returns { user_id, user_name, reason, cost, fallback } or null if conditions not met — no DB writes
 async function suggestOps(jobData, pool) {
-  if (jobData.destination !== 'hai_phong' || !['truck', 'both'].includes(jobData.service_type)) {
+  if (jobData.destination !== 'hai_phong' || !['tk', 'truck', 'both'].includes(jobData.service_type)) {
     return null;
   }
 
