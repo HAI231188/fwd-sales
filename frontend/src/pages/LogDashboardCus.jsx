@@ -304,7 +304,7 @@ export default function LogDashboardCus() {
       qc.invalidateQueries({ queryKey: ['jobStats'] });
     },
     onError: (err) => {
-      const msg = err?.response?.data?.error || err?.message || 'Không thể hoàn thành. Thử lại sau.';
+      const msg = err?.error || err?.message || 'Không thể hoàn thành. Thử lại sau.';
       alert(msg);
     },
   });

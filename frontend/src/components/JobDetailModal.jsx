@@ -305,17 +305,17 @@ export default function JobDetailModal({ jobId, onClose }) {
       setEditMode(false);
       setDraft(null);
     },
-    onError: err => setEditErr(err?.response?.data?.error || 'Lỗi khi lưu'),
+    onError: err => setEditErr(err?.error || err?.message || 'Lỗi khi lưu'),
   });
   const deleteMut = useMutation({
     mutationFn: () => deleteJob(jobId),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['jobs'] }); onClose(); },
-    onError: err => setEditErr(err?.response?.data?.error || 'Lỗi khi xóa'),
+    onError: err => setEditErr(err?.error || err?.message || 'Lỗi khi xóa'),
   });
   const deleteReqMut = useMutation({
     mutationFn: () => requestJobDelete(jobId, deleteReason),
     onSuccess: () => { setShowDeleteConfirm(false); setDeleteReason(''); alert('Đã gửi yêu cầu xóa job'); },
-    onError: err => setEditErr(err?.response?.data?.error || 'Lỗi khi gửi yêu cầu'),
+    onError: err => setEditErr(err?.error || err?.message || 'Lỗi khi gửi yêu cầu'),
   });
 
   function startEdit() {
@@ -346,10 +346,11 @@ export default function JobDetailModal({ jobId, onClose }) {
     setEditErr('');
     const payload = { ...draft };
     if (!isTP) delete payload.deadline;
-    if (payload.etd === '') payload.etd = null;
-    if (payload.eta === '') payload.eta = null;
-    if (payload.han_lenh === '') payload.han_lenh = null;
-    if (payload.deadline === '') payload.deadline = null;
+    // Coerce empty strings to null for date/numeric columns; PostgreSQL rejects '' for INTEGER/DECIMAL/DATE/TIMESTAMPTZ
+    const NULLABLE_WHEN_BLANK = ['etd','eta','han_lenh','deadline','sales_id','tons','cbm','so_kien','kg'];
+    for (const f of NULLABLE_WHEN_BLANK) {
+      if (payload[f] === '' || payload[f] === undefined) payload[f] = null;
+    }
     editMut.mutate(payload);
   }
   function handleDelete() {

@@ -223,7 +223,7 @@ export default function PipelineView() {
   const deleteMutation = useMutation({
     mutationFn: (id) => requestPipelineDelete(id),
     onSuccess: () => toast.success('Đã gửi yêu cầu xóa — chờ trưởng phòng duyệt'),
-    onError: (err) => toast.error(err?.response?.data?.error || 'Gửi yêu cầu thất bại'),
+    onError: (err) => toast.error(err?.error || err?.message || 'Gửi yêu cầu thất bại'),
   });
 
   const counts = STAGES.reduce((acc, s) => {
