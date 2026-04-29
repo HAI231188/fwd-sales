@@ -181,9 +181,10 @@ h1, h2, h3, h4 { font-family: var(--font-display); font-weight: 600; color: var(
 
 /* Modal */
 .modal-overlay {
-  position: fixed; inset: 0; background: rgba(0,0,0,0.4);
+  position: fixed; inset: 0; background: rgba(0,0,0,0.5);
   display: flex; align-items: center; justify-content: center;
-  z-index: 100; padding: 20px; backdrop-filter: blur(4px);
+  z-index: 100; padding: 20px;
+  isolation: isolate;
 }
 .modal {
   background: #fff; border: 1px solid var(--border);
