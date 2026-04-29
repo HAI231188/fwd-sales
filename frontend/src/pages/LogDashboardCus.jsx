@@ -288,7 +288,10 @@ export default function LogDashboardCus() {
   });
   const confirmMut = useMutation({
     mutationFn: id => confirmJob(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['jobs', 'jobStats'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['jobs'] });
+      qc.invalidateQueries({ queryKey: ['jobStats'] });
+    },
   });
   const deadlineMut = useMutation({
     mutationFn: ({ id, proposed, reason }) => requestDeadline(id, { proposed_deadline: proposed, reason }),
@@ -296,7 +299,14 @@ export default function LogDashboardCus() {
   });
   const completeMut = useMutation({
     mutationFn: id => completeJob(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['jobs', 'jobStats'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['jobs'] });
+      qc.invalidateQueries({ queryKey: ['jobStats'] });
+    },
+    onError: (err) => {
+      const msg = err?.response?.data?.error || err?.message || 'Không thể hoàn thành. Thử lại sau.';
+      alert(msg);
+    },
   });
   const deleteReqMut = useMutation({
     mutationFn: ({ id, reason }) => requestJobDelete(id, reason),
@@ -304,7 +314,10 @@ export default function LogDashboardCus() {
   });
   const createMut = useMutation({
     mutationFn: data => createJob(data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['jobs', 'jobStats'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['jobs'] });
+      qc.invalidateQueries({ queryKey: ['jobStats'] });
+    },
   });
   const opsMut = useMutation({
     mutationFn: ({ id, data }) => updateJob(id, data),
@@ -495,16 +508,29 @@ export default function LogDashboardCus() {
                             onChange={e => tkMut.mutate({ jobId: j.id, data: { truck_booked: e.target.checked } })} />
                         </td>
                         <td style={{ padding: '8px 8px', textAlign: 'center' }}>
-                          {tab === 'pending' ? (
-                            <button className="btn btn-primary btn-sm" style={{ padding: '3px 10px', fontSize: 11 }}
-                              disabled={!canComplete(j)}
-                              title={htTooltip(j)}
-                              onClick={() => canComplete(j) && completeMut.mutate(j.id)}>
-                              HT
-                            </button>
-                          ) : (
+                          {tab === 'completed' ? (
                             <span style={{ color: 'var(--primary)', fontSize: 16 }}>✓</span>
-                          )}
+                          ) : j.tk_completed_at ? (
+                            <span title="Phần CUS đã hoàn thành — chờ vận chuyển/OPS"
+                              style={{ fontSize: 11, color: 'var(--primary)', fontWeight: 600,
+                                       background: 'rgba(34,197,94,0.12)', padding: '3px 6px', borderRadius: 6, whiteSpace: 'nowrap' }}>
+                              ✓ TK xong
+                            </span>
+                          ) : (() => {
+                            const ok = canComplete(j);
+                            const missing = getMissingFields(j);
+                            return (
+                              <button
+                                className={`btn btn-sm ${ok ? 'btn-primary' : 'btn-ghost'}`}
+                                style={{ padding: '3px 10px', fontSize: 11,
+                                         ...(ok ? {} : { color: 'var(--danger)', borderColor: 'var(--danger)' }) }}
+                                disabled={!ok}
+                                title={htTooltip(j)}
+                                onClick={() => ok && completeMut.mutate(j.id)}>
+                                {ok ? 'HT' : (missing.length ? `Thiếu: ${missing[0]}${missing.length>1?'…':''}` : 'HT')}
+                              </button>
+                            );
+                          })()}
                         </td>
                         <td style={{ padding: '8px 6px', minWidth: 120 }}>
                           <InlineInput value={j.tk_notes}
