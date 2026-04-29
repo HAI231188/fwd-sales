@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useQuery } from '@tanstack/react-query';
 import { getFilteredJobs } from '../api';
 import JobDetailModal from './JobDetailModal';
@@ -220,6 +221,7 @@ export default function JobListModal({ filterType, staffId, staffName, onClose }
 
   return (
     <>
+      {createPortal((
       <div className="modal-overlay" style={{ zIndex }}
         onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
         <div className="modal modal-lg" style={{ maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}>
@@ -263,6 +265,7 @@ export default function JobListModal({ filterType, staffId, staffName, onClose }
           </div>
         </div>
       </div>
+      ), document.body)}
 
       {detailJobId && (
         <JobDetailModal jobId={detailJobId} onClose={() => setDetailJobId(null)} />

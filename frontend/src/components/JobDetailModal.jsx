@@ -1,4 +1,5 @@
 import { useState, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getJob, updateJobTk, updateJobTruck, updateJob, deleteJob, requestJobDelete, getLogStaff } from '../api';
 import { useModalZIndex } from '../hooks/useModalZIndex';
@@ -365,7 +366,7 @@ export default function JobDetailModal({ jobId, onClose }) {
 
   if (!jobId) return null;
 
-  return (
+  return createPortal((
     <div className="modal-overlay" style={{ zIndex }} onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="modal modal-xl" style={{ maxHeight: '92vh' }}>
         <div className="modal-header">
@@ -868,5 +869,5 @@ export default function JobDetailModal({ jobId, onClose }) {
         </div>
       </div>
     </div>
-  );
+  ), document.body);
 }

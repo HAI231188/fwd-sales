@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   getJobSettings, updateAssignmentMode, getWaitingAssignments,
@@ -71,7 +72,7 @@ export default function AssignmentModal({ initialTab = 'cus', onClose }) {
     assignMut.mutate({ id: jobId, data: { [assignKey]: Number(userId) } });
   }
 
-  return (
+  return createPortal((
     <div className="modal-overlay" style={{ zIndex }}
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="modal modal-lg" style={{ maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}>
@@ -234,5 +235,5 @@ export default function AssignmentModal({ initialTab = 'cus', onClose }) {
         </div>
       </div>
     </div>
-  );
+  ), document.body);
 }

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useQuery } from '@tanstack/react-query';
 import { getDrilldown } from '../api';
 import { format } from 'date-fns';
@@ -27,7 +28,7 @@ function QuoteDetailModal({ q, onClose }) {
   const options = parseOptions(q.price, q.carrier).filter(o => o.carrier || o.price || o.cost);
   const zIndex = useModalZIndex();
 
-  return (
+  return createPortal((
     <div className="modal-overlay" style={{ zIndex }} onClick={e => e.target === e.currentTarget && onClose()}>
       <div className="modal modal-lg">
         <div className="modal-header">
@@ -148,7 +149,7 @@ function QuoteDetailModal({ q, onClose }) {
         </div>
       </div>
     </div>
-  );
+  ), document.body);
 }
 
 function QuoteRow({ q, onClick, onCompanyClick }) {
@@ -339,6 +340,7 @@ export default function DrilldownModal({ type, dateParams, userId, onClose }) {
 
   return (
     <>
+      {createPortal((
       <div className="modal-overlay" style={{ zIndex }} onClick={e => e.target === e.currentTarget && onClose()}>
         <div className="modal modal-lg">
           <div className="modal-header">
@@ -467,6 +469,7 @@ export default function DrilldownModal({ type, dateParams, userId, onClose }) {
           </div>
         </div>
       </div>
+      ), document.body)}
 
       {selectedQuote && (
         <QuoteDetailModal q={selectedQuote} onClose={() => setSelectedQuote(null)} />

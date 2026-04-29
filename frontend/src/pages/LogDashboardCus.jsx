@@ -1,4 +1,5 @@
 import { useState, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import Navbar from '../components/Navbar';
 import JobDetailModal from '../components/JobDetailModal';
@@ -230,7 +231,7 @@ function DeadlineRequestModal({ job, onClose, onSubmit }) {
   const zIndex = useModalZIndex();
   const [proposed, setProposed] = useState('');
   const [reason, setReason] = useState('');
-  return (
+  return createPortal((
     <div className="modal-overlay" style={{ zIndex }} onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="modal" style={{ maxWidth: 480 }}>
         <div className="modal-header">
@@ -257,7 +258,7 @@ function DeadlineRequestModal({ job, onClose, onSubmit }) {
         </div>
       </div>
     </div>
-  );
+  ), document.body);
 }
 
 export default function LogDashboardCus() {

@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useQuery } from '@tanstack/react-query';
 import { getLogStaff, searchJobCustomers } from '../api';
 import { useModalZIndex } from '../hooks/useModalZIndex';
@@ -117,7 +118,7 @@ export default function CreateJobModal({ onClose, onCreated }) {
     } finally { setSaving(false); }
   }
 
-  return (
+  return createPortal((
     <div className="modal-overlay" style={{ zIndex }} onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="modal modal-lg" style={{ maxHeight: '92vh' }}>
         <div className="modal-header">
@@ -383,5 +384,5 @@ export default function CreateJobModal({ onClose, onCreated }) {
         </div>
       </div>
     </div>
-  );
+  ), document.body);
 }

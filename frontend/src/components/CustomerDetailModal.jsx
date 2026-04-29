@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { format, differenceInDays } from 'date-fns';
 import { getPipelineDetail, updateQuote, quickAddCustomer, addInteractionUpdate, updateCustomer, markUpdateComplete, undoUpdateComplete, markCustomerFollowUpComplete } from '../api';
@@ -744,7 +745,7 @@ export default function CustomerDetailModal({ pipelineId, onClose }) {
   // customer_code is only set on the first interaction (new company)
   const customerCode = interactions.find(i => i.customer_code)?.customer_code || null;
 
-  return (
+  return createPortal((
     <div
       style={{
         position: 'fixed', inset: 0, zIndex,
@@ -1186,5 +1187,5 @@ export default function CustomerDetailModal({ pipelineId, onClose }) {
         )}
       </div>
     </div>
-  );
+  ), document.body);
 }

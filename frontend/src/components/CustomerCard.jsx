@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import { updateQuote, deleteQuote } from '../api';
@@ -168,7 +169,7 @@ function EditQuoteModal({ quote, onClose, onSaved }) {
     onError: (err) => toast.error(err?.error || 'Cập nhật thất bại'),
   });
 
-  return (
+  return createPortal((
     <div className="modal-overlay" style={{ zIndex }} onClick={e => e.target === e.currentTarget && onClose()}>
       <div className="modal modal-lg" style={{ maxHeight: '92vh' }}>
         <div className="modal-header">
@@ -196,7 +197,7 @@ function EditQuoteModal({ quote, onClose, onSaved }) {
         </div>
       </div>
     </div>
-  );
+  ), document.body);
 }
 
 export default function CustomerCard({ customer, canEdit = false, onRefresh }) {

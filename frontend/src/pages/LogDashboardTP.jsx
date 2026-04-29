@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import Navbar from '../components/Navbar';
 import JobDetailModal from '../components/JobDetailModal';
@@ -187,7 +188,7 @@ function AssignModal({ job, staff, onClose, onSave }) {
   const [cusId, setCusId] = useState(String(job.cus_id || ''));
   const [opsId, setOpsId] = useState(String(job.ops_id || ''));
 
-  return (
+  return createPortal((
     <div className="modal-overlay" style={{ zIndex }} onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="modal" style={{ maxWidth: 420 }}>
         <div className="modal-header">
@@ -224,7 +225,7 @@ function AssignModal({ job, staff, onClose, onSave }) {
         </div>
       </div>
     </div>
-  );
+  ), document.body);
 }
 
 // ─── Deadline Modal ───────────────────────────────────────────────────────────
@@ -246,6 +247,7 @@ function DeadlineModal({ data, onClose, onReview, onSetDeadline, onReviewDelete 
 
   return (
     <>
+      {createPortal((
       <div className="modal-overlay" style={{ zIndex }} onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
         <div className="modal modal-lg" style={{ maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}>
           <div className="modal-header">
@@ -386,6 +388,7 @@ function DeadlineModal({ data, onClose, onReview, onSetDeadline, onReviewDelete 
           </div>
         </div>
       </div>
+      ), document.body)}
 
       {detailJobId && (
         <JobDetailModal jobId={detailJobId} onClose={() => setDetailJobId(null)} />

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import { quickAddCustomer } from '../api';
@@ -74,7 +75,7 @@ export default function AddCustomerModal({ onClose }) {
   });
 
   if (savedCode) {
-    return (
+    return createPortal((
       <div
         style={{
           position: 'fixed', inset: 0, zIndex,
@@ -111,10 +112,10 @@ export default function AddCustomerModal({ onClose }) {
           </div>
         </div>
       </div>
-    );
+    ), document.body);
   }
 
-  return (
+  return createPortal((
     <div
       style={{
         position: 'fixed', inset: 0, zIndex,
@@ -386,5 +387,5 @@ export default function AddCustomerModal({ onClose }) {
         </div>
       </div>
     </div>
-  );
+  ), document.body);
 }
