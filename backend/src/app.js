@@ -11,6 +11,7 @@ const statsRoutes = require('./routes/stats');
 const pipelineRoutes = require('./routes/pipeline');
 const jobsRoutes = require('./routes/jobs');
 const notificationsRoutes = require('./routes/notifications');
+const searchRoutes = require('./routes/search');
 
 const app = express();
 
@@ -36,6 +37,7 @@ app.use('/api/stats', statsRoutes);
 app.use('/api/pipeline', pipelineRoutes);
 app.use('/api/jobs', jobsRoutes);
 app.use('/api/notifications', notificationsRoutes);
+app.use('/api/search', searchRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {

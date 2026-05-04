@@ -102,6 +102,9 @@ export const refreshJobSuggestion = (id, type) => api.post(`/jobs/${id}/refresh-
 export const markOpsDone = (id) => api.post(`/jobs/${id}/ops-done`, {});
 export const getJobOverview = (params) => api.get('/jobs/overview', { params });
 
+// Global search (LOG team only)
+export const searchGlobal = (params) => api.get('/search', { params });
+
 // Notifications
 export const getNotifications = () => api.get('/notifications');
 export const getUnreadCount = () => api.get('/notifications/unread-count');

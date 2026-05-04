@@ -1,6 +1,7 @@
 import { useAuth } from '../App';
 import { useNavigate } from 'react-router-dom';
 import NotificationBell from './NotificationBell';
+import GlobalSearch from './GlobalSearch';
 
 const LOG_ROLES = ['truong_phong_log', 'dieu_do', 'cus', 'cus1', 'cus2', 'cus3', 'ops'];
 
@@ -55,6 +56,9 @@ export default function Navbar() {
             </div>
           </div>
         </div>
+
+        {/* Global search — LOG team only */}
+        {user && LOG_ROLES.includes(user.role) && <GlobalSearch />}
 
         {/* User info + actions */}
         {user && (
