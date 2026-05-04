@@ -69,9 +69,16 @@ router.get('/', requireAuth, async (req, res) => {
     }
 
     // CUSTOMERS: search the pipeline (one row per company per sales rep).
-    // Returns pipeline_id (not customer_id) because CustomerDetailModal opens by pipelineId.
+    // Returns pipeline_id because the LOG-team modal opens by pipelineId.
+    // Note: tax_code lives on `customers`, not `customer_pipeline` — so the
+    // tax_code/phone match runs as a child-customers EXISTS, not on cp directly.
+    // Scope filter: customer must have ≥1 non-deleted job whose customer_name
+    // matches the pipeline's company_name. For OPS, the job must also be in
+    // Hải Phòng — so OPS only sees customers they could actually work on.
+    const opsCustClause = req.user.role === 'ops' ? `AND j.destination = 'hai_phong'` : '';
     const custWhere = `
-      WHERE cp.company_name   ILIKE $1
+      WHERE (
+            cp.company_name   ILIKE $1
          OR cp.contact_person ILIKE $1
          OR cp.phone          ILIKE $1
          OR EXISTS (
@@ -79,6 +86,13 @@ router.get('/', requireAuth, async (req, res) => {
               WHERE c.pipeline_id = cp.id
                 AND (c.tax_code ILIKE $1 OR c.phone ILIKE $1)
             )
+      )
+      AND EXISTS (
+        SELECT 1 FROM jobs j
+        WHERE LOWER(j.customer_name) = LOWER(cp.company_name)
+          AND j.deleted_at IS NULL
+          ${opsCustClause}
+      )
     `;
 
     const [custList, custCount] = await Promise.all([
