@@ -1228,6 +1228,49 @@ router.put('/:id', requireAuth, async (req, res) => {
       params.push(req.params.id);
       await client.query(`UPDATE jobs SET ${sets.join(', ')} WHERE id = $${idx}`, params);
     }
+
+    // Trigger #3 (broadcast from PATCH /set-deadline): TP changed an existing
+    // deadline by ≥ 1 hour via the general updater → CUS must re-confirm.
+    if (req.body.deadline !== undefined) {
+      const oldDeadline = cur[0].deadline;
+      const newDeadline = req.body.deadline;
+      const oldMs = oldDeadline ? new Date(oldDeadline).getTime() : null;
+      const newMs = newDeadline ? new Date(newDeadline).getTime() : null;
+      const shouldNotify =
+        oldMs !== null && newMs !== null && Math.abs(newMs - oldMs) >= 3600 * 1000;
+
+      if (shouldNotify) {
+        await client.query(
+          `UPDATE job_assignments
+              SET cus_confirm_status = 'pending',
+                  adjustment_reason = NULL,
+                  adjustment_deadline_proposed = NULL
+            WHERE job_id = $1`,
+          [req.params.id]
+        );
+        const { rows: ja } = await client.query(
+          `SELECT cus_id FROM job_assignments WHERE job_id = $1`,
+          [req.params.id]
+        );
+        const cusId = ja[0]?.cus_id || null;
+        if (cusId) {
+          const jc = cur[0].job_code || `#${req.params.id}`;
+          const dl = new Date(newDeadline).toLocaleString('vi-VN', {
+            day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
+          });
+          await client.query(
+            `INSERT INTO notifications (user_id, type, title, message, job_id)
+             VALUES ($1, 'deadline_request', 'TP yêu cầu xác nhận deadline', $2, $3)`,
+            [cusId, `Trưởng phòng đặt deadline mới cho job ${jc}: ${dl}`, req.params.id]
+          );
+        }
+        await recordHistory(
+          client, req.params.id, req.user.id,
+          'deadline_request_sent_via_put', oldDeadline, newDeadline
+        );
+      }
+    }
+
     await client.query('COMMIT');
     res.json({ ok: true });
   } catch (err) {
@@ -1613,16 +1656,66 @@ router.patch('/delete-requests/:rid/review', requireAuth, async (req, res) => {
   }
 });
 
-// PATCH /api/jobs/:id/set-deadline
+// PATCH /api/jobs/:id/set-deadline  (truong_phong_log only)
 router.patch('/:id/set-deadline', requireAuth, async (req, res) => {
+  if (req.user.role !== 'truong_phong_log')
+    return res.status(403).json({ error: 'Chỉ Trưởng phòng mới được đặt deadline' });
+
   const { deadline } = req.body;
   const client = await db.pool.connect();
   try {
     await client.query('BEGIN');
-    const { rows: cur } = await client.query(`SELECT deadline FROM jobs WHERE id = $1 AND deleted_at IS NULL`, [req.params.id]);
+    const { rows: cur } = await client.query(
+      `SELECT deadline, job_code FROM jobs WHERE id = $1 AND deleted_at IS NULL`,
+      [req.params.id]
+    );
     if (!cur[0]) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Không tìm thấy' }); }
-    await client.query(`UPDATE jobs SET deadline = $1, updated_at = NOW() WHERE id = $2`, [deadline, req.params.id]);
-    await recordHistory(client, req.params.id, req.user.id, 'deadline', cur[0]?.deadline, deadline);
+
+    const oldDeadline = cur[0].deadline;
+    await client.query(
+      `UPDATE jobs SET deadline = $1, updated_at = NOW() WHERE id = $2`,
+      [deadline, req.params.id]
+    );
+
+    // Trigger #3: TP changed an existing deadline by ≥ 1 hour → CUS must re-confirm
+    const oldMs = oldDeadline ? new Date(oldDeadline).getTime() : null;
+    const newMs = deadline   ? new Date(deadline).getTime()   : null;
+    const shouldNotify =
+      oldMs !== null && newMs !== null && Math.abs(newMs - oldMs) >= 3600 * 1000;
+
+    if (shouldNotify) {
+      await client.query(
+        `UPDATE job_assignments
+            SET cus_confirm_status = 'pending',
+                adjustment_reason = NULL,
+                adjustment_deadline_proposed = NULL
+          WHERE job_id = $1`,
+        [req.params.id]
+      );
+      const { rows: ja } = await client.query(
+        `SELECT cus_id FROM job_assignments WHERE job_id = $1`,
+        [req.params.id]
+      );
+      const cusId = ja[0]?.cus_id || null;
+      if (cusId) {
+        const jc = cur[0].job_code || `#${req.params.id}`;
+        const dl = new Date(deadline).toLocaleString('vi-VN', {
+          day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
+        });
+        await client.query(
+          `INSERT INTO notifications (user_id, type, title, message, job_id)
+           VALUES ($1, 'deadline_request', 'TP yêu cầu xác nhận deadline', $2, $3)`,
+          [cusId, `Trưởng phòng đặt deadline mới cho job ${jc}: ${dl}`, req.params.id]
+        );
+      }
+      await recordHistory(
+        client, req.params.id, req.user.id,
+        'deadline_request_sent', oldDeadline, deadline
+      );
+    }
+
+    await recordHistory(client, req.params.id, req.user.id, 'deadline', oldDeadline, deadline);
+
     await client.query('COMMIT');
     res.json({ ok: true });
   } catch (err) {
