@@ -2,6 +2,106 @@ const router = require('express').Router();
 const db = require('../db');
 const { requireAuth } = require('../middleware/auth');
 
+const LOG_ROLES = ['truong_phong_log', 'cus', 'cus1', 'cus2', 'cus3', 'dieu_do', 'ops'];
+
+// GET /api/customers/:pipelineId/jobs?from=&to= — LOG-team customer-jobs view.
+// Returns the canonical customer info from the pipeline (joined with the
+// latest customers row for tax_code/address) plus all jobs whose customer_name
+// matches that company within the date range.
+// Defined BEFORE GET /:id so the more specific path wins in Express routing.
+router.get('/:pipelineId/jobs', requireAuth, async (req, res) => {
+  if (!LOG_ROLES.includes(req.user.role)) {
+    return res.status(403).json({ error: 'Không có quyền' });
+  }
+
+  const pipelineId = parseInt(req.params.pipelineId, 10);
+  if (!Number.isFinite(pipelineId)) {
+    return res.status(400).json({ error: 'pipelineId không hợp lệ' });
+  }
+
+  const from = (req.query.from || '').replace(/'/g, '');
+  const to   = (req.query.to   || '').replace(/'/g, '');
+
+  try {
+    const { rows: cpRows } = await db.query(`
+      SELECT
+        cp.id,
+        cp.company_name,
+        cp.contact_person,
+        cp.phone,
+        (SELECT c.tax_code FROM customers c
+           WHERE c.pipeline_id = cp.id AND c.tax_code IS NOT NULL
+           ORDER BY c.created_at DESC LIMIT 1) AS tax_code,
+        (SELECT c.address  FROM customers c
+           WHERE c.pipeline_id = cp.id AND c.address  IS NOT NULL
+           ORDER BY c.created_at DESC LIMIT 1) AS address
+      FROM customer_pipeline cp
+      WHERE cp.id = $1
+    `, [pipelineId]);
+
+    if (!cpRows[0]) return res.status(404).json({ error: 'Không tìm thấy khách hàng' });
+    const customer = cpRows[0];
+
+    const conds  = [`j.deleted_at IS NULL`, `LOWER(j.customer_name) = LOWER($1)`];
+    const params = [customer.company_name];
+    let idx = 2;
+
+    if (from) { conds.push(`j.created_at >= $${idx++}::date`);                       params.push(from); }
+    if (to)   { conds.push(`j.created_at <  $${idx++}::date + INTERVAL '1 day'`);    params.push(to);   }
+    if (req.user.role === 'ops') conds.push(`j.destination = 'hai_phong'`);
+
+    const where = `WHERE ${conds.join(' AND ')}`;
+
+    const { rows: jobs } = await db.query(`
+      SELECT
+        j.id,
+        j.job_code,
+        j.created_at,
+        j.etd,
+        j.eta,
+        jt.tk_status,
+        u_cus.name AS cus_name,
+        u_ops.name AS ops_name,
+        jtr.planned_datetime AS delivery_datetime,
+        jtr.transport_name,
+        COALESCE((
+          SELECT string_agg(grp.cnt || ' x ' || grp.cont_type, ', ' ORDER BY grp.cont_type)
+          FROM (
+            SELECT jc.cont_type, COUNT(*)::int AS cnt
+            FROM job_containers jc
+            WHERE jc.job_id = j.id
+            GROUP BY jc.cont_type
+          ) grp
+        ), '') AS containers_summary
+      FROM jobs j
+      LEFT JOIN LATERAL (
+        SELECT * FROM job_assignments WHERE job_id = j.id ORDER BY id DESC LIMIT 1
+      ) ja ON TRUE
+      LEFT JOIN users u_cus ON u_cus.id = ja.cus_id
+      LEFT JOIN users u_ops ON u_ops.id = ja.ops_id
+      LEFT JOIN job_truck jtr ON jtr.job_id = j.id
+      LEFT JOIN job_tk    jt  ON jt.job_id  = j.id
+      ${where}
+      ORDER BY j.created_at DESC
+    `, params);
+
+    res.json({
+      customer: {
+        company_name:   customer.company_name,
+        tax_code:       customer.tax_code,
+        contact_person: customer.contact_person,
+        phone:          customer.phone,
+        address:        customer.address,
+      },
+      jobs,
+      total_jobs: jobs.length,
+    });
+  } catch (err) {
+    console.error('GET /api/customers/:pipelineId/jobs error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // List customers
 router.get('/', requireAuth, async (req, res) => {
   const { userId, interactionType, startDate, endDate, search, excludeSaved, limit } = req.query;

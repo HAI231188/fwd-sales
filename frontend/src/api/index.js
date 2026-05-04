@@ -40,6 +40,8 @@ export const quickAddCustomer = (data) => api.post('/reports/quick-customer', da
 // Customers
 export const getCustomers = (params) => api.get('/customers', { params });
 export const updateCustomer = (id, data) => api.put(`/customers/${id}`, data);
+export const getCustomerJobs = (pipelineId, from, to) =>
+  api.get(`/customers/${pipelineId}/jobs`, { params: { from, to } });
 
 // Quotes
 export const createQuote = (data) => api.post('/quotes', data);

@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { searchGlobal } from '../api';
 import { useModalZIndex } from '../hooks/useModalZIndex';
 import JobDetailModal from './JobDetailModal';
-import CustomerDetailModal from './CustomerDetailModal';
+import CustomerJobsModal from './CustomerJobsModal';
 
 const TK_STATUS_LABEL = {
   chua_truyen: 'Chưa truyền',
@@ -319,7 +319,12 @@ export default function GlobalSearch() {
         <JobDetailModal jobId={selectedJobId} onClose={() => setSelectedJobId(null)} />
       )}
       {selectedPipelineId && (
-        <CustomerDetailModal pipelineId={selectedPipelineId} onClose={() => setSelectedPipelineId(null)} />
+        <CustomerJobsModal
+          pipelineId={selectedPipelineId}
+          from={from}
+          to={to}
+          onClose={() => setSelectedPipelineId(null)}
+        />
       )}
     </>
   );
