@@ -420,9 +420,9 @@ CREATE TABLE IF NOT EXISTS notifications (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_notifications_user_id ON notifications(user_id);
-CREATE INDEX IF NOT EXISTS idx_notifications_unread  ON notifications(user_id, read);
 
 -- Idempotent migration: align with spec (body→message, read→read_at)
+-- NOTE: do NOT add an index on the legacy `read` column — it is dropped below.
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='notifications' AND column_name='body')
