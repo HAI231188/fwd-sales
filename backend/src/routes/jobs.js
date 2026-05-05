@@ -1496,6 +1496,187 @@ router.post('/:id/manual-assign', requireAuth, async (req, res) => {
   }
 });
 
+// PATCH /api/jobs/:id/reassign-cus  (truong_phong_log only)
+// Reassign CUS for a pending job whose TK is not yet completed.
+// Preserves all job_tk data so the new CUS sees the existing work.
+router.patch('/:id/reassign-cus', requireAuth, async (req, res) => {
+  if (req.user.role !== 'truong_phong_log') return res.status(403).json({ error: 'Không có quyền' });
+  const newCusId = parseInt(req.body?.new_cus_id, 10);
+  if (!newCusId) return res.status(400).json({ error: 'Thiếu new_cus_id' });
+
+  const client = await db.pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const { rows: jrows } = await client.query(`
+      SELECT j.id, j.job_code, j.status, j.deleted_at,
+             ja.cus_id AS old_cus_id,
+             jt.completed_at AS tk_completed_at
+      FROM jobs j
+      LEFT JOIN job_assignments ja ON ja.job_id = j.id
+      LEFT JOIN job_tk jt ON jt.job_id = j.id
+      WHERE j.id = $1
+    `, [req.params.id]);
+    const j = jrows[0];
+    if (!j || j.deleted_at) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Không tìm thấy job' }); }
+    if (j.status !== 'pending') { await client.query('ROLLBACK'); return res.status(400).json({ error: 'Job không ở trạng thái pending, không thể đổi CUS' }); }
+    if (j.tk_completed_at) { await client.query('ROLLBACK'); return res.status(400).json({ error: 'TK đã hoàn thành, không thể đổi CUS' }); }
+
+    const { rows: nu } = await client.query(`SELECT id, name, role FROM users WHERE id = $1`, [newCusId]);
+    if (!nu[0] || !CUS_ROLES.includes(nu[0].role)) { await client.query('ROLLBACK'); return res.status(400).json({ error: 'Người dùng không phải CUS' }); }
+
+    const { rows: ou } = await client.query(`SELECT name FROM users WHERE id = $1`, [j.old_cus_id]);
+    const oldName = ou[0]?.name || '(chưa có)';
+    const newName = nu[0].name;
+    const jc = j.job_code || `#${j.id}`;
+
+    // Update or insert assignment row. job_tk rows are NOT touched — preserves
+    // tk_status, tk_number, tk_flow, etc. so the new CUS sees existing work.
+    const { rows: jaEx } = await client.query(`SELECT id FROM job_assignments WHERE job_id = $1`, [req.params.id]);
+    let updated;
+    if (jaEx[0]) {
+      const { rows: u } = await client.query(`
+        UPDATE job_assignments
+           SET cus_id = $1,
+               cus_confirm_status = 'pending',
+               cus_confirmed_at = NULL,
+               adjustment_reason = NULL,
+               adjustment_deadline_proposed = NULL,
+               assigned_by = $2,
+               assigned_at = NOW()
+         WHERE job_id = $3
+         RETURNING *
+      `, [newCusId, req.user.id, req.params.id]);
+      updated = u[0];
+    } else {
+      const { rows: u } = await client.query(`
+        INSERT INTO job_assignments (job_id, cus_id, assigned_by, assignment_mode, cus_confirm_status)
+        VALUES ($1, $2, $3, 'manual', 'pending')
+        RETURNING *
+      `, [req.params.id, newCusId, req.user.id]);
+      updated = u[0];
+    }
+
+    // Keep job_tk.cus_id in sync if a tk row exists.
+    await client.query(`UPDATE job_tk SET cus_id = $1 WHERE job_id = $2`, [newCusId, req.params.id]);
+
+    await recordHistory(client, req.params.id, req.user.id, 'cus_reassigned', oldName, newName);
+
+    // Notify new CUS
+    await client.query(
+      `INSERT INTO notifications (user_id, type, title, message, job_id)
+       VALUES ($1, 'manual_job_assigned', 'TP phân job mới', $2, $3)`,
+      [newCusId, `Trưởng phòng phân bạn job ${jc}`, req.params.id]
+    );
+    // Notify old CUS (if any)
+    if (j.old_cus_id && j.old_cus_id !== newCusId) {
+      await client.query(
+        `INSERT INTO notifications (user_id, type, title, message, job_id)
+         VALUES ($1, 'job_reassigned', 'Job đã chuyển', $2, $3)`,
+        [j.old_cus_id, `Job ${jc} đã được chuyển sang CUS khác`, req.params.id]
+      );
+    }
+
+    await client.query('COMMIT');
+    suggestionCache = { data: null, ts: 0 };
+    res.json(updated);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// PATCH /api/jobs/:id/reassign-ops  (truong_phong_log only)
+// Reassign OPS for a pending job whose OPS work is not yet done.
+// Wipes job_ops_task and recreates a fresh task per service_type/destination rule.
+router.patch('/:id/reassign-ops', requireAuth, async (req, res) => {
+  if (req.user.role !== 'truong_phong_log') return res.status(403).json({ error: 'Không có quyền' });
+  const newOpsId = parseInt(req.body?.new_ops_id, 10);
+  if (!newOpsId) return res.status(400).json({ error: 'Thiếu new_ops_id' });
+
+  const client = await db.pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const { rows: jrows } = await client.query(`
+      SELECT j.id, j.job_code, j.status, j.deleted_at, j.service_type, j.destination,
+             ja.ops_id AS old_ops_id,
+             COALESCE(ja.ops_done, FALSE) AS ops_done
+      FROM jobs j
+      LEFT JOIN job_assignments ja ON ja.job_id = j.id
+      WHERE j.id = $1
+    `, [req.params.id]);
+    const j = jrows[0];
+    if (!j || j.deleted_at) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Không tìm thấy job' }); }
+    if (j.status !== 'pending') { await client.query('ROLLBACK'); return res.status(400).json({ error: 'Job không ở trạng thái pending, không thể đổi OPS' }); }
+    if (j.ops_done) { await client.query('ROLLBACK'); return res.status(400).json({ error: 'OPS đã xong việc, không thể đổi' }); }
+
+    const { rows: nu } = await client.query(`SELECT id, name, role FROM users WHERE id = $1`, [newOpsId]);
+    if (!nu[0] || nu[0].role !== 'ops') { await client.query('ROLLBACK'); return res.status(400).json({ error: 'Người dùng không phải OPS' }); }
+
+    const { rows: ou } = await client.query(`SELECT name FROM users WHERE id = $1`, [j.old_ops_id]);
+    const oldName = ou[0]?.name || '(chưa có)';
+    const newName = nu[0].name;
+    const jc = j.job_code || `#${j.id}`;
+
+    const { rows: jaEx } = await client.query(`SELECT id FROM job_assignments WHERE job_id = $1`, [req.params.id]);
+    if (jaEx[0]) {
+      await client.query(`
+        UPDATE job_assignments
+           SET ops_id = $1,
+               ops_done = FALSE,
+               ops_done_at = NULL,
+               assigned_by = $2,
+               assigned_at = NOW()
+         WHERE job_id = $3
+      `, [newOpsId, req.user.id, req.params.id]);
+    } else {
+      await client.query(`
+        INSERT INTO job_assignments (job_id, ops_id, assigned_by, assignment_mode, ops_done)
+        VALUES ($1, $2, $3, 'manual', FALSE)
+      `, [req.params.id, newOpsId, req.user.id]);
+    }
+
+    // Wipe and recreate ops tasks (matches initial assignment rule: only Hai Phong + valid service_type)
+    await client.query(`DELETE FROM job_ops_task WHERE job_id = $1`, [req.params.id]);
+    if (j.destination === 'hai_phong' && ['tk', 'truck', 'both'].includes(j.service_type)) {
+      const taskType = j.service_type === 'truck' ? 'doi_lenh' : 'thong_quan_doi_lenh';
+      await client.query(
+        `INSERT INTO job_ops_task (job_id, ops_id, task_type) VALUES ($1, $2, $3)`,
+        [req.params.id, newOpsId, taskType]
+      );
+    }
+
+    await recordHistory(client, req.params.id, req.user.id, 'ops_reassigned', oldName, newName);
+
+    // Notify new OPS
+    await client.query(
+      `INSERT INTO notifications (user_id, type, title, message, job_id)
+       VALUES ($1, 'manual_job_assigned', 'TP phân job mới', $2, $3)`,
+      [newOpsId, `Trưởng phòng phân bạn job ${jc}`, req.params.id]
+    );
+    // Notify old OPS (if any)
+    if (j.old_ops_id && j.old_ops_id !== newOpsId) {
+      await client.query(
+        `INSERT INTO notifications (user_id, type, title, message, job_id)
+         VALUES ($1, 'job_reassigned', 'Job đã chuyển', $2, $3)`,
+        [j.old_ops_id, `Job ${jc} đã được chuyển sang OPS khác`, req.params.id]
+      );
+    }
+
+    await client.query('COMMIT');
+    suggestionCache = { data: null, ts: 0 };
+    res.json({ ok: true });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
 // POST /api/jobs/:id/refresh-suggestion  (truong_phong_log only)
 router.post('/:id/refresh-suggestion', requireAuth, async (req, res) => {
   if (req.user.role !== 'truong_phong_log') return res.status(403).json({ error: 'Không có quyền' });

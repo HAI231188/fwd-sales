@@ -100,6 +100,8 @@ export const getWaitingAssignments = () => api.get('/jobs/waiting-assignments');
 export const getFilteredJobs = (type, staffId) =>
   api.get('/jobs/filtered', { params: staffId ? { type, staff_id: staffId } : { type } });
 export const manualAssignJob = (id, data) => api.post(`/jobs/${id}/manual-assign`, data);
+export const reassignCus = (id, newCusId) => api.patch(`/jobs/${id}/reassign-cus`, { new_cus_id: newCusId });
+export const reassignOps = (id, newOpsId) => api.patch(`/jobs/${id}/reassign-ops`, { new_ops_id: newOpsId });
 export const refreshJobSuggestion = (id, type) => api.post(`/jobs/${id}/refresh-suggestion`, { type });
 export const markOpsDone = (id) => api.post(`/jobs/${id}/ops-done`, {});
 export const getJobOverview = (params) => api.get('/jobs/overview', { params });

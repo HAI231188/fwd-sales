@@ -5,6 +5,7 @@ import Navbar from '../components/Navbar';
 import JobDetailModal from '../components/JobDetailModal';
 import CreateJobModal from '../components/CreateJobModal';
 import AssignmentModal from '../components/AssignmentModal';
+import ReassignModal from '../components/ReassignModal';
 import JobListModal from '../components/JobListModal';
 import FilteredTable from '../components/FilteredTable';
 import DateRangeFilter from '../components/DateRangeFilter';
@@ -406,6 +407,7 @@ export default function LogDashboardTP() {
   const [showDeadline, setShowDeadline] = useState(false);
   const [assigningJob, setAssigningJob] = useState(null);
   const [showAssignment, setShowAssignment] = useState(null); // 'cus' | 'ops' | null
+  const [reassignTarget, setReassignTarget] = useState(null); // { type: 'cus'|'ops', job }
   const [filterAssignee, setFilterAssignee] = useState('');
   const [isVisible, setIsVisible] = useState(!document.hidden);
   const [visibleCols, setVisibleCols] = useState(loadVisibleCols);
@@ -653,8 +655,66 @@ export default function LogDashboardTP() {
                         case 'cargo':       return <td key={key} style={{ ...cs, whiteSpace: 'nowrap', fontSize: 12 }}>{fmtCargo(j)}</td>;
                         case 'service':     return <td key={key} style={cs}><span className="badge badge-info" style={{ fontSize: 10 }}>{SVC_LABEL[j.service_type] || j.service_type}</span></td>;
                         case 'etd_eta':     return <td key={key} style={{ ...cs, whiteSpace: 'nowrap', color: 'var(--text-2)', fontSize: 12 }}>{fmtDate(j.etd)}<br />{fmtDate(j.eta)}</td>;
-                        case 'cus':         return <td key={key} style={cs}>{j.cus_name ? <span style={{ fontSize: 12 }}>{j.cus_name}</span> : <span style={{ fontSize: 11, color: 'var(--warning)', fontWeight: 600 }}>Chờ phân</span>}</td>;
-                        case 'ops':         return <td key={key} style={cs}>{j.ops_name ? <span style={{ fontSize: 12 }}>{j.ops_name}</span> : <span style={{ color: 'var(--text-3)', fontSize: 12 }}>—</span>}</td>;
+                        case 'cus': {
+                          const cusEligible = tab === 'pending' && !j.tk_completed_at;
+                          if (!j.cus_name) {
+                            return <td key={key} style={cs}>
+                              {cusEligible ? (
+                                <span
+                                  title="Phân CUS"
+                                  style={{ fontSize: 11, color: 'var(--warning)', fontWeight: 600, cursor: 'pointer', textDecoration: 'underline dotted' }}
+                                  onClick={() => setReassignTarget({ type: 'cus', job: j })}
+                                >Chờ phân</span>
+                              ) : (
+                                <span style={{ fontSize: 11, color: 'var(--warning)', fontWeight: 600 }}>Chờ phân</span>
+                              )}
+                            </td>;
+                          }
+                          return <td key={key} style={cs}>
+                            {cusEligible ? (
+                              <span
+                                title="Đổi CUS"
+                                style={{ fontSize: 12, cursor: 'pointer', textDecoration: 'underline dotted', color: 'var(--info)' }}
+                                onClick={() => setReassignTarget({ type: 'cus', job: j })}
+                              >{j.cus_name}</span>
+                            ) : (
+                              <span
+                                title="TK đã hoàn thành, không thể đổi"
+                                style={{ fontSize: 12, color: 'var(--text-3)' }}
+                              >{j.cus_name}</span>
+                            )}
+                          </td>;
+                        }
+                        case 'ops': {
+                          const opsEligible = tab === 'pending' && !j.ops_done;
+                          if (!j.ops_name) {
+                            return <td key={key} style={cs}>
+                              {opsEligible ? (
+                                <span
+                                  title="Phân OPS"
+                                  style={{ color: 'var(--text-3)', fontSize: 12, cursor: 'pointer', textDecoration: 'underline dotted' }}
+                                  onClick={() => setReassignTarget({ type: 'ops', job: j })}
+                                >—</span>
+                              ) : (
+                                <span style={{ color: 'var(--text-3)', fontSize: 12 }}>—</span>
+                              )}
+                            </td>;
+                          }
+                          return <td key={key} style={cs}>
+                            {opsEligible ? (
+                              <span
+                                title="Đổi OPS"
+                                style={{ fontSize: 12, cursor: 'pointer', textDecoration: 'underline dotted', color: 'var(--info)' }}
+                                onClick={() => setReassignTarget({ type: 'ops', job: j })}
+                              >{j.ops_name}</span>
+                            ) : (
+                              <span
+                                title="OPS đã xong việc, không thể đổi"
+                                style={{ fontSize: 12, color: 'var(--text-3)' }}
+                              >{j.ops_name}</span>
+                            )}
+                          </td>;
+                        }
                         case 'notes':       return <td key={key} style={{ ...cs, fontSize: 12, color: 'var(--text-2)', maxWidth: 140 }}>{j.tk_notes || '—'}</td>;
                         default: return null;
                       }
@@ -718,6 +778,13 @@ export default function LogDashboardTP() {
           staffId={typeof jobListFilter === 'string' ? null : jobListFilter.staffId}
           staffName={typeof jobListFilter === 'string' ? null : jobListFilter.staffName}
           onClose={() => setJobListFilter(null)}
+        />
+      )}
+      {reassignTarget && (
+        <ReassignModal
+          type={reassignTarget.type}
+          job={reassignTarget.job}
+          onClose={() => setReassignTarget(null)}
         />
       )}
     </div>

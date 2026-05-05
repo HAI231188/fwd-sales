@@ -14,6 +14,7 @@ const TYPE_ICON = {
   delete_request:      '❌',
   delete_decision:     '✅',
   new_job_created:     '🆕',
+  job_reassigned:      '🔄',
 };
 
 function timeAgo(iso) {
