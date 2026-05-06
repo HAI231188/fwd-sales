@@ -429,6 +429,12 @@ export default function LogDashboardTP() {
     return () => document.removeEventListener('visibilitychange', handler);
   }, []);
 
+  useEffect(() => {
+    const onOpen = e => { if (e.detail?.jobId) setDetailJobId(e.detail.jobId); };
+    window.addEventListener('open-job-detail', onOpen);
+    return () => window.removeEventListener('open-job-detail', onOpen);
+  }, []);
+
   useEffect(() => { setFilterAssignee(''); }, [tab]);
 
   const pollInterval = isVisible ? 5000 : 30000;
@@ -454,7 +460,10 @@ export default function LogDashboardTP() {
 
   const createMut = useMutation({
     mutationFn: data => createJob(data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['jobs', 'jobStats'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['jobs'] });
+      qc.invalidateQueries({ queryKey: ['jobStats'] });
+    },
   });
   const assignMut = useMutation({
     mutationFn: ({ id, data }) => assignJob(id, data),
@@ -462,19 +471,34 @@ export default function LogDashboardTP() {
   });
   const setDlMut = useMutation({
     mutationFn: ({ id, deadline }) => setJobDeadline(id, deadline),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['jobs', 'deadlineRequests', 'jobStats'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['jobs'] });
+      qc.invalidateQueries({ queryKey: ['deadlineRequests'] });
+      qc.invalidateQueries({ queryKey: ['jobStats'] });
+    },
   });
   const reviewMut = useMutation({
     mutationFn: ({ rid, action, dl }) => reviewDeadlineRequest(rid, action, dl),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['jobs', 'deadlineRequests', 'jobStats'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['jobs'] });
+      qc.invalidateQueries({ queryKey: ['deadlineRequests'] });
+      qc.invalidateQueries({ queryKey: ['jobStats'] });
+    },
   });
   const deleteMut = useMutation({
     mutationFn: id => deleteJob(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['jobs', 'jobStats'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['jobs'] });
+      qc.invalidateQueries({ queryKey: ['jobStats'] });
+    },
   });
   const reviewDeleteMut = useMutation({
     mutationFn: ({ rid, action }) => reviewDeleteRequest(rid, action),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['jobs', 'deadlineRequests', 'jobStats'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['jobs'] });
+      qc.invalidateQueries({ queryKey: ['deadlineRequests'] });
+      qc.invalidateQueries({ queryKey: ['jobStats'] });
+    },
   });
 
   const modeLabel = settings?.assignment_mode === 'manual' ? 'Bán tự động' : 'Tự động';

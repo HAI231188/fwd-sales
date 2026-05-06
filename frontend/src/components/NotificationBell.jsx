@@ -1,7 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { createPortal } from 'react-dom';
-import { useNavigate } from 'react-router-dom';
 import { getNotifications, getUnreadCount, markNotificationsRead } from '../api';
 import { useModalZIndex } from '../hooks/useModalZIndex';
 
@@ -34,7 +33,6 @@ function timeAgo(iso) {
 export default function NotificationBell() {
   const [open, setOpen] = useState(false);
   const bellRef = useRef(null);
-  const navigate = useNavigate();
   const qc = useQueryClient();
   const zIndex = useModalZIndex();
 
@@ -74,7 +72,10 @@ export default function NotificationBell() {
   function handleItemClick(n) {
     if (!n.read_at) markMut.mutate({ ids: [n.id] });
     setOpen(false);
-    if (n.job_id) navigate(`#job=${n.job_id}`);
+    // Dispatch a window event the active LOG dashboard listens for; opens JobDetailModal in place.
+    if (n.job_id) {
+      window.dispatchEvent(new CustomEvent('open-job-detail', { detail: { jobId: n.job_id } }));
+    }
   }
 
   // Close on outside click

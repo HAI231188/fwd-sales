@@ -1,7 +1,12 @@
 const jwt = require('jsonwebtoken');
 const db = require('../db');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'fwd-sales-secret-change-in-production';
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  // Fail fast at startup. A missing secret would silently fall back to a
+  // hardcoded default and let any attacker forge tokens.
+  throw new Error('JWT_SECRET environment variable is required');
+}
 
 async function requireAuth(req, res, next) {
   const authHeader = req.headers['authorization'];

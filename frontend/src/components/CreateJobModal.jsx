@@ -82,8 +82,13 @@ export default function CreateJobModal({ onClose, onCreated }) {
     setTimeout(() => searchRef.current?.focus(), 0);
   }
 
-  function switchToNew() {
+  function switchToNew(initialName = '') {
+    // Mirror switchToSearch's reset. Without clearing form.customer_name, a prior
+    // selectCustomer leaves the name populated; typing a prefix in the 'new' input
+    // prepends and corrupts it (e.g. "[TEST] C" + "[TEST] Cong ty ABC").
     setSearchMode('new'); setSelectedCustomer(null); setShowDropdown(false); setSearchQuery('');
+    setForm(f => ({ ...f, customer_name: initialName, customer_address: '', customer_tax_code: '' }));
+    setTimeout(() => searchRef.current?.focus(), 0);
   }
   function switchToSearch() {
     setSearchMode('search'); setSelectedCustomer(null); setSearchQuery('');
@@ -214,7 +219,7 @@ export default function CreateJobModal({ onClose, onCreated }) {
                           </div>
                         ))}
                         {searchQuery && (
-                          <div onMouseDown={switchToNew}
+                          <div onMouseDown={() => switchToNew(searchQuery)}
                             style={{ padding: '10px 14px', cursor: 'pointer', color: 'var(--info)', fontSize: 12, fontStyle: 'italic' }}>
                             + Thêm khách mới "{searchQuery}"
                           </div>

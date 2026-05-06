@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import Navbar from '../components/Navbar';
 import JobDetailModal from '../components/JobDetailModal';
@@ -145,6 +145,12 @@ export default function LogDashboardOps() {
   const [jobListFilter, setJobListFilter] = useState(null);
   const [completedRange, setCompletedRange] = useState({});
 
+  useEffect(() => {
+    const onOpen = e => { if (e.detail?.jobId) setDetailJobId(e.detail.jobId); };
+    window.addEventListener('open-job-detail', onOpen);
+    return () => window.removeEventListener('open-job-detail', onOpen);
+  }, []);
+
   const { data: stats } = useQuery({ queryKey: ['jobStats'], queryFn: getJobStats, refetchInterval: 30000 });
   const { data: pendingJobs = [], isLoading } = useQuery({
     queryKey: ['jobs', 'pending'],
@@ -159,15 +165,24 @@ export default function LogDashboardOps() {
 
   const opsDoneMut = useMutation({
     mutationFn: id => markOpsDone(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['jobs'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['jobs'] });
+      qc.invalidateQueries({ queryKey: ['jobStats'] });
+    },
   });
   const tkMut = useMutation({
     mutationFn: ({ id, data }) => updateJobTk(id, data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['jobs'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['jobs'] });
+      qc.invalidateQueries({ queryKey: ['jobStats'] });
+    },
   });
   const deleteReqMut = useMutation({
     mutationFn: ({ id, reason }) => requestJobDelete(id, reason),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['jobs'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['jobs'] });
+      qc.invalidateQueries({ queryKey: ['jobStats'] });
+    },
   });
 
   const tomorrow = localDate(new Date(Date.now() + 86400000));

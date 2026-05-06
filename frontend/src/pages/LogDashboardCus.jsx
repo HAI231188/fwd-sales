@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import Navbar from '../components/Navbar';
@@ -269,6 +269,12 @@ export default function LogDashboardCus() {
   const [showCreate, setShowCreate] = useState(false);
   const [jobListFilter, setJobListFilter] = useState(null);
   const [completedRange, setCompletedRange] = useState({});
+
+  useEffect(() => {
+    const onOpen = e => { if (e.detail?.jobId) setDetailJobId(e.detail.jobId); };
+    window.addEventListener('open-job-detail', onOpen);
+    return () => window.removeEventListener('open-job-detail', onOpen);
+  }, []);
 
   const { data: stats } = useQuery({ queryKey: ['jobStats'], queryFn: getJobStats, refetchInterval: 30000 });
   const { data: pendingJobs = [], isLoading: isLoadingPending } = useQuery({

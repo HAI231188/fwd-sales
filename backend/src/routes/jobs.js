@@ -1305,6 +1305,7 @@ router.delete('/:id', requireAuth, async (req, res) => {
 
 // POST /api/jobs/:id/assign
 router.post('/:id/assign', requireAuth, async (req, res) => {
+  if (req.user.role !== 'truong_phong_log') return res.status(403).json({ error: 'Không có quyền' });
   const { cus_id, ops_id } = req.body;
   const client = await db.pool.connect();
   try {
@@ -1698,6 +1699,7 @@ router.post('/:id/refresh-suggestion', requireAuth, async (req, res) => {
 
 // PATCH /api/jobs/deadline-requests/:rid/review
 router.patch('/deadline-requests/:rid/review', requireAuth, async (req, res) => {
+  if (req.user.role !== 'truong_phong_log') return res.status(403).json({ error: 'Không có quyền' });
   const { action, new_deadline } = req.body;
   const client = await db.pool.connect();
   let drJobId;
@@ -1978,6 +1980,9 @@ router.patch('/:id/tk', requireAuth, async (req, res) => {
 
 // PATCH /api/jobs/:id/truck
 router.patch('/:id/truck', requireAuth, async (req, res) => {
+  if (req.user.role !== 'truong_phong_log' && req.user.role !== 'dieu_do') {
+    return res.status(403).json({ error: 'Không có quyền' });
+  }
   const FIELDS = ['transport_name','planned_datetime','actual_datetime',
     'vehicle_number','pickup_location','delivery_location','cost','notes'];
   const client = await db.pool.connect();
@@ -2072,6 +2077,7 @@ router.patch('/:id/truck/complete', requireAuth, async (req, res) => {
 
 // POST /api/jobs/:id/ops-task
 router.post('/:id/ops-task', requireAuth, async (req, res) => {
+  if (req.user.role !== 'truong_phong_log') return res.status(403).json({ error: 'Không có quyền' });
   const { ops_id, content, port, deadline } = req.body;
   const client = await db.pool.connect();
   try {
@@ -2103,6 +2109,7 @@ router.post('/:id/ops-task', requireAuth, async (req, res) => {
 
 // PATCH /api/jobs/ops-task/:tid/complete
 router.patch('/ops-task/:tid/complete', requireAuth, async (req, res) => {
+  if (req.user.role !== 'truong_phong_log') return res.status(403).json({ error: 'Không có quyền' });
   const { notes } = req.body;
   const client = await db.pool.connect();
   try {
@@ -2171,10 +2178,18 @@ router.post('/:id/ops-done', requireAuth, async (req, res) => {
   try {
     await client.query('BEGIN');
     const { rows: jobRows } = await client.query(
-      `SELECT j.service_type, jt.tk_status FROM jobs j LEFT JOIN job_tk jt ON jt.job_id = j.id WHERE j.id = $1 AND j.deleted_at IS NULL`,
+      `SELECT j.service_type, jt.tk_status, ja.ops_id
+         FROM jobs j
+         LEFT JOIN job_tk jt ON jt.job_id = j.id
+         LEFT JOIN job_assignments ja ON ja.job_id = j.id
+        WHERE j.id = $1 AND j.deleted_at IS NULL`,
       [req.params.id]
     );
     if (!jobRows[0]) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Không tìm thấy job' }); }
+    if (jobRows[0].ops_id !== req.user.id) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: 'Không có quyền' });
+    }
     const { service_type, tk_status } = jobRows[0];
     const needsTkCheck = service_type === 'tk' || service_type === 'both';
     const terminalStatuses = ['thong_quan', 'giai_phong', 'bao_quan'];

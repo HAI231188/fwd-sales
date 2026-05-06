@@ -48,13 +48,18 @@ export default function AssignmentModal({ initialTab = 'cus', onClose }) {
 
   const modeMut = useMutation({
     mutationFn: mode => updateAssignmentMode(mode),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['jobSettings', 'jobStats'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['jobSettings'] });
+      qc.invalidateQueries({ queryKey: ['jobStats'] });
+    },
   });
 
   const assignMut = useMutation({
     mutationFn: ({ id, data }) => manualAssignJob(id, data),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['waitingAssignments', 'jobStats', 'jobs'] });
+      qc.invalidateQueries({ queryKey: ['waitingAssignments'] });
+      qc.invalidateQueries({ queryKey: ['jobStats'] });
+      qc.invalidateQueries({ queryKey: ['jobs'] });
     },
   });
 

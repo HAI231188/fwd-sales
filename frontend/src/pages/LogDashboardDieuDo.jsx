@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import Navbar from '../components/Navbar';
 import JobDetailModal from '../components/JobDetailModal';
@@ -107,6 +107,12 @@ export default function LogDashboardDieuDo() {
   const [jobListFilter, setJobListFilter] = useState(null);
   const [completedRange, setCompletedRange] = useState({});
 
+  useEffect(() => {
+    const onOpen = e => { if (e.detail?.jobId) setDetailJobId(e.detail.jobId); };
+    window.addEventListener('open-job-detail', onOpen);
+    return () => window.removeEventListener('open-job-detail', onOpen);
+  }, []);
+
   const { data: stats } = useQuery({ queryKey: ['jobStats'], queryFn: getJobStats, refetchInterval: 30000 });
   const { data: pendingJobs = [], isLoading: isLoadingPending } = useQuery({
     queryKey: ['jobs', 'pending'],
@@ -145,7 +151,10 @@ export default function LogDashboardDieuDo() {
   });
   const createMut = useMutation({
     mutationFn: data => createJob(data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['jobs', 'jobStats'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['jobs'] });
+      qc.invalidateQueries({ queryKey: ['jobStats'] });
+    },
   });
 
   function getMissingFieldsTruck(j) {
