@@ -62,7 +62,12 @@ function InlineInput({ value, onSave, type = 'text', placeholder }) {
   const ref = useRef();
 
   function start() { setVal(value || ''); setEditing(true); setTimeout(() => ref.current?.focus(), 0); }
-  function save() { setEditing(false); if (val !== (value || '')) onSave(val || null); }
+  function save() {
+    setEditing(false);
+    // Read DOM value — datetime-local onChange doesn't always fire synchronously.
+    const current = ref.current?.value ?? val;
+    if (current !== (value || '')) onSave(current || null);
+  }
 
   if (!editing) return (
     <span onClick={start} title="Click để sửa"

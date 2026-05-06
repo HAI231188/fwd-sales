@@ -71,7 +71,10 @@ function InlineInput({ value, onSave, type = 'text' }) {
   function start() { setVal(value || ''); setEditing(true); setTimeout(() => ref.current?.focus(), 0); }
   function save() {
     setEditing(false);
-    if (val !== (value || '')) onSave(val || null);
+    // Read from the DOM directly — datetime-local pickers don't always fire
+    // onChange synchronously in every browser, so React state `val` can lag.
+    const current = ref.current?.value ?? val;
+    if (current !== (value || '')) onSave(current || null);
   }
 
   if (!editing) return (

@@ -82,12 +82,13 @@ export default function CreateJobModal({ onClose, onCreated }) {
     setTimeout(() => searchRef.current?.focus(), 0);
   }
 
-  function switchToNew(initialName = '') {
-    // Mirror switchToSearch's reset. Without clearing form.customer_name, a prior
-    // selectCustomer leaves the name populated; typing a prefix in the 'new' input
-    // prepends and corrupts it (e.g. "[TEST] C" + "[TEST] Cong ty ABC").
+  function switchToNew() {
+    // Always start with empty fields. Pre-filling from searchQuery (the previous
+    // approach) caused users who clicked "+ Thêm khách mới" to submit truncated
+    // names ("[TEST] C" instead of the full company name). Empty fields force
+    // the user to type the full customer name.
     setSearchMode('new'); setSelectedCustomer(null); setShowDropdown(false); setSearchQuery('');
-    setForm(f => ({ ...f, customer_name: initialName, customer_address: '', customer_tax_code: '' }));
+    setForm(f => ({ ...f, customer_name: '', customer_address: '', customer_tax_code: '' }));
     setTimeout(() => searchRef.current?.focus(), 0);
   }
   function switchToSearch() {
@@ -219,9 +220,9 @@ export default function CreateJobModal({ onClose, onCreated }) {
                           </div>
                         ))}
                         {searchQuery && (
-                          <div onMouseDown={() => switchToNew(searchQuery)}
+                          <div onMouseDown={() => switchToNew()}
                             style={{ padding: '10px 14px', cursor: 'pointer', color: 'var(--info)', fontSize: 12, fontStyle: 'italic' }}>
-                            + Thêm khách mới "{searchQuery}"
+                            + Thêm khách mới
                           </div>
                         )}
                       </div>
