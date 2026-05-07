@@ -105,6 +105,11 @@ export const reassignOps = (id, newOpsId) => api.patch(`/jobs/${id}/reassign-ops
 export const refreshJobSuggestion = (id, type) => api.post(`/jobs/${id}/refresh-suggestion`, { type });
 export const markOpsDone = (id) => api.post(`/jobs/${id}/ops-done`, {});
 export const getJobOverview = (params) => api.get('/jobs/overview', { params });
+export const getBbbgData = (id) => api.get(`/jobs/${id}/bbbg-data`);
+// Returns a Blob (PDF bytes). The response interceptor unwraps `.data`,
+// so the resolved value here is the Blob itself.
+export const generateBbbgPdf = (id, payload) =>
+  api.post(`/jobs/${id}/bbbg-pdf`, payload, { responseType: 'blob' });
 
 // Global search (LOG team only)
 export const searchGlobal = (params) => api.get('/search', { params });

@@ -7,6 +7,7 @@ import JobListModal from '../components/JobListModal';
 import FilteredTable from '../components/FilteredTable';
 import DateRangeFilter from '../components/DateRangeFilter';
 import StaffSection, { DD_COLS as STAFF_DD_COLS } from '../components/StaffSection';
+import BBBGModal from '../components/BBBGModal';
 import { getJobStats, getJobs, updateJobTruck, completeJobTruck, requestJobDelete, createJob } from '../api';
 
 function fmtDate(val) {
@@ -111,6 +112,7 @@ export default function LogDashboardDieuDo() {
   const [showCreate, setShowCreate] = useState(false);
   const [jobListFilter, setJobListFilter] = useState(null);
   const [completedRange, setCompletedRange] = useState({});
+  const [bbbgJob, setBbbgJob] = useState(null); // { id, code } — opens BBBGModal
 
   useEffect(() => {
     const onOpen = e => { if (e.detail?.jobId) setDetailJobId(e.detail.jobId); };
@@ -391,6 +393,14 @@ export default function LogDashboardDieuDo() {
                           onSave={v => truckMut.mutate({ jobId: j.id, data: { notes: v } })} />
                       </td>
                       <td style={{ ...cs, whiteSpace: 'nowrap' }}>
+                        {(j.transport_name || j.vehicle_number || j.planned_datetime) && (
+                          <button className="btn btn-ghost btn-sm"
+                            title="Tạo Biên Bản Bàn Giao"
+                            style={{ fontSize: 11, padding: '3px 8px', marginRight: 4, color: 'var(--info)', borderColor: 'var(--info)' }}
+                            onClick={() => setBbbgJob({ id: j.id, code: j.job_code || `#${j.id}` })}>
+                            BBBG
+                          </button>
+                        )}
                         {tab === 'pending' && (
                           <button className="btn btn-ghost btn-sm btn-icon"
                             title="Yêu cầu xóa job" style={{ color: 'var(--danger)' }}
@@ -413,6 +423,7 @@ export default function LogDashboardDieuDo() {
       </div>
 
       {detailJobId && <JobDetailModal jobId={detailJobId} onClose={() => setDetailJobId(null)} />}
+      {bbbgJob && <BBBGModal jobId={bbbgJob.id} jobCode={bbbgJob.code} onClose={() => setBbbgJob(null)} />}
       {showCreate && <CreateJobModal onClose={() => setShowCreate(false)} onCreated={data => createMut.mutateAsync(data)} />}
       {jobListFilter && (
         <JobListModal

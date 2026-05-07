@@ -2,6 +2,7 @@ const router = require('express').Router();
 const db = require('../db');
 const { requireAuth } = require('../middleware/auth');
 const { suggestCus, suggestOps } = require('../services/ai-assignment');
+const { buildBbbgPdf } = require('../services/bbbg-pdf');
 
 // In-memory suggestion cache (60s TTL) — invalidated on manual assignment
 let suggestionCache = { data: null, ts: 0 };
@@ -2275,6 +2276,125 @@ router.patch('/:id/complete', requireAuth, async (req, res) => {
     res.status(500).json({ error: err.message });
   } finally {
     client.release();
+  }
+});
+
+// ─── BBBG (Biên Bản Bàn Giao) — generate-on-demand, no persistence ──────────
+function isBbbgRole(req) {
+  return req.user.role === 'dieu_do' || req.user.role === 'truong_phong_log';
+}
+
+// GET /api/jobs/:id/bbbg-data — auto-fill payload for the BBBG modal
+router.get('/:id/bbbg-data', requireAuth, async (req, res) => {
+  if (!isBbbgRole(req)) return res.status(403).json({ error: 'Không có quyền' });
+  try {
+    const { rows: jobRows } = await db.query(`
+      SELECT j.id, j.job_code, j.customer_id, j.customer_name, j.customer_address,
+             j.customer_tax_code, j.cargo_type, j.tons, j.kg, j.so_kien, j.cbm,
+             j.hbl_no, j.mbl_no, j.si_number,
+             jtr.delivery_location AS truck_delivery, jtr.transport_name,
+             jtr.vehicle_number, jtr.planned_datetime,
+             jt.delivery_location AS tk_delivery
+        FROM jobs j
+        LEFT JOIN job_truck jtr ON jtr.job_id = j.id
+        LEFT JOIN job_tk    jt  ON jt.job_id  = j.id
+       WHERE j.id = $1 AND j.deleted_at IS NULL
+    `, [req.params.id]);
+    if (!jobRows[0]) return res.status(404).json({ error: 'Không tìm thấy job' });
+    const job = jobRows[0];
+
+    const { rows: containers } = await db.query(
+      `SELECT id, cont_number, cont_type, seal_number FROM job_containers WHERE job_id = $1 ORDER BY id`,
+      [req.params.id]
+    );
+
+    // Past delivery locations for this customer (name match — customer_id often NULL).
+    const { rows: pastLocations } = await db.query(`
+      SELECT jtr.delivery_location, MAX(j.created_at) AS last_used
+        FROM jobs j
+        JOIN job_truck jtr ON jtr.job_id = j.id
+       WHERE LOWER(j.customer_name) = LOWER($1)
+         AND j.id <> $2
+         AND j.deleted_at IS NULL
+         AND jtr.delivery_location IS NOT NULL
+         AND jtr.delivery_location <> ''
+       GROUP BY jtr.delivery_location
+       ORDER BY last_used DESC
+       LIMIT 5
+    `, [job.customer_name, req.params.id]);
+
+    const isFcl = (job.cargo_type || 'fcl') === 'fcl';
+    const weightValue = isFcl ? job.tons : job.kg;
+    const weightUnit  = isFcl ? 'TONS'   : 'KGS';
+
+    res.json({
+      job_id: job.id,
+      job_code: job.job_code || `#${job.id}`,
+      consignee: job.customer_name || '',
+      delivery_address: job.customer_address || '',
+      hbl_no: job.hbl_no || '',
+      mbl_no: job.mbl_no || '',
+      cargo_type: job.cargo_type || 'fcl',
+      weight_value: weightValue != null ? Number(weightValue) : null,
+      weight_unit: weightUnit,
+      so_kien: job.so_kien != null ? Number(job.so_kien) : null,
+      cbm: job.cbm != null ? Number(job.cbm) : null,
+      containers,
+      suggested_delivery_location: job.truck_delivery || job.tk_delivery || (pastLocations[0]?.delivery_location || ''),
+      past_delivery_locations: pastLocations.map(r => r.delivery_location),
+    });
+  } catch (err) {
+    console.error('GET /bbbg-data error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/jobs/:id/bbbg-pdf — accepts form payload, streams PDF binary
+router.post('/:id/bbbg-pdf', requireAuth, async (req, res) => {
+  if (!isBbbgRole(req)) return res.status(403).json({ error: 'Không có quyền' });
+  try {
+    const { rows: jobRows } = await db.query(
+      `SELECT id, job_code FROM jobs WHERE id = $1 AND deleted_at IS NULL`,
+      [req.params.id]
+    );
+    if (!jobRows[0]) return res.status(404).json({ error: 'Không tìm thấy job' });
+
+    const data = req.body || {};
+    const safeJobCode = (data.job_code || jobRows[0].job_code || `${jobRows[0].id}`).replace(/[^a-zA-Z0-9_-]/g, '_');
+    const datePart = new Date().toISOString().slice(0, 10);
+    const filename = `BBBG_${safeJobCode}_${datePart}.pdf`;
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+
+    const pdf = buildBbbgPdf({
+      job_code:         data.job_code         || jobRows[0].job_code || `#${jobRows[0].id}`,
+      today_date:       data.today_date       || new Date().toLocaleDateString('vi-VN'),
+      consignee:        data.consignee        || '',
+      shipper:          data.shipper          || '',
+      vessel:           data.vessel           || '',
+      voy:              data.voy              || '',
+      from_:            data.from_            || data.from || '',
+      terminal:         data.terminal         || '',
+      hbl_no:           data.hbl_no           || '',
+      mbl_no:           data.mbl_no           || '',
+      description:      data.description      || 'AS PER BILL',
+      containers:       Array.isArray(data.containers) ? data.containers : [],
+      weight_value:     data.weight_value,
+      weight_unit:      data.weight_unit      || '',
+      so_kien:          data.so_kien,
+      delivery_company: data.delivery_company || '',
+      delivery_address: data.delivery_address || '',
+      recipient_name:   data.recipient_name   || '',
+      delivery_time:    data.delivery_time    || '',
+      delivery_date:    data.delivery_date    || '',
+      remarks:          data.remarks          || '',
+      creator_name:     req.user.name         || '',
+    });
+    pdf.pipe(res);
+  } catch (err) {
+    console.error('POST /bbbg-pdf error:', err.message);
+    if (!res.headersSent) res.status(500).json({ error: err.message });
   }
 });
 
