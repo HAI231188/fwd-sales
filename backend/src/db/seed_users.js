@@ -8,11 +8,11 @@ const USERS = [
   { name: 'Hoàng',     username: 'hoang',   code: 'HOA',  role: 'sales', avatar_color: '#f59e0b' },
   { name: 'Cường',     username: 'cuong',   code: 'CU',   role: 'sales', avatar_color: '#ec4899' },
   { name: 'Thu',       username: 'thu',     code: 'TH',   role: 'sales', avatar_color: '#3b82f6' },
-  { name: 'Vân',       username: 'van',     code: 'VAN',  role: 'sales', avatar_color: '#10b981' },
+  { name: 'Sếp Chương', username: 'sepchuong', code: 'SC',   role: 'sales', avatar_color: '#10b981', password: 'sepchuong2024' },
   { name: 'Mr Hải',    username: 'hai',     code: 'HAI',  role: 'lead',  avatar_color: '#ff6b35' },
-  { name: 'Nam',       username: 'nam',     code: 'NAM',  role: 'sales', avatar_color: '#f97316', password: 'nam2024'  },
-  { name: 'Linh',      username: 'linh2',   code: 'LI',   role: 'sales', avatar_color: '#06b6d4', password: 'linh2024' },
-  { name: 'Hải',       username: 'hai2',    code: 'HAI2', role: 'sales', avatar_color: '#8b5cf6', password: 'hai22024' },
+  { name: 'Trọng',     username: 'trong',   code: 'TR',   role: 'sales', avatar_color: '#f97316', password: 'trong2024' },
+  { name: 'Công Ty',   username: 'congty',  code: 'CT',   role: 'sales', avatar_color: '#06b6d4', password: 'congty2024' },
+  { name: 'Edward',    username: 'edward',  code: 'ED',   role: 'sales', avatar_color: '#8b5cf6', password: 'edward2024' },
   { name: 'Vy',        username: 'vy',      code: 'VY',   role: 'sales', avatar_color: '#e11d48', password: 'vy2024'   },
 ];
 
