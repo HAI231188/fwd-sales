@@ -36,6 +36,7 @@ export default function CreateJobModal({ onClose, onCreated }) {
   const [containers, setContainers] = useState([EMPTY_CONT()]);
   const [form, setForm] = useState(INIT_FORM);
   const [saving, setSaving] = useState(false);
+  const [showTransferConfirm, setShowTransferConfirm] = useState(false);
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const toggleOs = k => setForm(f => ({ ...f, other_services: { ...f.other_services, [k]: !f.other_services[k] } }));
@@ -97,8 +98,16 @@ export default function CreateJobModal({ onClose, onCreated }) {
     setTimeout(() => searchRef.current?.focus(), 0);
   }
 
-  async function submit() {
+  async function submit({ confirmedTransfer = false } = {}) {
     if (!form.customer_name || !form.service_type) return;
+    // Pipeline transfer guard: if user changed sales_id away from the selected customer's
+    // existing sales, require explicit confirmation (destructive — old sales loses data).
+    const willTransfer = !!(selectedCustomer && selectedCustomer.sales_id && form.sales_id &&
+      Number(form.sales_id) !== Number(selectedCustomer.sales_id));
+    if (willTransfer && !confirmedTransfer) {
+      setShowTransferConfirm(true);
+      return;
+    }
     setSaving(true);
     try {
       await onCreated({
@@ -250,10 +259,16 @@ export default function CreateJobModal({ onClose, onCreated }) {
             <div className="form-group">
               <label className="form-label">Sales phụ trách</label>
               <select className="form-select" value={form.sales_id}
-                disabled={locked} onChange={e => set('sales_id', e.target.value)}>
+                onChange={e => set('sales_id', e.target.value)}>
                 <option value="">-- Chọn --</option>
                 {salesStaff.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
+              {selectedCustomer && selectedCustomer.sales_id && form.sales_id &&
+               Number(form.sales_id) !== Number(selectedCustomer.sales_id) && (
+                <div style={{ fontSize: 11, color: 'var(--warning)', marginTop: 4 }}>
+                  ⚠ Sẽ chuyển khách khỏi pipeline của {selectedCustomer.sales_name || 'sales cũ'}
+                </div>
+              )}
             </div>
           </div>
           <div className="form-group" style={{ marginTop: 12 }}>
@@ -384,11 +399,44 @@ export default function CreateJobModal({ onClose, onCreated }) {
           <button className="btn btn-ghost btn-sm" onClick={onClose}>Hủy</button>
           <button className="btn btn-primary btn-sm"
             disabled={!form.customer_name || !form.service_type || saving}
-            onClick={submit}>
+            onClick={() => submit()}>
             {saving ? 'Đang lưu...' : 'Tạo Job'}
           </button>
         </div>
       </div>
+
+      {showTransferConfirm && (
+        <div className="modal-overlay" style={{ zIndex: zIndex + 1 }}
+          onClick={e => { if (e.target === e.currentTarget) setShowTransferConfirm(false); }}>
+          <div className="modal" style={{ maxWidth: 480, width: '95%' }}>
+            <div className="modal-header">
+              <h3 style={{ margin: 0, fontSize: 16 }}>Chuyển khách sang sales khác</h3>
+              <button className="btn btn-ghost btn-sm btn-icon" onClick={() => setShowTransferConfirm(false)}>✕</button>
+            </div>
+            <div className="modal-body" style={{ padding: 16, fontSize: 13, lineHeight: 1.5 }}>
+              <p>
+                Khách hàng <strong>{form.customer_name}</strong> hiện thuộc pipeline của{' '}
+                <strong>{selectedCustomer?.sales_name || 'sales cũ'}</strong>.
+              </p>
+              <p style={{ color: 'var(--danger)', marginTop: 10 }}>
+                Tiếp tục sẽ chuyển khách sang{' '}
+                <strong>{salesStaff.find(s => Number(s.id) === Number(form.sales_id))?.name || 'sales mới'}</strong>{' '}
+                và <strong>xóa toàn bộ lịch sử pipeline</strong> (bao gồm các tương tác đã ghi nhận) của{' '}
+                <strong>{selectedCustomer?.sales_name || 'sales cũ'}</strong>. Hành động này không thể hoàn tác.
+              </p>
+              <p style={{ marginTop: 10 }}>Xác nhận?</p>
+            </div>
+            <div className="modal-footer" style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, padding: 12, borderTop: '1px solid var(--border)' }}>
+              <button className="btn btn-ghost btn-sm" onClick={() => setShowTransferConfirm(false)} disabled={saving}>Hủy</button>
+              <button className="btn btn-danger btn-sm"
+                disabled={saving}
+                onClick={() => { setShowTransferConfirm(false); submit({ confirmedTransfer: true }); }}>
+                {saving ? 'Đang lưu...' : 'Chuyển khách'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   ), document.body);
 }

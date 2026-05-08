@@ -1002,17 +1002,37 @@ router.post('/', requireAuth, async (req, res) => {
       }
     }
 
-    if (customer_id) {
-      await client.query(`
-        UPDATE customer_pipeline SET stage = 'booked', updated_at = NOW()
-        WHERE customer_id = $1 AND stage != 'booked'
-      `, [customer_id]);
-    } else if (is_new_customer && sales_id && customer_name) {
-      await client.query(`
-        INSERT INTO customer_pipeline (sales_id, company_name, stage)
-        VALUES ($1, $2, 'booked')
-        ON CONFLICT (sales_id, LOWER(company_name)) DO UPDATE SET stage = 'booked', updated_at = NOW()
-      `, [sales_id, customer_name]);
+    // Pipeline ownership transfer (L14).
+    // When sales_id is provided, the customer (matched by lowered name or customer_id FK)
+    // should belong to ONLY that sales user. Any pipeline rows owned by other sales for
+    // the same customer are wiped — including child `customers` interaction rows (manual
+    // DELETE since the FK is SET NULL not CASCADE). pipeline_history + pipeline_delete_requests
+    // cascade automatically.
+    let pipelineTransfer = { transferredFromSales: [], wasNewlyInserted: false, customerName: customer_name };
+    if (sales_id && customer_name) {
+      const { rows: others } = await client.query(
+        `SELECT cp.id, cp.sales_id, u.name AS sales_name
+           FROM customer_pipeline cp
+           LEFT JOIN users u ON u.id = cp.sales_id
+          WHERE cp.sales_id != $1
+            AND ( LOWER(cp.company_name) = LOWER($2)
+                  OR ($3::int IS NOT NULL AND cp.customer_id = $3::int) )`,
+        [sales_id, customer_name, customer_id || null]
+      );
+      for (const r of others) {
+        await client.query(`DELETE FROM customers WHERE pipeline_id = $1`, [r.id]);
+        await client.query(`DELETE FROM customer_pipeline WHERE id = $1`, [r.id]);
+        pipelineTransfer.transferredFromSales.push({ sales_id: r.sales_id, sales_name: r.sales_name });
+      }
+      const { rows: upserted } = await client.query(
+        `INSERT INTO customer_pipeline (sales_id, company_name, customer_id, stage)
+         VALUES ($1, $2, $3, 'booked')
+         ON CONFLICT (sales_id, LOWER(company_name))
+           DO UPDATE SET stage = 'booked', updated_at = NOW()
+         RETURNING id, (xmax = 0) AS was_inserted`,
+        [sales_id, customer_name, customer_id || null]
+      );
+      pipelineTransfer.wasNewlyInserted = !!upserted[0]?.was_inserted;
     }
 
     if (service_type === 'truck' || service_type === 'both') {
@@ -1115,6 +1135,34 @@ router.post('/', requireAuth, async (req, res) => {
           `INSERT INTO notifications (user_id, type, title, message, job_id)
            VALUES ($1, 'new_job_created', 'Job mới được tạo', $2, $3)`,
           [tp.id, `${salesName} vừa tạo job ${job.job_code || `#${job.id}`} - ${customer_name}`, job.id]
+        );
+      }
+    }
+
+    // Pipeline transfer notifications + history (L14).
+    if (sales_id && customer_name) {
+      const actor = (await client.query(`SELECT name FROM users WHERE id = $1`, [req.user.id])).rows[0]?.name || 'Người dùng';
+      const newSales = (await client.query(`SELECT name FROM users WHERE id = $1`, [sales_id])).rows[0]?.name || 'Sales';
+      if (pipelineTransfer.transferredFromSales.length > 0) {
+        for (const old of pipelineTransfer.transferredFromSales) {
+          await client.query(
+            `INSERT INTO notifications (user_id, type, title, message, job_id)
+             VALUES ($1, 'pipeline_transferred_out', 'Khách bị chuyển khỏi pipeline', $2, $3)`,
+            [old.sales_id, `Khách ${customer_name} đã được chuyển khỏi pipeline của bạn bởi ${actor}`, job.id]
+          );
+        }
+        await client.query(
+          `INSERT INTO notifications (user_id, type, title, message, job_id)
+           VALUES ($1, 'pipeline_transferred_in', 'Khách được chuyển vào pipeline', $2, $3)`,
+          [sales_id, `Khách ${customer_name} đã được thêm vào pipeline của bạn (stage Đã booking)`, job.id]
+        );
+        const oldNames = pipelineTransfer.transferredFromSales.map(o => o.sales_name).filter(Boolean).join(', ') || '(unknown)';
+        await recordHistory(client, job.id, req.user.id, 'pipeline_transferred', oldNames, newSales);
+      } else if (pipelineTransfer.wasNewlyInserted) {
+        await client.query(
+          `INSERT INTO notifications (user_id, type, title, message, job_id)
+           VALUES ($1, 'pipeline_added', 'Khách mới vào pipeline', $2, $3)`,
+          [sales_id, `Khách ${customer_name} đã được thêm vào pipeline của bạn (stage Đã booking)`, job.id]
         );
       }
     }

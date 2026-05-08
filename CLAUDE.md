@@ -288,6 +288,30 @@ Also applies to backend route handlers with parallel structure (e.g. PATCH /tk, 
 
 ---
 
+### L14 — Customer pipeline ownership transfers on job creation
+
+**Root cause pattern:** Customers in this system don't belong to "the company" — they belong to a specific `sales_id` via `customer_pipeline.sales_id`. When TP/lead/DD creates a job for an existing customer but selects a different sales user, ownership must transfer cleanly. Doing nothing leaves the old sales' pipeline intact and creates a duplicate row for the new sales — splitting the customer across two pipelines and confusing every downstream stat.
+
+**Behavior** (implemented in `routes/jobs.js` POST `/api/jobs` after the job INSERT):
+
+1. If `sales_id && customer_name` are both present in the create-job request, find any pipelines owned by other sales for the same customer (matched by `LOWER(company_name)` OR `customer_id` FK).
+2. For each: `DELETE FROM customers WHERE pipeline_id = X` (manual — `customers.pipeline_id` is `ON DELETE SET NULL`, not CASCADE; we want hard delete here so old sales loses interaction history too), then `DELETE FROM customer_pipeline WHERE id = X`. Cascades clear `pipeline_history` and `pipeline_delete_requests` automatically.
+3. UPSERT pipeline for the chosen sales: `INSERT ... ON CONFLICT (sales_id, LOWER(company_name)) DO UPDATE SET stage='booked'`. Use `RETURNING id, (xmax = 0) AS was_inserted` — the `xmax = 0` PostgreSQL trick distinguishes a newly-inserted row from an updated one.
+4. Notifications:
+   - Old sales (each one if multiple): `type='pipeline_transferred_out'` — "Khách [name] đã được chuyển khỏi pipeline của bạn bởi [actor]"
+   - New sales: `type='pipeline_transferred_in'` (when transfer happened) OR `type='pipeline_added'` (when fresh insert, no transfer)
+5. Audit on the JOB (not the deleted pipeline): `recordHistory(job_id, 'pipeline_transferred', oldSalesNames, newSalesName)`.
+
+**Frontend confirmation** (`CreateJobModal.jsx`): when `selectedCustomer.sales_id !== form.sales_id`, intercept submit with a confirm dialog showing both names and the destructive nature. The sales dropdown is editable (the previous `disabled={locked}` was removed) so any user — TP, CUS, DD — can trigger transfer per spec.
+
+**Rules:**
+1. Whenever you read or write `customer_pipeline.sales_id`, remember that the sales user is the *owner*, not the company. Don't query "all pipelines for company X" without filtering by `sales_id`.
+2. The `(sales_id, LOWER(company_name))` UNIQUE INDEX is the canonical key. The pre-transfer DELETE uses name-match OR FK-match because the indexed key is `sales_id + name` only.
+3. The `xmax = 0` clause on `RETURNING` after `ON CONFLICT` is the standard way to detect insert-vs-update without a second query.
+4. Manual `DELETE FROM customers WHERE pipeline_id = X` is required because the FK is `SET NULL` (intentional for unrelated paths). Don't change the FK to CASCADE — that affects user-deletion cleanup too.
+
+Applies to any future feature that re-assigns a customer between sales users.
+
 ### L13 — Snapshot pattern for FKs to user-managed reference tables
 
 **Root cause pattern:** When introducing a reference table (e.g. `transport_companies`) and pointing existing rows at it via FK, two real-world problems hit immediately:

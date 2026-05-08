@@ -5,15 +5,18 @@ import { getNotifications, getUnreadCount, markNotificationsRead } from '../api'
 import { useModalZIndex } from '../hooks/useModalZIndex';
 
 const TYPE_ICON = {
-  ai_job_assigned:     '🤖',
-  manual_job_assigned: '📋',
-  deadline_request:    '⏰',
-  deadline_proposed:   '⏰',
-  deadline_reviewed:   '⏰',
-  delete_request:      '❌',
-  delete_decision:     '✅',
-  new_job_created:     '🆕',
-  job_reassigned:      '🔄',
+  ai_job_assigned:           '🤖',
+  manual_job_assigned:       '📋',
+  deadline_request:          '⏰',
+  deadline_proposed:         '⏰',
+  deadline_reviewed:         '⏰',
+  delete_request:            '❌',
+  delete_decision:           '✅',
+  new_job_created:           '🆕',
+  job_reassigned:            '🔄',
+  pipeline_transferred_out:  '➡️',
+  pipeline_transferred_in:   '⬅️',
+  pipeline_added:            '➕',
 };
 
 function timeAgo(iso) {
