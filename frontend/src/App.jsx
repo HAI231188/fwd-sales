@@ -9,6 +9,7 @@ import LogDashboardTP from './pages/LogDashboardTP';
 import LogDashboardDieuDo from './pages/LogDashboardDieuDo';
 import LogDashboardCus from './pages/LogDashboardCus';
 import LogDashboardOps from './pages/LogDashboardOps';
+import TransportCompaniesPage from './pages/TransportCompaniesPage';
 
 const LOG_ROLES = ['truong_phong_log', 'dieu_do', 'cus', 'cus1', 'cus2', 'cus3', 'ops'];
 
@@ -87,6 +88,11 @@ export default function App() {
           <Route path="/log-dashboard" element={
             <ProtectedRoute roles={LOG_ROLES}>
               <LogDashboard />
+            </ProtectedRoute>
+          } />
+          <Route path="/transport-companies" element={
+            <ProtectedRoute roles={['truong_phong_log', 'dieu_do']}>
+              <TransportCompaniesPage />
             </ProtectedRoute>
           } />
           <Route path="*" element={<Navigate to="/" replace />} />

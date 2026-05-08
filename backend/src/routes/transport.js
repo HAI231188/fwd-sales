@@ -24,16 +24,23 @@ router.get('/', requireAuth, async (req, res) => {
   const search = (req.query.search || '').trim();
   const limit = Math.min(parseInt(req.query.limit, 10) || 20, 100);
   const params = [];
-  let where = 'deleted_at IS NULL';
+  let where = 'tc.deleted_at IS NULL';
   if (search) {
     params.push(`%${search}%`);
-    where += ` AND name ILIKE $${params.length}`;
+    where += ` AND tc.name ILIKE $${params.length}`;
   }
   params.push(limit);
   try {
     const { rows } = await db.query(
-      `SELECT id, name, tax_code, address, email, phone, contact_person, notes, created_at, updated_at
-       FROM transport_companies WHERE ${where} ORDER BY name LIMIT $${params.length}`,
+      `SELECT tc.id, tc.name, tc.tax_code, tc.address, tc.email, tc.phone,
+              tc.contact_person, tc.notes, tc.created_at, tc.updated_at,
+              COUNT(DISTINCT jtr.job_id)::int AS job_count
+         FROM transport_companies tc
+         LEFT JOIN job_truck jtr ON jtr.transport_company_id = tc.id
+        WHERE ${where}
+        GROUP BY tc.id
+        ORDER BY tc.name
+        LIMIT $${params.length}`,
       params
     );
     res.json(rows);

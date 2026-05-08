@@ -57,6 +57,20 @@ export default function Navbar() {
           </div>
         </div>
 
+        {/* Menu — TP + DD only */}
+        {user && (user.role === 'truong_phong_log' || user.role === 'dieu_do') && (
+          <div style={{ display: 'flex', gap: 4 }}>
+            <button
+              className="btn btn-ghost btn-sm"
+              onClick={() => navigate('/transport-companies')}
+              style={{ fontSize: 12, padding: '5px 10px', color: '#6b7280' }}
+              title="Quản lý vận tải"
+            >
+              🚚 Tên vận tải
+            </button>
+          </div>
+        )}
+
         {/* Global search — LOG team only */}
         {user && LOG_ROLES.includes(user.role) && <GlobalSearch />}
 
