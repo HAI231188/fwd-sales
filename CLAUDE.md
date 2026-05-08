@@ -89,6 +89,7 @@ fwd-sales/
 | DASHBOARD | `/api/stats/*` | `routes/stats.js`, `LeadDashboard.jsx`, `SalesDashboard.jsx` |
 | INTERACTION | (part of pipeline) | `CustomerDetailModal.jsx` — threaded updates, follow-up completion |
 | BBBG | `GET /api/jobs/:id/bbbg-data`, `POST /api/jobs/:id/bbbg-pdf` | `services/bbbg-pdf.js`, `BBBGModal.jsx`, `LogDashboardDieuDo.jsx` — generate-on-demand delivery handover PDF (no persistence). Role-gated to `truong_phong_log` + `dieu_do`. Optional fonts at `backend/src/assets/fonts/Roboto-{Regular,Bold,Italic}.ttf`; falls back to Helvetica with a warning if absent. |
+| TRANSPORT | `/api/transport-companies/*` | `routes/transport.js`, `TransportPicker.jsx`, `TransportFormModal.jsx` — Quản lý tên vận tải. Picker-only UI; no free-text transport names accepted from the DieuDo grid or JobDetailModal. `job_truck` carries both `transport_company_id` (FK, ON DELETE SET NULL) and `transport_name` (snapshot — survives company deletion or rename). Read-open to all authenticated users; write (POST/PATCH/DELETE) gated to `truong_phong_log` + `dieu_do`. Soft-delete only. Case-insensitive UNIQUE on name (`LOWER(name)`). |
 
 ### Future modules (do not build yet)
 
@@ -286,6 +287,38 @@ Also applies to backend route handlers with parallel structure (e.g. PATCH /tk, 
 6. Never ship a job/customer list view without clickable rows — this is a core UX contract.
 
 ---
+
+### L13 — Snapshot pattern for FKs to user-managed reference tables
+
+**Root cause pattern:** When introducing a reference table (e.g. `transport_companies`) and pointing existing rows at it via FK, two real-world problems hit immediately:
+
+1. **Renames in the reference table change history.** If `transport_companies.name` is updated and you only store `transport_company_id` on `job_truck`, every past job retroactively shows the new name — which makes printed/exported documents (like BBBG) incorrect.
+2. **Hard-deletes break referential closure.** Even with `ON DELETE SET NULL`, the moment the FK clears, you have no idea what the row used to point at.
+
+**Pattern (used by transport_companies):** keep BOTH the FK and a denormalized "snapshot" string column. On select/update, write both. On read, prefer the JOIN'd current name when the FK is non-null (so renames flow through to live UI), but fall back to the snapshot when the FK is null (so legacy rows and post-delete rows still render). This gives you:
+- Renames flow through to live data ✓
+- Soft-delete: row keeps showing through current FK ✓
+- Hard-delete (FK SET NULL): snapshot survives ✓
+- Legacy rows from before the FK was introduced ✓ (FK = NULL, snapshot = whatever they had)
+
+Example concrete shape:
+```sql
+ALTER TABLE job_truck
+  ADD COLUMN transport_company_id INTEGER REFERENCES transport_companies(id) ON DELETE SET NULL;
+-- Existing transport_name column stays. New writes set both columns from the picker.
+SELECT j.*, tc.name AS tc_name, jtr.transport_name
+FROM jobs j LEFT JOIN job_truck jtr ON ...
+            LEFT JOIN transport_companies tc ON tc.id = jtr.transport_company_id;
+-- Frontend renders: tc_name ?? transport_name
+```
+
+**Rules:**
+1. When adding a FK to a user-managed reference table that names things (companies, ports, products, etc.), keep a `*_name` snapshot column too. Write both.
+2. Prefer `ON DELETE SET NULL` over CASCADE for these FKs. The snapshot column is the historical record.
+3. Add a `LOWER(name)` UNIQUE INDEX on the reference table — VARCHAR UNIQUE alone is case-sensitive and `"Vinasun"` vs `"VINASUN"` will both insert.
+4. The snapshot column can be marked "legacy" in the UI when FK is NULL (small visual hint to encourage re-picking from the dropdown).
+
+Applies to future tables: `ports`, `vendors`, `forwarders`, `customs_brokers`, etc.
 
 ### L12 — Debug with real data before fixing, and beware of default values
 

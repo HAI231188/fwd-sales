@@ -485,3 +485,34 @@ BEGIN
 EXCEPTION WHEN others THEN NULL;
 END $$;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_job_assignments_unique_job_id ON job_assignments(job_id);
+
+-- ============================================================
+-- Transport Companies (Quản lý tên vận tải)
+-- Picker-only UI in DieuDo dashboard; soft-delete for safety.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS transport_companies (
+  id              SERIAL PRIMARY KEY,
+  name            VARCHAR(200) NOT NULL,
+  tax_code        VARCHAR(30),
+  address         TEXT,
+  email           VARCHAR(200),
+  phone           VARCHAR(30),
+  contact_person  VARCHAR(100),
+  notes           TEXT,
+  created_by      INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at      TIMESTAMPTZ DEFAULT NOW(),
+  updated_at      TIMESTAMPTZ DEFAULT NOW(),
+  deleted_at      TIMESTAMPTZ
+);
+-- Case-insensitive uniqueness on name (defensive — VARCHAR UNIQUE alone is case-sensitive).
+-- Excludes soft-deleted rows so a re-create after delete is allowed.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_transport_companies_name_lower
+  ON transport_companies (LOWER(name)) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_transport_companies_active
+  ON transport_companies (deleted_at) WHERE deleted_at IS NULL;
+
+-- FK on job_truck — backward compat: legacy rows keep transport_name only with NULL FK.
+-- ON DELETE SET NULL: hard-deleting a company nullifies the FK; transport_name snapshot survives.
+ALTER TABLE job_truck ADD COLUMN IF NOT EXISTS transport_company_id
+  INTEGER REFERENCES transport_companies(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_job_truck_transport_company_id ON job_truck(transport_company_id);

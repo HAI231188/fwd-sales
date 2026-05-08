@@ -8,6 +8,7 @@ import FilteredTable from '../components/FilteredTable';
 import DateRangeFilter from '../components/DateRangeFilter';
 import StaffSection, { DD_COLS as STAFF_DD_COLS } from '../components/StaffSection';
 import BBBGModal from '../components/BBBGModal';
+import TransportPicker from '../components/TransportPicker';
 import { getJobStats, getJobs, updateJobTruck, completeJobTruck, requestJobDelete, createJob } from '../api';
 
 function fmtDate(val) {
@@ -319,8 +320,9 @@ export default function LogDashboardDieuDo() {
                           : <span style={{ color: 'var(--text-3)' }}>—</span>}
                       </td>
                       <td style={{ padding: '8px 6px', minWidth: 130 }}>
-                        <InlineInput value={j.transport_name} placeholder="Nhập vận tải..."
-                          onSave={v => truckMut.mutate({ jobId: j.id, data: { transport_name: v } })} />
+                        <TransportPicker compact
+                          value={{ transport_company_id: j.transport_company_id, transport_name: j.transport_name }}
+                          onChange={v => truckMut.mutate({ jobId: j.id, data: { transport_company_id: v.transport_company_id, transport_name: v.transport_name } })} />
                       </td>
                       <td style={{ padding: '8px 6px', minWidth: 155 }}>
                         <InlineInput type="datetime-local" value={toDatetimeLocal(j.planned_datetime)}

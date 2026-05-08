@@ -886,7 +886,9 @@ router.get('/', requireAuth, async (req, res) => {
         jt.tk_datetime, jt.tq_datetime, jt.services_completed,
         jt.delivery_datetime, jt.delivery_location, jt.truck_booked,
         jt.completed_at AS tk_completed_at, jt.notes AS tk_notes,
-        jtr.id AS truck_id, jtr.transport_name, jtr.planned_datetime, jtr.actual_datetime,
+        jtr.id AS truck_id, jtr.transport_name, jtr.transport_company_id,
+        tc.name AS tc_name,
+        jtr.planned_datetime, jtr.actual_datetime,
         jtr.vehicle_number, jtr.pickup_location,
         jtr.delivery_location AS truck_delivery_location,
         jtr.cost, jtr.completed_at AS truck_completed_at, jtr.notes AS truck_notes,
@@ -916,6 +918,7 @@ router.get('/', requireAuth, async (req, res) => {
       LEFT JOIN users u_created ON u_created.id = j.created_by
       LEFT JOIN job_tk jt ON jt.job_id = j.id
       LEFT JOIN job_truck jtr ON jtr.job_id = j.id
+      LEFT JOIN transport_companies tc ON tc.id = jtr.transport_company_id
       ${WHERE}
       ORDER BY j.created_at DESC
     `, params);
@@ -1984,7 +1987,7 @@ router.patch('/:id/truck', requireAuth, async (req, res) => {
   if (req.user.role !== 'truong_phong_log' && req.user.role !== 'dieu_do') {
     return res.status(403).json({ error: 'Không có quyền' });
   }
-  const FIELDS = ['transport_name','planned_datetime','actual_datetime',
+  const FIELDS = ['transport_name','transport_company_id','planned_datetime','actual_datetime',
     'vehicle_number','pickup_location','delivery_location','cost','notes'];
   const client = await db.pool.connect();
   try {

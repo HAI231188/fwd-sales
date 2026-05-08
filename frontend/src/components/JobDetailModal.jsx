@@ -2,6 +2,7 @@ import { useState, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getJob, updateJobTk, updateJobTruck, updateJob, deleteJob, requestJobDelete, getLogStaff } from '../api';
+import TransportPicker from './TransportPicker';
 import { useModalZIndex } from '../hooks/useModalZIndex';
 import { useAuth } from '../App';
 
@@ -779,7 +780,9 @@ export default function JobDetailModal({ jobId, onClose }) {
                       {canEditTruck ? (
                         <>
                           <ERow label="Vận tải">
-                            <InlineInput value={truck.transport_name} onSave={v => truckMut.mutate({ transport_name: v })} />
+                            <TransportPicker
+                              value={{ transport_company_id: truck.transport_company_id, transport_name: truck.transport_name }}
+                              onChange={v => truckMut.mutate({ transport_company_id: v.transport_company_id, transport_name: v.transport_name })} />
                           </ERow>
                           <ERow label="Số xe">
                             <InlineInput value={truck.vehicle_number} onSave={v => truckMut.mutate({ vehicle_number: v })} />

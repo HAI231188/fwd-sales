@@ -114,6 +114,14 @@ export const generateBbbgPdf = (id, payload) =>
 // Global search (LOG team only)
 export const searchGlobal = (params) => api.get('/search', { params });
 
+// Transport companies (Quản lý tên vận tải)
+export const getTransportCompanies = (search = '') =>
+  api.get('/transport-companies', { params: search ? { search } : {} });
+export const getTransportCompany = (id) => api.get(`/transport-companies/${id}`);
+export const createTransportCompany = (data) => api.post('/transport-companies', data);
+export const updateTransportCompany = (id, data) => api.patch(`/transport-companies/${id}`, data);
+export const deleteTransportCompany = (id) => api.delete(`/transport-companies/${id}`);
+
 // Notifications
 export const getNotifications = () => api.get('/notifications');
 export const getUnreadCount = () => api.get('/notifications/unread-count');
