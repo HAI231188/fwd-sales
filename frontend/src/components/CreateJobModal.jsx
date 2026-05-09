@@ -12,6 +12,8 @@ const EMPTY_CONT = () => ({ cont_type: '40DC', cont_number: '', seal_number: '' 
 
 const INIT_FORM = {
   job_code: '', si_number: '', customer_name: '', customer_address: '', customer_tax_code: '',
+  // Invoice info + short name (L15) — required when "Khách mới" tab is active.
+  company_full_name: '', invoice_address: '', short_name: '', invoice_tax_code: '',
   sales_id: '', pol: '', pod: '', mbl_no: '', hbl_no: '',
   etd: '', eta: '', tons: '', cbm: '', kg: '', so_kien: '', deadline: '', han_lenh: '',
   service_type: 'tk', other_services: {}, destination: '',
@@ -37,6 +39,7 @@ export default function CreateJobModal({ onClose, onCreated }) {
   const [form, setForm] = useState(INIT_FORM);
   const [saving, setSaving] = useState(false);
   const [showTransferConfirm, setShowTransferConfirm] = useState(false);
+  const [invoiceErr, setInvoiceErr] = useState('');
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const toggleOs = k => setForm(f => ({ ...f, other_services: { ...f.other_services, [k]: !f.other_services[k] } }));
@@ -73,6 +76,11 @@ export default function CreateJobModal({ onClose, onCreated }) {
       customer_address: c.customer_address || '',
       customer_tax_code: c.customer_tax_code || '',
       sales_id: c.sales_id ? String(c.sales_id) : f.sales_id,
+      // Pre-fill invoice info from pipeline snapshot (L15).
+      company_full_name: c.company_full_name || '',
+      invoice_address:   c.invoice_address   || '',
+      short_name:        c.short_name        || '',
+      invoice_tax_code:  c.pipeline_tax_code || '',
     }));
   }
 
@@ -99,7 +107,17 @@ export default function CreateJobModal({ onClose, onCreated }) {
   }
 
   async function submit({ confirmedTransfer = false } = {}) {
+    setInvoiceErr('');
     if (!form.customer_name || !form.service_type) return;
+    // Invoice-info guard (L15) — required only in "Khách mới" mode (new customer).
+    if (searchMode === 'new') {
+      const missing = !form.company_full_name?.trim() || !form.invoice_tax_code?.trim() ||
+                      !form.invoice_address?.trim()   || !form.short_name?.trim();
+      if (missing) {
+        setInvoiceErr('Vui lòng nhập đủ thông tin xuất hóa đơn');
+        return;
+      }
+    }
     // Pipeline transfer guard: if user changed sales_id away from the selected customer's
     // existing sales, require explicit confirmation (destructive — old sales loses data).
     const willTransfer = !!(selectedCustomer && selectedCustomer.sales_id && form.sales_id &&
@@ -240,11 +258,37 @@ export default function CreateJobModal({ onClose, onCreated }) {
                 )}
               </div>
             ) : (
-              <div className="form-group" style={{ marginBottom: 0 }}>
-                <label className="form-label">Tên khách hàng *</label>
-                <input className="form-input" value={form.customer_name}
-                  onChange={e => set('customer_name', e.target.value)} placeholder="Tên công ty..." autoFocus />
-              </div>
+              <>
+                <div className="form-group" style={{ marginBottom: 8 }}>
+                  <label className="form-label">Tên khách hàng *</label>
+                  <input className="form-input" value={form.customer_name}
+                    onChange={e => set('customer_name', e.target.value)} placeholder="Tên ngắn gọn / nội bộ..." autoFocus />
+                </div>
+                <div className="form-group" style={{ marginBottom: 8 }}>
+                  <label className="form-label">Tên công ty (xuất HĐ) *</label>
+                  <input className="form-input" value={form.company_full_name}
+                    onChange={e => set('company_full_name', e.target.value)}
+                    placeholder="VD: CÔNG TY CỔ PHẦN ABC VIỆT NAM" />
+                </div>
+                <div className="grid-2" style={{ gap: 8, marginBottom: 8 }}>
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label className="form-label">MST *</label>
+                    <input className="form-input" value={form.invoice_tax_code}
+                      onChange={e => set('invoice_tax_code', e.target.value)} placeholder="0301234567" />
+                  </div>
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label className="form-label">Tên viết tắt * (max 20)</label>
+                    <input className="form-input" maxLength={20} value={form.short_name}
+                      onChange={e => set('short_name', e.target.value)} placeholder="VD: ABC" />
+                  </div>
+                </div>
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label className="form-label">Địa chỉ xuất HĐ *</label>
+                  <input className="form-input" value={form.invoice_address}
+                    onChange={e => set('invoice_address', e.target.value)}
+                    placeholder="Địa chỉ ghi trên hóa đơn..." />
+                </div>
+              </>
             )}
           </div>
 
@@ -395,6 +439,11 @@ export default function CreateJobModal({ onClose, onCreated }) {
           </div>
         </div>
 
+        {invoiceErr && (
+          <div style={{ margin: '0 16px 12px', padding: 10, background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 6, color: 'var(--danger)', fontSize: 13 }}>
+            {invoiceErr}
+          </div>
+        )}
         <div className="modal-footer">
           <button className="btn btn-ghost btn-sm" onClick={onClose}>Hủy</button>
           <button className="btn btn-primary btn-sm"

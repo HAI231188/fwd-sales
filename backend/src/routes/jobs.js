@@ -378,6 +378,8 @@ router.get('/customer-search', requireAuth, async (req, res) => {
     const { rows } = await db.query(`
       SELECT cp.id AS pipeline_id, cp.customer_id, cp.sales_id,
         cp.company_name AS customer_name, cp.contact_person, cp.phone,
+        cp.company_full_name, cp.invoice_address, cp.short_name,
+        cp.tax_code AS pipeline_tax_code,
         u.name AS sales_name,
         COALESCE(c.address, (SELECT j.customer_address FROM jobs j
           WHERE (j.customer_id = cp.customer_id OR LOWER(j.customer_name) = LOWER(cp.company_name))
@@ -937,6 +939,8 @@ router.post('/', requireAuth, async (req, res) => {
     etd, eta, tons, cbm, deadline, service_type, other_services,
     is_new_customer, cargo_type, so_kien, kg, containers, destination, han_lenh,
     si_number, mbl_no, hbl_no,
+    // Invoice info + short name (L15) — sent by CreateJobModal in "Khách mới" mode.
+    company_full_name, invoice_address, short_name, invoice_tax_code,
   } = req.body;
 
   if (!customer_name || !service_type) {
@@ -1024,13 +1028,23 @@ router.post('/', requireAuth, async (req, res) => {
         await client.query(`DELETE FROM customer_pipeline WHERE id = $1`, [r.id]);
         pipelineTransfer.transferredFromSales.push({ sales_id: r.sales_id, sales_name: r.sales_name });
       }
+      // ON CONFLICT preserves existing invoice fields (DO UPDATE only sets stage/updated_at).
+      // New rows get the values from the form; if the form didn't supply them, default ''.
       const { rows: upserted } = await client.query(
-        `INSERT INTO customer_pipeline (sales_id, company_name, customer_id, stage)
-         VALUES ($1, $2, $3, 'booked')
+        `INSERT INTO customer_pipeline
+           (sales_id, company_name, customer_id, stage,
+            company_full_name, invoice_address, short_name, tax_code)
+         VALUES ($1, $2, $3, 'booked', $4, $5, $6, $7)
          ON CONFLICT (sales_id, LOWER(company_name))
            DO UPDATE SET stage = 'booked', updated_at = NOW()
          RETURNING id, (xmax = 0) AS was_inserted`,
-        [sales_id, customer_name, customer_id || null]
+        [
+          sales_id, customer_name, customer_id || null,
+          (company_full_name || '').toString().trim(),
+          (invoice_address   || '').toString().trim(),
+          (short_name        || '').toString().trim().slice(0, 20),
+          (invoice_tax_code  || '').toString().trim(),
+        ]
       );
       pipelineTransfer.wasNewlyInserted = !!upserted[0]?.was_inserted;
     }

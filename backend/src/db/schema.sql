@@ -516,3 +516,13 @@ CREATE INDEX IF NOT EXISTS idx_transport_companies_active
 ALTER TABLE job_truck ADD COLUMN IF NOT EXISTS transport_company_id
   INTEGER REFERENCES transport_companies(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS idx_job_truck_transport_company_id ON job_truck(transport_company_id);
+
+-- ============================================================
+-- Invoice info + short name on customer_pipeline (L15)
+-- Required for new customers added via CreateJobModal "Khách mới" tab.
+-- Existing rows fill with empty-string defaults.
+-- ============================================================
+ALTER TABLE customer_pipeline ADD COLUMN IF NOT EXISTS company_full_name VARCHAR(300) DEFAULT '';
+ALTER TABLE customer_pipeline ADD COLUMN IF NOT EXISTS invoice_address   TEXT          DEFAULT '';
+ALTER TABLE customer_pipeline ADD COLUMN IF NOT EXISTS short_name        VARCHAR(20)   DEFAULT '';
+ALTER TABLE customer_pipeline ADD COLUMN IF NOT EXISTS tax_code          VARCHAR(30)   DEFAULT '';
