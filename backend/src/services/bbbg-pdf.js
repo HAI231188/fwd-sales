@@ -172,6 +172,22 @@ function buildBbbgPdf(data) {
 
   doc.y = rowY + 10;
 
+  // Invoice info section (L15) — render only if at least one of the 3 fields is non-empty.
+  const invCompany = (data.invoice_company_name || '').trim();
+  const invTax     = (data.invoice_tax_code     || '').trim();
+  const invAddr    = (data.invoice_address      || '').trim();
+  if (invCompany || invTax || invAddr) {
+    doc.font('RB').fontSize(10).text('Thông tin xuất hóa đơn', left);
+    doc.font('RI').fontSize(8.5).fillColor('#444').text('(Invoice information)', left, doc.y);
+    doc.fillColor('#000');
+    doc.moveDown(0.5);
+    let iy = doc.y;
+    iy = fieldRow(doc, 'Tên công ty (xuất HĐ)', 'Company name (for invoice)', invCompany, left, iy, labelW, usableW - labelW);
+    iy = fieldRow(doc, 'MST',                   'Tax code',                   invTax,     left, iy, labelW, usableW - labelW);
+    iy = fieldRow(doc, 'Địa chỉ',               'Address',                    invAddr,    left, iy, labelW, usableW - labelW);
+    doc.y = iy + 4;
+  }
+
   // Delivery confirmation block
   doc.font('RB').fontSize(10).text('Đã được giao trong tình trạng hoàn hảo đến:', left);
   doc.font('RI').fontSize(8.5).fillColor('#444').text('(Has been delivered in perfect condition to:)', left, doc.y);

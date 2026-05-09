@@ -2358,10 +2358,17 @@ router.get('/:id/bbbg-data', requireAuth, async (req, res) => {
              j.hbl_no, j.mbl_no, j.si_number,
              jtr.delivery_location AS truck_delivery, jtr.transport_name,
              jtr.vehicle_number, jtr.planned_datetime,
-             jt.delivery_location AS tk_delivery
+             jt.delivery_location AS tk_delivery,
+             cp.company_full_name, cp.tax_code AS pipeline_tax_code, cp.invoice_address
         FROM jobs j
         LEFT JOIN job_truck jtr ON jtr.job_id = j.id
         LEFT JOIN job_tk    jt  ON jt.job_id  = j.id
+        LEFT JOIN LATERAL (
+          SELECT company_full_name, tax_code, invoice_address
+          FROM customer_pipeline
+          WHERE LOWER(company_name) = LOWER(j.customer_name)
+          ORDER BY id DESC LIMIT 1
+        ) cp ON true
        WHERE j.id = $1 AND j.deleted_at IS NULL
     `, [req.params.id]);
     if (!jobRows[0]) return res.status(404).json({ error: 'Không tìm thấy job' });
@@ -2406,6 +2413,10 @@ router.get('/:id/bbbg-data', requireAuth, async (req, res) => {
       containers,
       suggested_delivery_location: job.truck_delivery || job.tk_delivery || (pastLocations[0]?.delivery_location || ''),
       past_delivery_locations: pastLocations.map(r => r.delivery_location),
+      // Invoice info from customer_pipeline (L15) — empty strings if no pipeline match.
+      invoice_company_name: job.company_full_name || '',
+      invoice_tax_code:     job.pipeline_tax_code || '',
+      invoice_address:      job.invoice_address   || '',
     });
   } catch (err) {
     console.error('GET /bbbg-data error:', err.message);
@@ -2418,12 +2429,40 @@ router.post('/:id/bbbg-pdf', requireAuth, async (req, res) => {
   if (!isBbbgRole(req)) return res.status(403).json({ error: 'Không có quyền' });
   try {
     const { rows: jobRows } = await db.query(
-      `SELECT id, job_code FROM jobs WHERE id = $1 AND deleted_at IS NULL`,
+      `SELECT id, job_code, customer_name FROM jobs WHERE id = $1 AND deleted_at IS NULL`,
       [req.params.id]
     );
     if (!jobRows[0]) return res.status(404).json({ error: 'Không tìm thấy job' });
 
     const data = req.body || {};
+    const invoiceCompanyName = (data.invoice_company_name || '').toString().trim();
+    const invoiceTaxCode     = (data.invoice_tax_code     || '').toString().trim();
+    const invoiceAddress     = (data.invoice_address      || '').toString().trim();
+
+    // Save-as-default: persist to ALL matching customer_pipeline rows (one customer
+    // can be in multiple pipelines per L14). Failure here is non-fatal — PDF still
+    // generates, we just log a warning. Must run BEFORE we set headers/stream the PDF.
+    if (data.save_as_default === true) {
+      try {
+        const r = await db.query(
+          `UPDATE customer_pipeline
+              SET company_full_name = $1,
+                  tax_code          = $2,
+                  invoice_address   = $3,
+                  updated_at        = NOW()
+            WHERE LOWER(company_name) = LOWER($4)
+            RETURNING id`,
+          [invoiceCompanyName, invoiceTaxCode, invoiceAddress, jobRows[0].customer_name || '']
+        );
+        if (r.rows.length === 0) {
+          console.warn('[bbbg-pdf] save_as_default: no pipeline rows matched customer_name=' +
+            JSON.stringify(jobRows[0].customer_name));
+        }
+      } catch (saveErr) {
+        console.warn('[bbbg-pdf] save_as_default failed (PDF still generated):', saveErr.message);
+      }
+    }
+
     const safeJobCode = (data.job_code || jobRows[0].job_code || `${jobRows[0].id}`).replace(/[^a-zA-Z0-9_-]/g, '_');
     const datePart = new Date().toISOString().slice(0, 10);
     const filename = `BBBG_${safeJobCode}_${datePart}.pdf`;
@@ -2454,6 +2493,10 @@ router.post('/:id/bbbg-pdf', requireAuth, async (req, res) => {
       delivery_date:    data.delivery_date    || '',
       remarks:          data.remarks          || '',
       creator_name:     req.user.name         || '',
+      // Invoice info — pdf service skips the section if all 3 are empty.
+      invoice_company_name: invoiceCompanyName,
+      invoice_tax_code:     invoiceTaxCode,
+      invoice_address:      invoiceAddress,
     });
     pdf.pipe(res);
   } catch (err) {

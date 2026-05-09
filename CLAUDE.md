@@ -311,6 +311,12 @@ Also applies to backend route handlers with parallel structure (e.g. PATCH /tk, 
 
 **Customer-search response** (`GET /api/jobs/customer-search`): SELECT now includes `cp.company_full_name`, `cp.invoice_address`, `cp.tax_code AS pipeline_tax_code`. Frontend's `selectCustomer(c)` reads these to pre-fill.
 
+**BBBG flow consumption** (`GET /api/jobs/:id/bbbg-data` + `POST /:id/bbbg-pdf` + `BBBGModal.jsx`):
+- bbbg-data SELECT does a `LEFT JOIN LATERAL` against `customer_pipeline` keyed by `LOWER(company_name) = LOWER(j.customer_name)` (picks the row with highest id), exposes `invoice_company_name`, `invoice_tax_code`, `invoice_address` in the response.
+- Modal pre-fills 3 inputs from those fields. ĐĐ can override per-PDF.
+- Modal includes a checkbox `save_as_default` (default unchecked). When ticked, POST `/bbbg-pdf` body carries `save_as_default: true`, and the backend runs `UPDATE customer_pipeline SET company_full_name=$1, tax_code=$2, invoice_address=$3, updated_at=NOW() WHERE LOWER(company_name) = LOWER($4)` against ALL pipeline rows matching the customer (a customer can be in multiple pipelines per L14). Save runs BEFORE the PDF stream starts and is wrapped in try/catch — failures log a warning but do not block PDF generation.
+- The PDF service inserts a "Thông tin xuất hóa đơn / (Invoice information)" section between the container table and the delivery confirmation block. Section is **omitted entirely** when all 3 fields are empty after `.trim()` — no blank rows print.
+
 **Rules:**
 1. The 3 invoice fields live on `customer_pipeline` only. Don't duplicate them onto `jobs` or `customers`.
 2. ON CONFLICT branch must NOT touch invoice fields — preserves existing data per the spec.

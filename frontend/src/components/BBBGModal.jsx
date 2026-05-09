@@ -82,6 +82,11 @@ export default function BBBGModal({ jobId, jobCode, onClose }) {
         delivery_time:    todayHHmm(),
         delivery_date:    fmtToday(),
         remarks: '',
+        // Invoice info (L15) — pre-fill from customer_pipeline snapshot via bbbg-data.
+        invoice_company_name: data.invoice_company_name || '',
+        invoice_tax_code:     data.invoice_tax_code     || '',
+        invoice_address:      data.invoice_address      || '',
+        save_as_default:      false,
       });
     }
   }, [data, form]);
@@ -107,6 +112,7 @@ export default function BBBGModal({ jobId, jobCode, onClose }) {
         ...form,
         weight_value: form.weight_value === '' ? null : Number(form.weight_value),
         so_kien:      form.so_kien      === '' ? null : Number(form.so_kien),
+        save_as_default: !!form.save_as_default,
       };
       const blob = await generateBbbgPdf(jobId, payload);
       const safeCode = String(form.job_code || jobCode || jobId).replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -202,6 +208,35 @@ export default function BBBGModal({ jobId, jobCode, onClose }) {
                   <Field label="Số kiện" en="Pieces (LCL)">
                     <input className="form-input" type="number" value={form.so_kien} onChange={e => set('so_kien', e.target.value)} />
                   </Field>
+                </div>
+              </Section>
+
+              <Section title="Thông tin xuất hóa đơn">
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                  <Field label="Tên công ty (xuất HĐ)" en="Company name" span={2}>
+                    <input className="form-input" value={form.invoice_company_name}
+                      placeholder="VD: CÔNG TY CỔ PHẦN ABC VIỆT NAM"
+                      onChange={e => set('invoice_company_name', e.target.value)} />
+                  </Field>
+                  <Field label="MST" en="Tax code">
+                    <input className="form-input" value={form.invoice_tax_code}
+                      placeholder="0301234567"
+                      onChange={e => set('invoice_tax_code', e.target.value)} />
+                  </Field>
+                  <Field label="Địa chỉ xuất HĐ" en="Invoice address">
+                    <input className="form-input" value={form.invoice_address}
+                      placeholder="Địa chỉ trên hóa đơn..."
+                      onChange={e => set('invoice_address', e.target.value)} />
+                  </Field>
+                  <div style={{ gridColumn: 'span 2', marginTop: 4 }}>
+                    <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: 12, color: 'var(--text-2)', cursor: 'pointer' }}
+                      title="Tick để cập nhật thông tin xuất HĐ mặc định cho khách. Bỏ tick nếu chỉ override 1 lần cho lô này.">
+                      <input type="checkbox" checked={!!form.save_as_default}
+                        onChange={e => set('save_as_default', e.target.checked)}
+                        style={{ marginTop: 2, flexShrink: 0 }} />
+                      <span>Lưu làm thông tin xuất hóa đơn mặc định cho khách hàng này (lần sau tự động fill)</span>
+                    </label>
+                  </div>
                 </div>
               </Section>
 
