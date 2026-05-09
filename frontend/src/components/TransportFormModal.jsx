@@ -11,22 +11,35 @@ const EMPTY = {
 // initialName: pre-fill the name field (used when opened from "+ Thêm vận tải mới")
 // existing: full transport_company row when editing; null when creating
 // onSaved(savedRecord): called after successful POST/PATCH so caller can auto-select
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 export default function TransportFormModal({ initialName = '', existing = null, onClose, onSaved }) {
   const zIndex = useModalZIndex();
   const isEdit = !!existing;
   const [form, setForm] = useState(() => existing
     ? { ...EMPTY, ...existing }
     : { ...EMPTY, name: initialName });
+  // L16 — email_cc rows. Allow empty strings while editing (so user can keep typing
+  // before validation kicks in). On submit, filter empties + validate each.
+  const [cc, setCc] = useState(() => Array.isArray(existing?.email_cc) ? [...existing.email_cc] : []);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
 
   function set(k, v) { setForm(f => ({ ...f, [k]: v })); }
+  function setCcAt(i, v)   { setCc(arr => arr.map((x, idx) => idx === i ? v : x)); }
+  function removeCcAt(i)   { setCc(arr => arr.filter((_, idx) => idx !== i)); }
+  function addCcRow()      { setCc(arr => [...arr, '']); }
 
   async function submit() {
     setErr('');
     if (!form.name.trim()) { setErr('Tên vận tải là bắt buộc'); return; }
-    if (form.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) {
+    if (form.email && !EMAIL_RE.test(form.email)) {
       setErr('Email không hợp lệ'); return;
+    }
+    // email_cc validation — drop empties, then check each
+    const cleanedCc = cc.map(e => (e || '').trim()).filter(e => e.length > 0);
+    for (const e of cleanedCc) {
+      if (!EMAIL_RE.test(e)) { setErr(`Email không hợp lệ: ${e}`); return; }
     }
     setSaving(true);
     try {
@@ -38,6 +51,7 @@ export default function TransportFormModal({ initialName = '', existing = null, 
         phone:    form.phone?.trim()    || null,
         contact_person: form.contact_person?.trim() || null,
         notes:    form.notes?.trim()    || null,
+        email_cc: cleanedCc,
       };
       const saved = isEdit
         ? await updateTransportCompany(existing.id, payload)
@@ -84,6 +98,37 @@ export default function TransportFormModal({ initialName = '', existing = null, 
           <div className="form-group">
             <label className="form-label">Địa chỉ</label>
             <input className="form-input" value={form.address} onChange={e => set('address', e.target.value)} />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Email CC</label>
+            {cc.length === 0 && (
+              <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 6 }}>Chưa có email CC nào.</div>
+            )}
+            {cc.map((value, i) => (
+              <div key={i} style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
+                <input
+                  className="form-input"
+                  type="email"
+                  placeholder={`email${i + 1}@example.com`}
+                  value={value}
+                  onChange={e => setCcAt(i, e.target.value)}
+                  style={{ flex: 1 }}
+                />
+                <button
+                  className="btn btn-ghost btn-sm btn-icon"
+                  title="Xóa email này"
+                  style={{ color: 'var(--danger)' }}
+                  onClick={() => removeCcAt(i)}
+                  type="button"
+                >🗑</button>
+              </div>
+            ))}
+            <button
+              className="btn btn-ghost btn-sm"
+              style={{ fontSize: 12, marginTop: 2 }}
+              onClick={addCcRow}
+              type="button"
+            >+ Thêm email CC</button>
           </div>
           <div className="form-group">
             <label className="form-label">Ghi chú</label>

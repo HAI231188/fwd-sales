@@ -527,3 +527,11 @@ ALTER TABLE customer_pipeline ADD COLUMN IF NOT EXISTS invoice_address   TEXT   
 ALTER TABLE customer_pipeline ADD COLUMN IF NOT EXISTS tax_code          VARCHAR(30)   DEFAULT '';
 -- short_name removed (was duplicate of company_name; see L15 revision).
 ALTER TABLE customer_pipeline DROP COLUMN IF EXISTS short_name;
+
+-- ============================================================
+-- Email CC list on transport_companies (L16) — stored as JSON-stringified array.
+-- Reason: TEXT keeps the schema simple and lets us preserve order client-side.
+-- A native TEXT[] would also work but JSON is closer to the wire format already
+-- consumed by the frontend. Validate at backend; never trust on read.
+-- ============================================================
+ALTER TABLE transport_companies ADD COLUMN IF NOT EXISTS email_cc TEXT DEFAULT '[]';

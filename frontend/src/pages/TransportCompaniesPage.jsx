@@ -108,6 +108,7 @@ export default function TransportCompaniesPage() {
                     <th style={th}>Tên</th>
                     <th style={th}>MST</th>
                     <th style={th}>Email</th>
+                    <th style={{ ...th, textAlign: 'center' }}>Email CC</th>
                     <th style={th}>SĐT</th>
                     <th style={th}>Người liên hệ</th>
                     <th style={{ ...th, textAlign: 'center' }}>Số job đã chạy</th>
@@ -116,7 +117,7 @@ export default function TransportCompaniesPage() {
                 </thead>
                 <tbody>
                   {sorted.length === 0 && (
-                    <tr><td colSpan={7} style={{ padding: 30, textAlign: 'center', color: 'var(--text-3)', fontSize: 13 }}>
+                    <tr><td colSpan={8} style={{ padding: 30, textAlign: 'center', color: 'var(--text-3)', fontSize: 13 }}>
                       {search ? 'Không có vận tải nào khớp tìm kiếm' : 'Chưa có vận tải nào — bấm "+ Thêm vận tải mới" để tạo'}
                     </td></tr>
                   )}
@@ -125,6 +126,15 @@ export default function TransportCompaniesPage() {
                       <td style={td}><strong>{c.name}</strong></td>
                       <td style={td}>{c.tax_code || '—'}</td>
                       <td style={td}>{c.email || '—'}</td>
+                      <td style={{ ...td, textAlign: 'center' }}>
+                        {Array.isArray(c.email_cc) && c.email_cc.length > 0 ? (
+                          <span title={c.email_cc.join('\n')} style={{ cursor: 'help', fontWeight: 500, color: 'var(--info)' }}>
+                            {c.email_cc.length} email{c.email_cc.length > 1 ? 's' : ''}
+                          </span>
+                        ) : (
+                          <span style={{ color: 'var(--text-3)' }}>—</span>
+                        )}
+                      </td>
                       <td style={td}>{c.phone || '—'}</td>
                       <td style={td}>{c.contact_person || '—'}</td>
                       <td style={{ ...td, textAlign: 'center', fontWeight: 600, color: c.job_count > 0 ? 'var(--info)' : 'var(--text-3)' }}>

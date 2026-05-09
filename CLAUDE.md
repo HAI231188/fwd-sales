@@ -288,6 +288,28 @@ Also applies to backend route handlers with parallel structure (e.g. PATCH /tk, 
 
 ---
 
+### L16 — JSON-array text columns for small repeated values
+
+**Root cause pattern:** When a parent row needs an unbounded list of small values (CC emails, tags, alternate phone numbers, etc.), a child table is overkill — the lifecycle is identical to the parent and there's never a reason to query individual elements server-side. The natural shape is a JSON-stringified array stored in a single TEXT column.
+
+**Concrete shape** (used by `transport_companies.email_cc`):
+- Schema: `email_cc TEXT DEFAULT '[]'`. Default is the empty-array JSON literal so a parsed read is always defined.
+- Wire format: array of strings on the wire (`['ops@vinasun.vn','billing@vinasun.vn']`); JSON-stringified on disk (`'["ops@vinasun.vn","billing@vinasun.vn"]'`). Backend translates at the boundary in BOTH directions.
+- Read helper (`parseEmailCc`): `JSON.parse` with safe `[]` fallback on any parse error or non-array result. Single corrupt row never breaks the list endpoint or page.
+- Write helper (`prepareEmailCc`): trim each element, drop empties, validate non-empty entries via the same regex as scalar email field (`/^[^\s@]+@[^\s@]+\.[^\s@]+$/`). Returns `{ok: true, value: <jsonString>}` or `{ok: false, badEmail: <first-failing>}`. Backend returns 400 with the offending email so the user sees which one is wrong.
+- Frontend state: array including empty strings while editing (so user can keep typing without losing focus or hitting validation prematurely). Filter+validate only on submit.
+
+**Rules:**
+1. Choose JSON-array TEXT (not native `TEXT[]` or a separate child table) when:
+   - Items are small (emails, tags, short codes — not multi-field records)
+   - Lifecycle matches parent (deleted with parent, no independent timestamps)
+   - You never need to query for parent rows where "any element matches X" — if you do, use a child table or `TEXT[]` + GIN index.
+2. Always JSON.parse with try/catch and a safe fallback. Don't trust the disk.
+3. Validate every element on write — never write an array containing values that wouldn't pass the scalar field's check.
+4. The empty-array default `'[]'` (not `''`, not `NULL`) keeps the parse helper trivial.
+
+Currently: `transport_companies.email_cc`. Future candidates: alternate phone numbers, supplier-provided tracking numbers per shipment, OPS-task tags, etc.
+
 ### L15 — Invoice info on customer_pipeline (snapshot semantics, preserve-on-conflict)
 
 **Root cause pattern:** Invoice data — full legal company name, tax code, invoice address — needs to live somewhere queryable per customer. Storing it on `jobs` would require duplicating across every job for the same customer. Storing it on `customers` interaction rows would scatter it across N rows. The natural home is `customer_pipeline` (one row per `(sales_id, lowered company_name)` per L14).
