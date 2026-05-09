@@ -12,8 +12,8 @@ const EMPTY_CONT = () => ({ cont_type: '40DC', cont_number: '', seal_number: '' 
 
 const INIT_FORM = {
   job_code: '', si_number: '', customer_name: '', customer_address: '', customer_tax_code: '',
-  // Invoice info + short name (L15) — required when "Khách mới" tab is active.
-  company_full_name: '', invoice_address: '', short_name: '', invoice_tax_code: '',
+  // Invoice info (L15) — required when "Khách mới" tab is active.
+  company_full_name: '', invoice_address: '', invoice_tax_code: '',
   sales_id: '', pol: '', pod: '', mbl_no: '', hbl_no: '',
   etd: '', eta: '', tons: '', cbm: '', kg: '', so_kien: '', deadline: '', han_lenh: '',
   service_type: 'tk', other_services: {}, destination: '',
@@ -79,7 +79,6 @@ export default function CreateJobModal({ onClose, onCreated }) {
       // Pre-fill invoice info from pipeline snapshot (L15).
       company_full_name: c.company_full_name || '',
       invoice_address:   c.invoice_address   || '',
-      short_name:        c.short_name        || '',
       invoice_tax_code:  c.pipeline_tax_code || '',
     }));
   }
@@ -112,7 +111,7 @@ export default function CreateJobModal({ onClose, onCreated }) {
     // Invoice-info guard (L15) — required only in "Khách mới" mode (new customer).
     if (searchMode === 'new') {
       const missing = !form.company_full_name?.trim() || !form.invoice_tax_code?.trim() ||
-                      !form.invoice_address?.trim()   || !form.short_name?.trim();
+                      !form.invoice_address?.trim();
       if (missing) {
         setInvoiceErr('Vui lòng nhập đủ thông tin xuất hóa đơn');
         return;
@@ -270,17 +269,10 @@ export default function CreateJobModal({ onClose, onCreated }) {
                     onChange={e => set('company_full_name', e.target.value)}
                     placeholder="VD: CÔNG TY CỔ PHẦN ABC VIỆT NAM" />
                 </div>
-                <div className="grid-2" style={{ gap: 8, marginBottom: 8 }}>
-                  <div className="form-group" style={{ margin: 0 }}>
-                    <label className="form-label">MST *</label>
-                    <input className="form-input" value={form.invoice_tax_code}
-                      onChange={e => set('invoice_tax_code', e.target.value)} placeholder="0301234567" />
-                  </div>
-                  <div className="form-group" style={{ margin: 0 }}>
-                    <label className="form-label">Tên viết tắt * (max 20)</label>
-                    <input className="form-input" maxLength={20} value={form.short_name}
-                      onChange={e => set('short_name', e.target.value)} placeholder="VD: ABC" />
-                  </div>
+                <div className="form-group" style={{ marginBottom: 8 }}>
+                  <label className="form-label">MST *</label>
+                  <input className="form-input" value={form.invoice_tax_code}
+                    onChange={e => set('invoice_tax_code', e.target.value)} placeholder="0301234567" />
                 </div>
                 <div className="form-group" style={{ marginBottom: 0 }}>
                   <label className="form-label">Địa chỉ xuất HĐ *</label>

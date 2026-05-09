@@ -290,29 +290,29 @@ Also applies to backend route handlers with parallel structure (e.g. PATCH /tk, 
 
 ### L15 — Invoice info on customer_pipeline (snapshot semantics, preserve-on-conflict)
 
-**Root cause pattern:** Invoice data — full legal company name, tax code, invoice address, short name — needs to live somewhere queryable per customer. Storing it on `jobs` would require duplicating across every job for the same customer. Storing it on `customers` interaction rows would scatter it across N rows. The natural home is `customer_pipeline` (one row per `(sales_id, lowered company_name)` per L14).
+**Root cause pattern:** Invoice data — full legal company name, tax code, invoice address — needs to live somewhere queryable per customer. Storing it on `jobs` would require duplicating across every job for the same customer. Storing it on `customers` interaction rows would scatter it across N rows. The natural home is `customer_pipeline` (one row per `(sales_id, lowered company_name)` per L14).
+
+> Earlier revision included a `short_name` column but it was dropped — `customer_pipeline.company_name` already serves as the internal short/display name. Don't add it back without a clear new use case.
 
 **Schema** (idempotent ALTER):
 - `customer_pipeline.company_full_name VARCHAR(300) DEFAULT ''` — official Vietnamese legal name (e.g. `'CÔNG TY CỔ PHẦN ABC VIỆT NAM'`)
 - `customer_pipeline.invoice_address TEXT DEFAULT ''` — full address as it must appear on the printed invoice
-- `customer_pipeline.short_name VARCHAR(20) DEFAULT ''` — internal abbreviation (e.g. `'ABC'`)
 - `customer_pipeline.tax_code VARCHAR(30) DEFAULT ''` — MST. Note: `customers.tax_code` already exists for the sales-CRM side and `jobs.customer_tax_code` exists separately — these are 3 distinct columns despite similar names.
 
 **Form behavior** (`CreateJobModal.jsx`):
-- 4 inputs appear only in "Khách mới" mode (creating a new customer). All required.
-- "Tên viết tắt" capped at 20 chars (`maxLength={20}`).
-- Submit guard: if any of the 4 is empty in `searchMode === 'new'`, show inline error `"Vui lòng nhập đủ thông tin xuất hóa đơn"` and abort.
-- When user picks an EXISTING customer (search mode), the 4 fields auto-fill from `customer-search` response — this lets the user verify the saved values without retyping.
+- 3 inputs appear only in "Khách mới" mode (creating a new customer). All required.
+- Submit guard: if any of the 3 is empty in `searchMode === 'new'`, show inline error `"Vui lòng nhập đủ thông tin xuất hóa đơn"` and abort.
+- When user picks an EXISTING customer (search mode), the 3 fields auto-fill from `customer-search` response — this lets the user verify the saved values without retyping.
 
 **Backend behavior** (`POST /api/jobs`):
-- Destructure adds `company_full_name`, `invoice_address`, `short_name`, `invoice_tax_code` (the last is the JS variable name to avoid collision with the existing `customer_tax_code` on the `jobs` table — DB column is plain `tax_code`).
-- INSERT writes all 4 columns alongside `(sales_id, company_name, customer_id, stage)`.
-- `ON CONFLICT (sales_id, LOWER(company_name)) DO UPDATE SET stage='booked', updated_at=NOW()` — the 4 new columns are NOT in the SET clause, so existing values are preserved per spec.
+- Destructure adds `company_full_name`, `invoice_address`, `invoice_tax_code` (the last is the JS variable name to avoid collision with the existing `customer_tax_code` on the `jobs` table — DB column is plain `tax_code`).
+- INSERT writes all 3 columns alongside `(sales_id, company_name, customer_id, stage)`.
+- `ON CONFLICT (sales_id, LOWER(company_name)) DO UPDATE SET stage='booked', updated_at=NOW()` — the 3 new columns are NOT in the SET clause, so existing values are preserved per spec.
 
-**Customer-search response** (`GET /api/jobs/customer-search`): SELECT now includes `cp.company_full_name`, `cp.invoice_address`, `cp.short_name`, `cp.tax_code AS pipeline_tax_code`. Frontend's `selectCustomer(c)` reads these to pre-fill.
+**Customer-search response** (`GET /api/jobs/customer-search`): SELECT now includes `cp.company_full_name`, `cp.invoice_address`, `cp.tax_code AS pipeline_tax_code`. Frontend's `selectCustomer(c)` reads these to pre-fill.
 
 **Rules:**
-1. The 4 invoice fields live on `customer_pipeline` only. Don't duplicate them onto `jobs` or `customers`.
+1. The 3 invoice fields live on `customer_pipeline` only. Don't duplicate them onto `jobs` or `customers`.
 2. ON CONFLICT branch must NOT touch invoice fields — preserves existing data per the spec.
 3. Wire-format aliases: JS variable `invoice_tax_code` ↔ DB column `customer_pipeline.tax_code` ↔ response field `pipeline_tax_code` on `/customer-search`. Don't conflate with `jobs.customer_tax_code` or `customers.tax_code`.
 4. When a transfer happens (per L14), the new pipeline INSERT writes whatever the form supplied. If the user selected the customer from search, the form was pre-filled — those values survive the transfer.

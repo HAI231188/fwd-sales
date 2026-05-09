@@ -524,5 +524,6 @@ CREATE INDEX IF NOT EXISTS idx_job_truck_transport_company_id ON job_truck(trans
 -- ============================================================
 ALTER TABLE customer_pipeline ADD COLUMN IF NOT EXISTS company_full_name VARCHAR(300) DEFAULT '';
 ALTER TABLE customer_pipeline ADD COLUMN IF NOT EXISTS invoice_address   TEXT          DEFAULT '';
-ALTER TABLE customer_pipeline ADD COLUMN IF NOT EXISTS short_name        VARCHAR(20)   DEFAULT '';
 ALTER TABLE customer_pipeline ADD COLUMN IF NOT EXISTS tax_code          VARCHAR(30)   DEFAULT '';
+-- short_name removed (was duplicate of company_name; see L15 revision).
+ALTER TABLE customer_pipeline DROP COLUMN IF EXISTS short_name;
