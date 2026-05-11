@@ -348,6 +348,16 @@ export default function JobDetailModal({ jobId, onClose }) {
   }
   function handleSave() {
     setEditErr('');
+    // han_lenh / Cutoff guard — mirror POST + PUT backend rule. Reject blank
+    // before any network call so the user sees the same conditional message
+    // they'd get from the server. Label follows job.import_export (read from
+    // the source-of-truth row; import_export is not editable via PUT anyway).
+    if (!(draft.han_lenh || '').trim()) {
+      setEditErr(job?.import_export === 'import'
+        ? 'Vui lòng nhập Hạn lệnh'
+        : 'Vui lòng nhập Cutoff time');
+      return;
+    }
     const payload = { ...draft };
     if (!isTP) delete payload.deadline;
     // Coerce empty strings to null for date/numeric columns; PostgreSQL rejects '' for INTEGER/DECIMAL/DATE/TIMESTAMPTZ

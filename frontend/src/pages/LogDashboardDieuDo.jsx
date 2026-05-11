@@ -94,7 +94,7 @@ const DD_COLS = [
   { key: 'customer_name', label: 'Khách hàng',     filterType: 'text', accessor: j => j.customer_name || '' },
   { key: 'cargo',         label: 'Cont / Tons' },
   { key: 'etd_eta',       label: 'ETD / ETA' },
-  { key: 'deadline',      label: 'Hạn lệnh' },
+  { key: 'han_lenh',      label: 'Hạn lệnh / Cutoff' },
   { key: 'doi_lenh',      label: 'TT đổi lệnh' },
   { key: 'transport',     label: 'Tên vận tải',    filterType: 'text', accessor: j => j.transport_name || '' },
   { key: 'planned_dt',    label: 'KH ngày giờ' },
@@ -316,9 +316,11 @@ export default function LogDashboardDieuDo() {
                       <td style={{ ...cs, whiteSpace: 'nowrap', color: 'var(--text-2)', fontSize: 12 }}>
                         {fmtDate(j.etd)}<br />{fmtDate(j.eta)}
                       </td>
-                      <td style={{ ...cs, whiteSpace: 'nowrap', ...deadlineStyle(j.deadline) }}>
-                        {j.deadline
-                          ? new Date(j.deadline).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+                      <td style={{ ...cs, whiteSpace: 'nowrap', ...deadlineStyle(j.han_lenh) }}>
+                        {j.han_lenh
+                          ? (j.import_export === 'import'
+                              ? fmtDate(j.han_lenh)
+                              : new Date(j.han_lenh).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }))
                           : '—'}
                       </td>
                       <td style={{ ...cs, whiteSpace: 'nowrap' }}>

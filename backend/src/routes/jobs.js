@@ -1288,6 +1288,22 @@ router.put('/:id', requireAuth, async (req, res) => {
     const { rows: cur } = await client.query(`SELECT * FROM jobs WHERE id = $1 AND deleted_at IS NULL`, [req.params.id]);
     if (!cur[0]) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Không tìm thấy' }); }
 
+    // han_lenh / Cutoff guard — mirror POST behavior. Only fires when the field
+    // is explicitly present in the body; absent fields leave the existing value
+    // intact (partial-update friendly). The error label follows import_export
+    // (cur row's value, since import_export is not editable via PUT).
+    if (req.body.han_lenh !== undefined) {
+      const v = req.body.han_lenh;
+      if (!v || !String(v).trim()) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({
+          error: cur[0].import_export === 'import'
+            ? 'Vui lòng nhập Hạn lệnh'
+            : 'Vui lòng nhập Cutoff time',
+        });
+      }
+    }
+
     const sets = []; const params = []; let idx = 1;
     for (const f of FIELDS) {
       if (req.body[f] === undefined) continue;

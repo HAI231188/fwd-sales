@@ -103,7 +103,7 @@ const TQ_COLS = [
   { key: 'customer_name', label: 'Khách hàng',    filterType: 'text', accessor: j => j.customer_name || '' },
   { key: 'cargo',         label: 'Cont / Loại' },
   { key: 'etd_eta',       label: 'ETD / ETA' },
-  { key: 'deadline',      label: 'Hạn lệnh' },
+  { key: 'han_lenh',      label: 'Hạn lệnh / Cutoff' },
   { key: 'tk_flow',       label: 'Luồng TK' },
   { key: 'tk_status',     label: 'Trạng thái TK', filterType: 'select', options: TK_STATUS_OPTS },
   { key: 'tq_datetime',   label: 'Ngày giờ TQ' },
@@ -117,7 +117,7 @@ const DL_COLS = [
   { key: 'import_export', label: 'Loại' },
   { key: 'customer_name', label: 'Khách hàng',    filterType: 'text', accessor: j => j.customer_name || '' },
   { key: 'cargo',         label: 'Cont / Loại' },
-  { key: 'deadline',      label: 'Hạn lệnh' },
+  { key: 'han_lenh',      label: 'Hạn lệnh / Cutoff' },
   { key: 'ops_task_info', label: 'Cảng / Loại công việc' },
 ];
 
@@ -128,7 +128,7 @@ const TODAY_COLS = [
   { key: 'import_export', label: 'Loại' },
   { key: 'customer_name', label: 'Khách hàng',    filterType: 'text', accessor: j => j.customer_name || '' },
   { key: 'cargo',         label: 'Cont / Loại' },
-  { key: 'deadline',      label: 'Hạn lệnh' },
+  { key: 'han_lenh',      label: 'Hạn lệnh / Cutoff' },
   { key: 'planned_dt',    label: 'KH giao xe' },
 ];
 
@@ -341,7 +341,7 @@ export default function LogDashboardOps() {
                     <TD style={{ maxWidth: 140 }}>{j.customer_name}</TD>
                     <TD style={{ whiteSpace: 'nowrap', fontSize: 12 }}>{fmtCargo(j)}</TD>
                     <TD style={{ whiteSpace: 'nowrap', color: 'var(--text-2)', fontSize: 12 }}>{fmtDate(j.etd)}<br />{fmtDate(j.eta)}</TD>
-                    <TD style={{ whiteSpace: 'nowrap', ...deadlineStyle(j.deadline) }}>{j.deadline ? fmtDt(j.deadline) : '—'}</TD>
+                    <TD style={{ whiteSpace: 'nowrap', ...deadlineStyle(j.han_lenh) }}>{j.han_lenh ? (j.import_export === 'import' ? fmtDate(j.han_lenh) : fmtDt(j.han_lenh)) : '—'}</TD>
                     <TD style={{ color: 'var(--text-2)' }}>{j.tk_flow || '—'}</TD>
                     <TD>
                       <select
@@ -378,7 +378,7 @@ export default function LogDashboardOps() {
                     <IeCell value={j.import_export} />
                     <TD style={{ maxWidth: 140 }}>{j.customer_name}</TD>
                     <TD style={{ whiteSpace: 'nowrap', fontSize: 12 }}>{fmtCargo(j)}</TD>
-                    <TD style={{ whiteSpace: 'nowrap', ...deadlineStyle(j.deadline) }}>{j.deadline ? fmtDt(j.deadline) : '—'}</TD>
+                    <TD style={{ whiteSpace: 'nowrap', ...deadlineStyle(j.han_lenh) }}>{j.han_lenh ? (j.import_export === 'import' ? fmtDate(j.han_lenh) : fmtDt(j.han_lenh)) : '—'}</TD>
                     <TD>{opsTaskInfo(j)}</TD>
                     <TD style={{ whiteSpace: 'nowrap' }}>
                       {opsDoneBtn(j)}
@@ -403,7 +403,7 @@ export default function LogDashboardOps() {
                     <IeCell value={j.import_export} />
                     <TD style={{ maxWidth: 140 }}>{j.customer_name}</TD>
                     <TD style={{ whiteSpace: 'nowrap', fontSize: 12 }}>{fmtCargo(j)}</TD>
-                    <TD style={{ whiteSpace: 'nowrap', ...deadlineStyle(j.deadline) }}>{j.deadline ? fmtDt(j.deadline) : '—'}</TD>
+                    <TD style={{ whiteSpace: 'nowrap', ...deadlineStyle(j.han_lenh) }}>{j.han_lenh ? (j.import_export === 'import' ? fmtDate(j.han_lenh) : fmtDt(j.han_lenh)) : '—'}</TD>
                     <TD style={{ whiteSpace: 'nowrap', color: 'var(--warning)', fontWeight: 600 }}>{fmtDt(j.planned_datetime)}</TD>
                     <TD style={{ whiteSpace: 'nowrap' }}>
                       {deleteBtn(j)}
