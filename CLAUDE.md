@@ -137,6 +137,8 @@ fwd-sales/
 
 8. **No speculative features.** Only build what is explicitly asked for.
 
+9. **Always `railway up --detach` after every push.** Railway GitHub auto-deploy is **not active** for this service (Settings → Source shows "Auto deploy unavailable"). A commit that ships to GitHub but never gets `railway up` is invisible to production. Full checklist in §7. Rationale + verification protocol in **L18**.
+
 ---
 
 ## 5a. Critical Lessons Learned
@@ -334,6 +336,52 @@ Currently: `transport_companies.email_cc`. Future candidates: alternate phone nu
 
 Applies to: `customer_pipeline.deleted_at` (added 2026-05-11), `transport_companies.deleted_at`. Future candidates: `jobs.deleted_at` (already exists; consider auditing its readers next).
 
+### L18 — Always deploy after push (Railway auto-deploy is unavailable)
+
+**Root cause pattern:** This project's Railway service has GitHub auto-deploy disabled (Settings → Source shows "Auto deploy unavailable"). `git push origin master` ships code to GitHub but does **not** trigger a Railway build. Without an explicit `railway up --detach`, the production container keeps serving the previous bundle indefinitely. Confirmed 2026-05-11: four commits sat on `master` for hours before anyone noticed production was 2 days stale.
+
+**The exact post-commit workflow — every commit, every time, no skipping:**
+
+```bash
+# 1. Stage relevant files only (never `git add -A` — see §5 rule 8 implicitly)
+git add <changed files>
+
+# 2. Commit with a descriptive message
+git commit -m "<descriptive message>"
+
+# 3. Push to GitHub
+git push origin master
+
+# 4. **MUST DO — DO NOT SKIP.** Trigger the Railway build + container swap.
+railway up --detach
+
+# 5. Verify deployment by probing a new endpoint behavior or new bundle hash
+#    e.g. for a new route /api/foo:
+#      curl -s -o /dev/null -w "%{http_code}\n" https://fwd-sales-production.up.railway.app/api/foo
+#    Expected: 401 (route exists, auth required), NOT 200 + text/html (SPA fallback = route missing).
+#    For frontend-only changes: re-fetch / and confirm assets/index-<hash>.js changed.
+
+# 6. Report deployment status to the user (built bundle hash, image timestamp,
+#    or specific feature verification — not just "should be live now").
+```
+
+**Rules:**
+1. Treat steps 1-6 as ONE atomic unit. Stopping after step 3 is a half-shipped change — the GitHub `master` truth and the production truth diverge, and "I pushed it" becomes a misleading status report.
+2. `railway up --detach` returns as soon as the upload finishes (~5-15s). The actual build + swap takes 2-4 min. Use the build URL it prints, or `railway logs --build`, to confirm progress.
+3. Verification is mandatory because uploads can succeed while builds fail (e.g. broken `package.json`, missing env var, schema migration error). A green CLI exit code is not proof the new container is live.
+4. When reporting "how to test" instructions to the user after a feature commit, DO NOT phrase them as "After Railway redeploys, ..." — that implies auto-deploy. Phrase them as "After `railway up --detach`, ..." OR perform the deploy yourself and report the actual verified state.
+5. If multiple commits are batched, one `railway up --detach` at the end ships all of them — no need to deploy per commit. But never push without a deploy.
+
+**When to deviate (rare):**
+- Doc-only changes (`.md` files, `.github/`, anything not affecting `frontend/` or `backend/`) still need `railway up` to keep the build cache hash in sync with `master`, but they don't change runtime behavior. Skipping deploy for a pure doc commit is acceptable IF the next code commit's deploy is guaranteed within minutes.
+- A WIP/throwaway branch push that isn't `master` doesn't trigger anything (Railway watches `master`-equivalent only via manual `railway up`, which uploads the current working directory regardless of branch). Stay on `master` for actual ships.
+
+**How to fix the root cause** (preferred long-term):
+1. Railway dashboard → fwd-sales service → Settings → Source.
+2. Connect the GitHub repo if not connected; choose `master` as the deploy branch.
+3. If "Auto deploy unavailable" persists, check the Railway plan / GitHub App permissions — the integration may have been revoked.
+4. Once auto-deploy is restored, this lesson becomes "Always verify deploy after push" (steps 5-6 remain mandatory; step 4 becomes the GitHub webhook).
+
 ### Note — `jobs.import_export` (Loại lô)
 
 Two-value enum on `jobs`: `'export'` (Hàng xuất, default) or `'import'` (Hàng nhập). Selected at create time in `CreateJobModal` — pill segment in the TOP-ROW grid alongside Mã Job / Mã SI / Loại dịch vụ / Điểm đến (the earlier placement below the FCL/LCL toggle was easy to miss; do not move it back). CHECK constraint enforces values; column is `NOT NULL DEFAULT 'export'` so legacy rows auto-fill on `ADD COLUMN`. **Not editable post-create** — `PUT /api/jobs/:id` does not list it in `FIELDS`. Frontend displays a tiny badge (Xuất green / Nhập amber) in all 4 LOG dashboards' job lists, and a readonly Row in `JobDetailModal` "Thông tin chung" section.
@@ -485,14 +533,29 @@ Applies to future tables: `ports`, `vendors`, `forwarders`, `customs_brokers`, e
 
 ## 7. Deployment
 
+> **Railway GitHub auto-deploy is NOT active for this service** (Settings → Source: "Auto deploy unavailable"). Every commit needs an explicit `railway up --detach`. Full rationale + verification protocol in **L18**.
+
+**The atomic post-commit checklist — all 6 steps, no skipping:**
+
+1. `git add <changed files>` — stage only the relevant files (never `git add -A`).
+2. `git commit -m "<descriptive message>"`
+3. `git push origin master`
+4. `railway up --detach` ← **MUST DO, DO NOT SKIP** (without this, production stays on the old bundle).
+5. **Verify deployment with curl** — probe a route or string that's unique to this commit. Examples:
+   - New API route: `curl -sw "%{http_code}\n" https://fwd-sales-production.up.railway.app/api/<new-route>` → expect 401 (route exists) not 200+HTML (SPA fallback = route missing).
+   - Frontend-only change: re-fetch `/`, confirm the `assets/index-<hash>.js` filename changed; optionally `grep` the new bundle for a string unique to the commit.
+   - Backend logic change without a new route: drive the change end-to-end through an existing route, or check `railway logs --build` for a fresh image timestamp.
+6. **Report deployment status to the user** — bundle hash, image digest/timestamp, or feature-level verification. Do NOT report "should be live now" — only report what you actually verified.
+
 ```bash
 git add <changed files>
 git commit -m "<descriptive message>"
 git push origin master
-railway up --detach
+railway up --detach   # MUST DO
+curl -s -o /dev/null -w "%{http_code}\n" https://fwd-sales-production.up.railway.app/api/<probe>
 ```
 
-Railway runs `start.js`: migrations → pipeline backfill → frontend build → Express server.
+`start.js` on the new container runs in order: `schema.sql` migrations → `backfill_pipeline.js` → `npm run build` (frontend) → Express server. Idempotent — safe to re-run on every deploy.
 
 ---
 
