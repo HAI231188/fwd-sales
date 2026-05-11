@@ -366,11 +366,13 @@ router.get('/customer-search', requireAuth, async (req, res) => {
         COALESCE(c.address, (SELECT j.customer_address FROM jobs j
           WHERE (j.customer_id = cp.customer_id OR LOWER(j.customer_name) = LOWER(cp.company_name))
             AND j.customer_address IS NOT NULL AND j.deleted_at IS NULL
-          ORDER BY j.created_at DESC LIMIT 1)) AS customer_address,
+          ORDER BY j.created_at DESC LIMIT 1),
+          NULLIF(cp.invoice_address, '')) AS customer_address,
         COALESCE(c.tax_code, (SELECT j.customer_tax_code FROM jobs j
           WHERE (j.customer_id = cp.customer_id OR LOWER(j.customer_name) = LOWER(cp.company_name))
             AND j.customer_tax_code IS NOT NULL AND j.deleted_at IS NULL
-          ORDER BY j.created_at DESC LIMIT 1)) AS customer_tax_code
+          ORDER BY j.created_at DESC LIMIT 1),
+          NULLIF(cp.tax_code, '')) AS customer_tax_code
       FROM customer_pipeline cp
       LEFT JOIN users u ON u.id = cp.sales_id
       LEFT JOIN customers c ON c.id = cp.customer_id

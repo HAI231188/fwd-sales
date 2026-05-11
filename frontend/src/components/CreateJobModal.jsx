@@ -399,6 +399,39 @@ export default function CreateJobModal({ onClose, onCreated }) {
                 </div>
               </>
             )}
+            {/* Read-only invoice info preview when an existing customer is selected.
+                Values come from the customer_pipeline snapshot fetched by
+                /customer-search and stored in form state by selectCustomer().
+                Edit path is /customers (TP/lead-only) — intentionally no inline
+                editor here to avoid duplicating the Data khách hàng surface. */}
+            {searchMode === 'search' && selectedCustomer && (
+              <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px dashed var(--border)' }}>
+                <div style={{ fontSize: 11, fontStyle: 'italic', color: 'var(--text-2)', marginBottom: 6 }}>
+                  Thông tin xuất hóa đơn từ data khách hàng
+                </div>
+                <div className="form-group" style={{ marginBottom: 8 }}>
+                  <label className="form-label">Tên công ty (xuất HĐ)</label>
+                  <input className="form-input" readOnly
+                    value={form.company_full_name || ''}
+                    style={{ background: 'var(--bg)', cursor: 'default' }}
+                    placeholder="(chưa có — sửa tại trang Data khách hàng)" />
+                </div>
+                <div className="form-group" style={{ marginBottom: 8 }}>
+                  <label className="form-label">MST</label>
+                  <input className="form-input" readOnly
+                    value={form.invoice_tax_code || ''}
+                    style={{ background: 'var(--bg)', cursor: 'default' }}
+                    placeholder="(chưa có — sửa tại trang Data khách hàng)" />
+                </div>
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label className="form-label">Địa chỉ xuất HĐ</label>
+                  <input className="form-input" readOnly
+                    value={form.invoice_address || ''}
+                    style={{ background: 'var(--bg)', cursor: 'default' }}
+                    placeholder="(chưa có — sửa tại trang Data khách hàng)" />
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Customer details */}
