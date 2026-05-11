@@ -55,6 +55,22 @@ export default function CreateJobModal({ onClose, onCreated }) {
   const toggleOs = k => setForm(f => ({ ...f, other_services: { ...f.other_services, [k]: !f.other_services[k] } }));
   const locked = !!selectedCustomer;
 
+  // Switching Loại lô also rewrites han_lenh so the value survives across the
+  // date ↔ datetime-local input switch:
+  //   xuất → nhập: 'YYYY-MM-DDTHH:MM' → 'YYYY-MM-DD'   (drop time per spec)
+  //   nhập → xuất: 'YYYY-MM-DD'       → 'YYYY-MM-DDT00:00'  (datetime-local needs T)
+  function setImportExport(next) {
+    setForm(f => {
+      const cur = f.han_lenh || '';
+      let newVal = cur;
+      if (next === 'import' && cur.includes('T')) newVal = cur.slice(0, 10);
+      else if (next === 'export' && cur && !cur.includes('T') && /^\d{4}-\d{2}-\d{2}$/.test(cur)) {
+        newVal = `${cur}T00:00`;
+      }
+      return { ...f, import_export: next, han_lenh: newVal };
+    });
+  }
+
   // Cargo-type switcher — per spec, FCL↔LCL transitions reset the matrix + rows.
   // Direct setter is only used inside this wrapper so the two stay aligned.
   function selectCargoType(type) {
@@ -168,6 +184,14 @@ export default function CreateJobModal({ onClose, onCreated }) {
       setInvoiceErr('Vui lòng chọn loại lô (Hàng xuất / Hàng nhập)');
       return;
     }
+    // Hạn lệnh / Cutoff guard — required on create for both modes; the message
+    // matches the field label visible to the user (Hạn lệnh vs Cutoff time).
+    if (!(form.han_lenh || '').trim()) {
+      setInvoiceErr(form.import_export === 'import'
+        ? 'Vui lòng nhập Hạn lệnh'
+        : 'Vui lòng nhập Cutoff time');
+      return;
+    }
     // Hàng nhập: every auto-generated container row must carry cont_number + seal.
     // Hàng xuất: optional (carrier supplies later) — no row-level check.
     if (cargoType === 'fcl' && form.import_export === 'import') {
@@ -263,7 +287,7 @@ export default function CreateJobModal({ onClose, onCreated }) {
                       background: active ? opt.dim : '', fontWeight: active ? 600 : 400,
                       color: active ? opt.color : 'var(--text)' }}>
                       <input type="radio" name="import_export" value={opt.value} checked={active}
-                        onChange={() => set('import_export', opt.value)} style={{ accentColor: opt.color }} />
+                        onChange={() => setImportExport(opt.value)} style={{ accentColor: opt.color }} />
                       {opt.label}
                     </label>
                   );
@@ -554,8 +578,21 @@ export default function CreateJobModal({ onClose, onCreated }) {
               <input type="datetime-local" className="form-input" value={form.deadline} onChange={e => set('deadline', e.target.value)} />
             </div>
             <div className="form-group">
-              <label className="form-label">Hạn lệnh</label>
-              <input type="datetime-local" className="form-input" value={form.han_lenh} onChange={e => set('han_lenh', e.target.value)} />
+              {form.import_export === 'import' ? (
+                <>
+                  <label className="form-label">Hạn lệnh *</label>
+                  <input type="date" className="form-input"
+                    value={form.han_lenh}
+                    onChange={e => set('han_lenh', e.target.value)} />
+                </>
+              ) : (
+                <>
+                  <label className="form-label">Cutoff time *</label>
+                  <input type="datetime-local" className="form-input"
+                    value={form.han_lenh}
+                    onChange={e => set('han_lenh', e.target.value)} />
+                </>
+              )}
             </div>
           </div>
         </div>

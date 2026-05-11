@@ -339,7 +339,7 @@ export default function LogDashboardCus() {
 
   function getMissingFields(j) {
     const missing = [];
-    if (!j.han_lenh)    missing.push('Hạn lệnh');
+    if (!j.han_lenh)    missing.push(j.import_export === 'import' ? 'Hạn lệnh' : 'Cutoff time');
     if (!j.tk_flow)     missing.push('Luồng TK');
     if (!j.tk_number)   missing.push('Số TK');
     if (!j.tk_datetime) missing.push('Ngày TK');

@@ -461,8 +461,16 @@ export default function JobDetailModal({ jobId, onClose }) {
                         <FRow label="HBL No">
                           <input style={INP} value={draft.hbl_no} onChange={e => setD('hbl_no', e.target.value)} />
                         </FRow>
-                        <FRow label="Hạn lệnh">
-                          <input style={INP} type="datetime-local" value={draft.han_lenh} onChange={e => setD('han_lenh', e.target.value)} />
+                        <FRow label={job.import_export === 'import' ? 'Hạn lệnh' : 'Cutoff time'}>
+                          {job.import_export === 'import' ? (
+                            <input style={INP} type="date"
+                              value={(draft.han_lenh || '').slice(0, 10)}
+                              onChange={e => setD('han_lenh', e.target.value)} />
+                          ) : (
+                            <input style={INP} type="datetime-local"
+                              value={draft.han_lenh}
+                              onChange={e => setD('han_lenh', e.target.value)} />
+                          )}
                         </FRow>
                         <FRow label="Điểm đến">
                           <select style={INP} value={draft.destination} onChange={e => setD('destination', e.target.value)}>
@@ -593,7 +601,11 @@ export default function JobDetailModal({ jobId, onClose }) {
                       <Row label="HBL No" value={job.hbl_no || '—'} />
                       <Row label="Ngày tạo" value={fmtDt(job.created_at)} />
                       <Row label="Người tạo" value={job.created_by_name || '—'} />
-                      <Row label="Hạn lệnh" value={fmtDt(job.han_lenh)} color={deadlineColor(job.han_lenh)} />
+                      <Row label={job.import_export === 'import' ? 'Hạn lệnh' : 'Cutoff time'}
+                           value={job.han_lenh
+                             ? (job.import_export === 'import' ? fmtDate(job.han_lenh) : fmtDt(job.han_lenh))
+                             : '—'}
+                           color={deadlineColor(job.han_lenh)} />
                       <Row label="Điểm đến" value={fmtDest(job.destination)} />
                       <Row label="Loại lô" value={job.import_export === 'import' ? 'Hàng nhập' : 'Hàng xuất'}
                            color={job.import_export === 'import' ? '#d97706' : '#16a34a'} />

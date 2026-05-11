@@ -717,7 +717,9 @@ router.get('/filtered', requireAuth, async (req, res) => {
                (SELECT string_agg(jot.content, '; ' ORDER BY jot.id)
                 FROM job_ops_task jot WHERE jot.job_id = j.id AND jot.completed = FALSE) AS ops_tasks_pending,
                TRIM(
-                 CASE WHEN j.han_lenh IS NULL THEN 'Hạn lệnh ' ELSE '' END ||
+                 CASE WHEN j.han_lenh IS NULL THEN
+                   CASE WHEN j.import_export = 'import' THEN 'Hạn lệnh ' ELSE 'Cutoff time ' END
+                 ELSE '' END ||
                  CASE WHEN jt.tk_flow IS NULL THEN 'Luồng TK ' ELSE '' END ||
                  CASE WHEN jt.tk_number IS NULL THEN 'Số TK ' ELSE '' END ||
                  CASE WHEN jt.tk_datetime IS NULL THEN 'Ngày TK ' ELSE '' END ||
@@ -807,7 +809,9 @@ router.get('/filtered', requireAuth, async (req, res) => {
                CASE WHEN j.pol IS NULL THEN 'POL ' ELSE '' END ||
                CASE WHEN j.pod IS NULL THEN 'POD ' ELSE '' END ||
                CASE WHEN j.cont_number IS NULL THEN 'Số cont ' ELSE '' END ||
-               CASE WHEN j.han_lenh IS NULL THEN 'Hạn lệnh' ELSE '' END
+               CASE WHEN j.han_lenh IS NULL THEN
+                 CASE WHEN j.import_export = 'import' THEN 'Hạn lệnh' ELSE 'Cutoff time' END
+               ELSE '' END
              ) AS missing_fields
       FROM jobs j
       LEFT JOIN LATERAL (
@@ -951,6 +955,15 @@ router.post('/', requireAuth, async (req, res) => {
   const importExport = import_export || 'export';
   if (!['export', 'import'].includes(importExport)) {
     return res.status(400).json({ error: "Loại lô phải là 'export' hoặc 'import'" });
+  }
+  // Hạn lệnh / Cutoff guard — required on create. Mirror frontend message so
+  // the user sees the same phrasing whether they bypass the client or not.
+  // Storage shape: 'YYYY-MM-DD' (nhập) or 'YYYY-MM-DDTHH:MM' (xuất); Postgres
+  // parses both into the existing TIMESTAMPTZ column.
+  if (!han_lenh || !String(han_lenh).trim()) {
+    return res.status(400).json({
+      error: importExport === 'import' ? 'Vui lòng nhập Hạn lệnh' : 'Vui lòng nhập Cutoff time',
+    });
   }
 
   try {
@@ -2303,7 +2316,7 @@ router.patch('/:id/complete', requireAuth, async (req, res) => {
   try {
     await client.query('BEGIN');
     const { rows } = await client.query(`
-      SELECT j.id, j.han_lenh, j.ops_partner,
+      SELECT j.id, j.han_lenh, j.ops_partner, j.import_export,
              jt.id AS tk_id, jt.tk_flow, jt.tk_number, jt.tk_datetime, jt.tk_status, jt.completed_at AS tk_completed_at,
              ja.cus_id, ja.ops_id
       FROM jobs j
@@ -2326,7 +2339,7 @@ router.patch('/:id/complete', requireAuth, async (req, res) => {
     }
 
     const missing = [];
-    if (!j.han_lenh)    missing.push('Hạn lệnh');
+    if (!j.han_lenh)    missing.push(j.import_export === 'import' ? 'Hạn lệnh' : 'Cutoff time');
     if (!j.tk_flow)     missing.push('Luồng TK');
     if (!j.tk_number)   missing.push('Số TK');
     if (!j.tk_datetime) missing.push('Ngày TK');

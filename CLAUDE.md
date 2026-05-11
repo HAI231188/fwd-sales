@@ -382,6 +382,34 @@ railway up --detach
 3. If "Auto deploy unavailable" persists, check the Railway plan / GitHub App permissions — the integration may have been revoked.
 4. Once auto-deploy is restored, this lesson becomes "Always verify deploy after push" (steps 5-6 remain mandatory; step 4 becomes the GitHub webhook).
 
+### L19 — One column, two semantic meanings tied to a sibling column's value
+
+**Root cause pattern:** Sometimes one DB column must carry two semantically different values depending on a sibling column's value. `jobs.han_lenh` (TIMESTAMPTZ) is the canonical example: when `import_export = 'import'` it means *"Hạn lệnh"* (a calendar date only — no useful time-of-day), when `import_export = 'export'` it means *"Cutoff time"* (a precise datetime — carrier deadline). The temptation is to add a second column (`cutoff_time`) but that fragments the same lifecycle event across two nullable fields, and every query that filters on "the job's deadline" has to UNION or COALESCE them.
+
+**Pattern:** keep one column, branch the UI + validation by the sibling column.
+
+- **Storage:** one column, single TIMESTAMPTZ. For date-only semantics, store as midnight in the project timezone (Postgres parses `'YYYY-MM-DD'` literal as midnight in the session TZ on INSERT into TIMESTAMPTZ).
+- **Frontend input type:** branch by sibling. For `han_lenh` it's `<input type="date">` vs `<input type="datetime-local">`. Wrap any sibling-toggle handler so the value survives the switch — when going datetime→date, slice off `T...` (lossy on purpose, per spec); when going date→datetime, append `T00:00` so the datetime-local input has a valid value.
+- **Frontend display:** branch the *label* AND the *format* by sibling. For `han_lenh`: `'Hạn lệnh' / fmtDate` vs `'Cutoff time' / fmtDt`. Column headers stay generic ("Hạn lệnh / Cutoff") so a single column position works for mixed rows.
+- **Validation:** branch the error message by sibling, but the underlying truthy check is the same (`!value`). Don't write two separate validation branches that drift out of sync.
+- **Backend SQL "missing_fields" strings:** if the backend builds user-visible label strings server-side (e.g. `CASE WHEN col IS NULL THEN 'X ' ELSE '' END`), the branching must reach down into the SQL. Use a nested `CASE WHEN sibling_col = 'X' THEN 'LabelA' ELSE 'LabelB' END` rather than always emitting one label.
+
+**Concrete touch points** (for `jobs.han_lenh` + `jobs.import_export`):
+- `CreateJobModal.jsx`: conditional input type (date / datetime-local), conditional label, `setImportExport()` wrapper rewrites `han_lenh` value across the switch, submit validation branches the error message.
+- `JobDetailModal.jsx`: conditional readonly Row label + format, conditional edit input type (with date-input value sliced to `YYYY-MM-DD`).
+- `LogDashboardTP.jsx` + `JobListModal.jsx`: column header "Hạn lệnh / Cutoff" (generic), cell renderer branches `fmtDate` vs `fmtDt`. Falsy/NULL renders as `'—'` either way.
+- `LogDashboardCus.jsx` `getMissingFields`: missing-info chip label branches by sibling.
+- `routes/jobs.js` POST validation: same truthy check, branched error message.
+- `routes/jobs.js` SQL drilldown queries: nested `CASE WHEN j.import_export = 'import' THEN 'Hạn lệnh' ELSE 'Cutoff time' END`.
+
+**Rules:**
+1. When adding a column that has two semantic meanings by sibling, write a one-line note in CLAUDE.md naming the column + sibling + the two meanings. Future readers won't infer the contract from grep alone.
+2. Don't split the column into two unless the lifecycle actually diverges (one created earlier, deleted independently, joined separately). Sibling-driven semantic split is fine for fields that share lifecycle.
+3. Audit ALL display + validation surfaces in the same commit (per L9). Missing one site means the user sees "Hạn lệnh: 14/05/2026" labeled as "Cutoff time" elsewhere — confusing and the kind of bug that hides until QA.
+4. If a write path doesn't enforce the sibling-aware required-field rule (e.g. PUT /:id allows any value), document that asymmetry explicitly. Don't let "required on create, optional on edit" be implicit.
+
+Applies to: `jobs.han_lenh` (current). Future candidates: any field with semantically distinct date-only vs datetime-with-time usage (e.g. delivery scheduling for FCL vs LCL, customs deadlines for import vs export trade lanes).
+
 ### Note — `jobs.import_export` (Loại lô)
 
 Two-value enum on `jobs`: `'export'` (Hàng xuất, default) or `'import'` (Hàng nhập). Selected at create time in `CreateJobModal` — pill segment in the TOP-ROW grid alongside Mã Job / Mã SI / Loại dịch vụ / Điểm đến (the earlier placement below the FCL/LCL toggle was easy to miss; do not move it back). CHECK constraint enforces values; column is `NOT NULL DEFAULT 'export'` so legacy rows auto-fill on `ADD COLUMN`. **Not editable post-create** — `PUT /api/jobs/:id` does not list it in `FIELDS`. Frontend displays a tiny badge (Xuất green / Nhập amber) in all 4 LOG dashboards' job lists, and a readonly Row in `JobDetailModal` "Thông tin chung" section.

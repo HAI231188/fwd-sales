@@ -74,7 +74,7 @@ const ALL_COLS = [
   { key: 'import_export',label: 'Loại' },
   { key: 'created_at',   label: 'Ngày tạo' },
   { key: 'customer',     label: 'Tên khách' },
-  { key: 'han_lenh',     label: 'Hạn lệnh' },
+  { key: 'han_lenh',     label: 'Hạn lệnh / Cutoff' },
   { key: 'deadline',     label: 'Deadline' },
   { key: 'tk_flow',      label: 'Luồng TK' },
   { key: 'tk_number',    label: 'Số TK' },
@@ -680,7 +680,15 @@ export default function LogDashboardTP() {
                         }
                         case 'created_at':  return <td key={key} style={{ ...cs, whiteSpace: 'nowrap', fontSize: 12 }}>{fmtDate(j.created_at)}</td>;
                         case 'customer':    return <td key={key} style={{ ...cs, maxWidth: 150 }}><div style={{ fontWeight: 500, fontSize: 13 }}>{j.customer_name}</div></td>;
-                        case 'han_lenh':    return <td key={key} style={{ ...cs, whiteSpace: 'nowrap', fontSize: 12 }}>{j.han_lenh ? <span style={deadlineStyle(j.han_lenh)}>{fmtDt(j.han_lenh)}</span> : <span style={{ color: 'var(--text-3)' }}>—</span>}</td>;
+                        case 'han_lenh': {
+                          if (!j.han_lenh) return <td key={key} style={{ ...cs, whiteSpace: 'nowrap', fontSize: 12 }}><span style={{ color: 'var(--text-3)' }}>—</span></td>;
+                          const isImport = j.import_export === 'import';
+                          return <td key={key} style={{ ...cs, whiteSpace: 'nowrap', fontSize: 12 }}>
+                            <span style={deadlineStyle(j.han_lenh)}>
+                              {isImport ? fmtDate(j.han_lenh) : fmtDt(j.han_lenh)}
+                            </span>
+                          </td>;
+                        }
                         case 'deadline':    return <td key={key} style={{ ...cs, minWidth: 130 }}><InlineDeadline value={j.deadline} onSave={v => setDlMut.mutate({ id: j.id, deadline: v })} /></td>;
                         case 'tk_flow':     return <td key={key} style={{ ...cs, fontSize: 12, color: 'var(--text-2)' }}>{j.tk_flow || '—'}</td>;
                         case 'tk_number':   return <td key={key} style={{ ...cs, fontSize: 12 }}>{j.tk_number || '—'}</td>;

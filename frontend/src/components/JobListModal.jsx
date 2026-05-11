@@ -106,7 +106,7 @@ function getColumns(filterType) {
       { key: 'created_at',        label: 'Ngày tạo' },
       { key: 'customer_name',     label: 'Khách hàng' },
       { key: 'deadline',          label: 'Deadline' },
-      { key: 'han_lenh',          label: 'Hạn lệnh' },
+      { key: 'han_lenh',          label: 'Hạn lệnh / Cutoff' },
       { key: 'tk_status',         label: 'TT TK' },
       { key: 'tq_datetime',       label: 'Ngày TQ' },
       { key: 'ops_tasks_pending', label: 'CV chờ xử lý' },
@@ -153,8 +153,9 @@ function renderCell(key, j, filterType) {
         {j.deadline ? fmtDt(j.deadline) : <span style={{ color: 'var(--text-3)' }}>—</span>}
       </span>;
     case 'han_lenh':
+      if (!j.han_lenh) return <span style={{ color: 'var(--text-3)', fontSize: 12 }}>—</span>;
       return <span style={{ whiteSpace: 'nowrap', ...deadlineStyle(j.han_lenh, filterType), fontSize: 12 }}>
-        {fmtDt(j.han_lenh)}
+        {j.import_export === 'import' ? fmtDate(j.han_lenh) : fmtDt(j.han_lenh)}
       </span>;
     case 'cus_name':
       return j.cus_name
