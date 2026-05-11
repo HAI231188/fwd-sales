@@ -90,6 +90,7 @@ fwd-sales/
 | INTERACTION | (part of pipeline) | `CustomerDetailModal.jsx` — threaded updates, follow-up completion |
 | BBBG | `GET /api/jobs/:id/bbbg-data`, `POST /api/jobs/:id/bbbg-pdf` | `services/bbbg-pdf.js`, `BBBGModal.jsx`, `LogDashboardDieuDo.jsx` — generate-on-demand delivery handover PDF (no persistence). Role-gated to `truong_phong_log` + `dieu_do`. Optional fonts at `backend/src/assets/fonts/Roboto-{Regular,Bold,Italic}.ttf`; falls back to Helvetica with a warning if absent. |
 | TRANSPORT | `/api/transport-companies/*` | `routes/transport.js`, `TransportPicker.jsx`, `TransportFormModal.jsx`, `TransportCompaniesPage.jsx` (route `/transport-companies`) — Quản lý tên vận tải. Picker-only inline UI for DieuDo grid + JobDetailModal; full management table at `/transport-companies` (Navbar link visible only to `truong_phong_log` + `dieu_do`). `GET /` returns `job_count` (LEFT JOIN job_truck) so the table can show "Số job đã chạy". `job_truck` carries both `transport_company_id` (FK, ON DELETE SET NULL) and `transport_name` (snapshot — survives company deletion or rename). Read-open to all authenticated users; write (POST/PATCH/DELETE) gated to `truong_phong_log` + `dieu_do`. Soft-delete only. Case-insensitive UNIQUE on name (`LOWER(name)`). |
+| TRUCK_BOOKINGS | `/api/truck-bookings/*` *(Phase 2 — not yet built)* | `schema.sql` (`truck_bookings`, `truck_booking_containers`, `get_truck_booking_status()`) — multi-truck booking system. One job → N bookings → M containers via the link table (UNIQUE container_id enforces 1 cont = 1 active booking). Status function returns one of 5 states (`no_containers`, `chua_dat_xe`, `dat_xe_1_phan`, `da_dat_xe_du_cho_so_xe`, `da_giao_xong`) derived from container coverage + vehicle assignment. **Replaces `job_truck`** (the older single-truck-per-job table) — `job_truck` is now deprecated; kept in schema for backward compat with existing routes. Removal in a later phase once all readers migrate. See **L20**. |
 | CUSTOMER_PIPELINE | `/api/customer-pipeline/*` | `routes/customer-pipeline.js`, `CustomerEditModal.jsx`, `CustomerDataPage.jsx` (route `/customers`) — Data khách hàng. Admin (TP + lead) management page: list, edit (company_name + invoice fields + sales_id), soft-delete (TP only). GET returns sales JOIN + job_count (LOWER(j.customer_name)=LOWER(cp.company_name)). PATCH detects sales_id change → applies L14 transfer pattern (DELETE old pipeline + children, UPSERT under new sales, notifications, audit). Mounted at `/api/customer-pipeline` not `/api/customers` to avoid collision with `routes/customers.js` PUT/DELETE on the `customers` (interaction) table. Navbar link visible only to `truong_phong_log` + `lead`. Soft delete via `customer_pipeline.deleted_at` — partial unique index `idx_pipeline_sales_company_active WHERE deleted_at IS NULL` lets the same (sales, company) be re-created post-delete; the L14 UPSERT in `routes/jobs.js` POST `/` matches via `ON CONFLICT (sales_id, LOWER(company_name)) WHERE deleted_at IS NULL`. |
 
 ### Future modules (do not build yet)
@@ -409,6 +410,33 @@ railway up --detach
 4. If a write path doesn't enforce the sibling-aware required-field rule (e.g. PUT /:id allows any value), document that asymmetry explicitly. Don't let "required on create, optional on edit" be implicit.
 
 Applies to: `jobs.han_lenh` (current). Future candidates: any field with semantically distinct date-only vs datetime-with-time usage (e.g. delivery scheduling for FCL vs LCL, customs deadlines for import vs export trade lanes).
+
+### L20 — M:N booking-container pattern + derived status function
+
+**Root cause pattern:** Multi-truck booking semantics don't fit the original `job_truck` shape (1:1 with jobs, single `transport_name`/`vehicle_number` per job). A single job can be split across several carriers, each carrier hauling a subset of the containers on its own schedule, and a single container belongs to at most one carrier at a time. Trying to bend `job_truck` (or any 1:1 table) to express this leads to either duplicate `job_truck` rows per job (FK-unsafe), nullable columns that carry split-by-position semantics (fragile), or a JSON blob (unqueryable).
+
+**Pattern (Phase 1 schema):**
+- `truck_bookings` is the parent — one row per "chốt kế hoạch giao xe với 1 vận tải". Carries the booking-level fields (carrier, planned datetime, delivery location, cost, vehicle, notes, lifecycle timestamps including `deleted_at`).
+- `truck_booking_containers` is the M:N link — `(booking_id, container_id)` with `UNIQUE(container_id)`. The UNIQUE on the child column is the key invariant: it makes "one container belongs to one active booking" a DB constraint, not application logic. Re-assigning a container = delete the link row, re-insert under a different booking. Container splits across bookings are simply multiple link rows pointing back at the same `job_id` from different bookings.
+- `job_truck` is left in place but **deprecated**. Treat it as legacy; new code uses `truck_bookings` exclusively. Removing `job_truck` is a later phase, after all `routes/jobs.js` consumers migrate.
+
+**Derived status function** (`get_truck_booking_status(p_job_id INT) RETURNS TEXT`):
+- Returns one of 5 states by joining container counts vs booking counts vs vehicle assignments. Logic lives in plpgsql so dashboards can call it via a single SELECT and get consistent semantics across endpoints. Embedding the logic in JS in each consumer would let the four roles' dashboards drift apart silently.
+- States:
+  - `no_containers` — job has zero `job_containers` rows. Display as "—" or "Chưa có cont".
+  - `chua_dat_xe` — has containers, zero active bookings. **Action needed: DD must book.**
+  - `dat_xe_1_phan` — at least one container booked, but some still loose. Job is mid-progress; DD needs to book the remainder.
+  - `da_dat_xe_du_cho_so_xe` — all containers booked, but some bookings missing `vehicle_number`. Booking is committed; waiting on carrier to assign trucks.
+  - `da_giao_xong` — all containers booked AND every booking has a `vehicle_number`. Operationally done from a booking perspective; CUS/OPS still drive final completion via existing TK/OPS workflow.
+- Soft delete filters apply throughout (`tb.deleted_at IS NULL`). The partial unique index `WHERE deleted_at IS NULL` on supporting indexes makes "one container per active booking" survive re-booking after soft-delete (L17 pattern).
+
+**Rules:**
+1. Whenever a job-level decision (who hauls, when, where, cost) can split across multiple carriers, use this `parent + M:N link` shape. Don't pile multi-carrier semantics onto a 1:1 table.
+2. The UNIQUE on the link's child column is the load-bearing invariant. Without it, application code becomes responsible for preventing double-booking — which is exactly the kind of distributed-state bug that surfaces at 2am.
+3. Derived states that combine multiple table counts belong in a plpgsql function called from SQL, not in JS. This keeps the four dashboards aligned on a single source of truth and makes the rule auditable in a single place.
+4. When introducing a replacement for an existing table, **deprecate, don't drop**. Leave the legacy table in `schema.sql` until every reader has migrated. Migration order is: ship the new schema → migrate routes one at a time → drop the legacy table only when grep returns zero hits.
+
+Applies to: `truck_bookings` + `truck_booking_containers` (current). Future candidates: any other 1:1-jobs-to-X relationship that grows multi-X semantics (e.g. multi-tờ-khai per job, multi-OPS-vendor per job).
 
 ### Note — `jobs.import_export` (Loại lô)
 

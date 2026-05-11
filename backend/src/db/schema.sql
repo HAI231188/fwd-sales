@@ -549,6 +549,96 @@ ALTER TABLE jobs ADD CONSTRAINT jobs_import_export_check
   CHECK (import_export IN ('export', 'import'));
 
 -- ============================================================
+-- Phase 1: Multi-truck booking system
+-- One job can have N truck_bookings (one chốt kế hoạch giao xe per vận tải).
+-- Each booking references a subset of the job's containers via the M:N link
+-- table (truck_booking_containers), with a UNIQUE constraint on container_id
+-- to enforce that a single container can belong to at most one active booking
+-- — splits and re-assigns happen by deleting the link row then re-inserting.
+--
+-- The legacy `job_truck` table is intentionally LEFT IN PLACE here. It is
+-- deprecated by this system but several existing routes still read from it;
+-- removal happens in a later phase once all readers migrate.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS truck_bookings (
+  id                    SERIAL PRIMARY KEY,
+  job_id                INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+  transport_company_id  INTEGER REFERENCES transport_companies(id) ON DELETE SET NULL,
+  transport_name        VARCHAR(200) NOT NULL,                   -- snapshot per L13
+  planned_datetime      TIMESTAMP WITH TIME ZONE NOT NULL,
+  delivery_location     TEXT NOT NULL,
+  cost                  NUMERIC(15,2),
+  vehicle_number        VARCHAR(50),                             -- filled later when truck assigned
+  notes                 TEXT,
+  created_by            INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at            TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at            TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  completed_at          TIMESTAMP WITH TIME ZONE,                -- set when vehicle_number first filled
+  deleted_at            TIMESTAMP WITH TIME ZONE                 -- soft delete (L17 pattern)
+);
+
+CREATE TABLE IF NOT EXISTS truck_booking_containers (
+  id           SERIAL PRIMARY KEY,
+  booking_id   INTEGER NOT NULL REFERENCES truck_bookings(id) ON DELETE CASCADE,
+  container_id INTEGER NOT NULL REFERENCES job_containers(id) ON DELETE CASCADE,
+  created_at   TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  UNIQUE (container_id)                                          -- 1 container = at most 1 booking
+);
+
+-- Partial indexes filter out soft-deleted bookings so common-path queries
+-- skip tombstones automatically.
+CREATE INDEX IF NOT EXISTS idx_truck_bookings_job
+  ON truck_bookings(job_id) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_truck_bookings_transport
+  ON truck_bookings(transport_company_id) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_truck_booking_containers_booking
+  ON truck_booking_containers(booking_id);
+
+-- Job-level booking status derived from container coverage + vehicle assignment:
+--   'no_containers'         job has no containers at all
+--   'chua_dat_xe'           job has containers but no active bookings
+--   'dat_xe_1_phan'         at least one container booked, but some still loose
+--   'da_dat_xe_du_cho_so_xe' all containers booked but some bookings missing vehicle_number
+--   'da_giao_xong'          all containers booked AND all bookings have vehicle_number
+CREATE OR REPLACE FUNCTION get_truck_booking_status(p_job_id INT) RETURNS TEXT AS $$
+DECLARE
+  total_cont            INT;
+  booked_cont           INT;
+  total_booking         INT;
+  bookings_with_vehicle INT;
+BEGIN
+  SELECT COUNT(*) INTO total_cont FROM job_containers WHERE job_id = p_job_id;
+
+  IF total_cont = 0 THEN
+    RETURN 'no_containers';
+  END IF;
+
+  SELECT COUNT(DISTINCT tbc.container_id) INTO booked_cont
+    FROM truck_booking_containers tbc
+    JOIN truck_bookings tb ON tb.id = tbc.booking_id
+   WHERE tb.job_id = p_job_id AND tb.deleted_at IS NULL;
+
+  SELECT COUNT(*) INTO total_booking
+    FROM truck_bookings WHERE job_id = p_job_id AND deleted_at IS NULL;
+
+  SELECT COUNT(*) INTO bookings_with_vehicle
+    FROM truck_bookings
+   WHERE job_id = p_job_id AND deleted_at IS NULL
+     AND vehicle_number IS NOT NULL AND vehicle_number != '';
+
+  IF total_booking = 0 THEN
+    RETURN 'chua_dat_xe';
+  ELSIF booked_cont < total_cont THEN
+    RETURN 'dat_xe_1_phan';
+  ELSIF bookings_with_vehicle < total_booking THEN
+    RETURN 'da_dat_xe_du_cho_so_xe';
+  ELSE
+    RETURN 'da_giao_xong';
+  END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+-- ============================================================
 -- Soft delete on customer_pipeline (Data khách hàng — TP/lead management page)
 -- Mirrors transport_companies pattern: deleted_at column + partial unique index
 -- so a re-create for the same (sales, company) pair after soft-delete is allowed.
