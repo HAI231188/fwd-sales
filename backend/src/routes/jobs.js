@@ -912,7 +912,15 @@ router.get('/', requireAuth, async (req, res) => {
             'completed', jot.completed, 'completed_at', jot.completed_at, 'notes', jot.notes
           ) ORDER BY jot.id)
           FROM job_ops_task jot WHERE jot.job_id = j.id
-        ), '[]'::json) AS ops_tasks
+        ), '[]'::json) AS ops_tasks,
+        -- Phase 2: truck-booking summary. Status comes from the plpgsql function
+        -- so dashboards stay aligned on a single source of truth (L20). The
+        -- legacy jtr.* fields above are kept until Phase 3 UI migrates.
+        get_truck_booking_status(j.id) AS truck_booking_status,
+        COALESCE((
+          SELECT COUNT(*)::int FROM truck_bookings
+           WHERE job_id = j.id AND deleted_at IS NULL
+        ), 0) AS truck_bookings_count
       FROM jobs j
       LEFT JOIN LATERAL (
         SELECT * FROM job_assignments WHERE job_id = j.id ORDER BY id DESC LIMIT 1
@@ -1073,9 +1081,14 @@ router.post('/', requireAuth, async (req, res) => {
       pipelineTransfer.wasNewlyInserted = !!upserted[0]?.was_inserted;
     }
 
-    if (service_type === 'truck' || service_type === 'both') {
-      await client.query(`INSERT INTO job_truck (job_id) VALUES ($1)`, [job.id]);
-    }
+    // Phase 2: job_truck is deprecated. Truck planning lives on truck_bookings now
+    // (one job → N bookings). DD creates bookings via POST /api/truck-bookings
+    // after the job exists. We no longer auto-seed a job_truck row on job create.
+    //
+    // Legacy PATCH /:id/truck + PATCH /:id/tk (truck_booked sync) still write to
+    // job_truck for backward compat with existing frontend code paths — those
+    // paths will be removed in a later phase once all readers migrate.
+    // (no-op here)
 
     // Điều Độ assignment for truck/both jobs
     const isDieuDo = service_type === 'truck' || service_type === 'both';
@@ -2055,7 +2068,8 @@ router.patch('/:id/tk', requireAuth, async (req, res) => {
       await client.query(`UPDATE job_tk SET completed_at = NOW() WHERE job_id = $1`, [req.params.id]);
     }
 
-    // Sync to job_truck when CUS ticks "Đặt xe"
+    // **DEPRECATED (Phase 2)** — Sync to job_truck when CUS ticks "Đặt xe".
+    // Kept alive for backward compat; new flow uses truck_bookings instead.
     if (req.body.truck_booked === true) {
       const plannedDt    = rows[0].delivery_datetime;
       const deliveryLoc  = rows[0].delivery_location;
@@ -2085,6 +2099,10 @@ router.patch('/:id/tk', requireAuth, async (req, res) => {
 });
 
 // PATCH /api/jobs/:id/truck
+// **DEPRECATED (Phase 2)** — writes to the legacy job_truck table. Kept alive
+// while existing DieuDo dashboard rows still bind to job_truck fields; will be
+// removed once Phase 3 UI migrates to /api/truck-bookings entirely. New code
+// MUST use POST /api/truck-bookings + PATCH /api/truck-bookings/:id instead.
 router.patch('/:id/truck', requireAuth, async (req, res) => {
   if (req.user.role !== 'truong_phong_log' && req.user.role !== 'dieu_do') {
     return res.status(403).json({ error: 'Không có quyền' });
@@ -2543,6 +2561,59 @@ router.post('/:id/bbbg-pdf', requireAuth, async (req, res) => {
   } catch (err) {
     console.error('POST /bbbg-pdf error:', err.message);
     if (!res.headersSent) res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Truck-booking helpers — job-scoped GETs (Phase 2) ─────────────────────────
+// Lives under /api/jobs/:id/... per spec URL, but the bookings themselves are
+// CRUDed via /api/truck-bookings (see routes/truck-bookings.js).
+
+// GET /api/jobs/:id/truck-booking-status
+// Returns one of: 'no_containers' | 'chua_dat_xe' | 'dat_xe_1_phan' |
+// 'da_dat_xe_du_cho_so_xe' | 'da_giao_xong'. Logic lives in the plpgsql
+// function so the four dashboards stay aligned on a single source of truth
+// (L20). Any authenticated user can read.
+router.get('/:id/truck-booking-status', requireAuth, async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isFinite(id)) return res.status(400).json({ error: 'ID không hợp lệ' });
+  try {
+    const { rows } = await db.query(
+      `SELECT get_truck_booking_status($1) AS status`, [id]
+    );
+    res.json({ status: rows[0]?.status || 'no_containers' });
+  } catch (err) {
+    console.error('GET /:id/truck-booking-status error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/jobs/:id/available-containers
+// Containers belonging to this job that are NOT yet in any LIVE booking.
+// Used by the booking-create modal to populate its checkbox list. Restricted
+// to dieu_do + truong_phong_log since this is a planning surface.
+router.get('/:id/available-containers', requireAuth, async (req, res) => {
+  if (!['dieu_do', 'truong_phong_log'].includes(req.user.role)) {
+    return res.status(403).json({ error: 'Không có quyền' });
+  }
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isFinite(id)) return res.status(400).json({ error: 'ID không hợp lệ' });
+  try {
+    const { rows } = await db.query(`
+      SELECT jc.id, jc.cont_number, jc.cont_type, jc.seal_number
+        FROM job_containers jc
+       WHERE jc.job_id = $1
+         AND jc.id NOT IN (
+           SELECT tbc.container_id
+             FROM truck_booking_containers tbc
+             JOIN truck_bookings tb ON tb.id = tbc.booking_id
+            WHERE tb.deleted_at IS NULL
+         )
+       ORDER BY jc.id
+    `, [id]);
+    res.json(rows);
+  } catch (err) {
+    console.error('GET /:id/available-containers error:', err.message);
+    res.status(500).json({ error: err.message });
   }
 });
 
