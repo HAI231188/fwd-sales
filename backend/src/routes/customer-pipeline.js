@@ -17,7 +17,10 @@ const { requireAuth } = require('../middleware/auth');
 
 const ADMIN_ROLES = ['truong_phong_log', 'lead'];
 function isAdmin(req) { return ADMIN_ROLES.includes(req.user?.role); }
-function isTp(req)    { return req.user?.role === 'truong_phong_log'; }
+// Delete is intentionally narrower than edit: only Lead (Mr Hải) can soft-delete
+// customers. TP can edit (including L14 transfer) but cannot remove customers
+// from the pipeline.
+function isLead(req)  { return req.user?.role === 'lead'; }
 
 const EDITABLE_FIELDS = ['company_name', 'company_full_name', 'tax_code', 'invoice_address'];
 
@@ -243,7 +246,7 @@ router.patch('/:id', requireAuth, async (req, res) => {
 // index `WHERE deleted_at IS NULL` lets the same (sales, company) pair be
 // re-created later if needed.
 router.delete('/:id', requireAuth, async (req, res) => {
-  if (!isTp(req)) return res.status(403).json({ error: 'Chỉ Trưởng phòng LOG mới được xóa' });
+  if (!isLead(req)) return res.status(403).json({ error: 'Chỉ Lead (Mr Hải) mới được xóa khách' });
 
   const pipelineId = parseInt(req.params.id, 10);
   if (!Number.isFinite(pipelineId)) {

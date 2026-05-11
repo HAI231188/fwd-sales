@@ -61,7 +61,8 @@ function truncate(s, n) {
 export default function CustomerDataPage() {
   const qc = useQueryClient();
   const { user } = useAuth();
-  const isTp = user?.role === 'truong_phong_log';
+  // Delete is Lead-only (Mr Hải). TP can edit but never delete.
+  const isLead = user?.role === 'lead';
 
   const [search, setSearch] = useState('');
   const [sort, setSort]     = useState('updated');
@@ -197,7 +198,7 @@ export default function CustomerDataPage() {
                           onClick={() => setEditing(c)}>
                           ✏️ Sửa
                         </button>
-                        {isTp && (
+                        {isLead && (
                           <button className="btn btn-ghost btn-sm" style={{ fontSize: 11, color: 'var(--danger)', borderColor: 'var(--danger)' }}
                             onClick={() => setDeleting(c)}>
                             🗑 Xóa
