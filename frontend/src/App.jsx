@@ -10,6 +10,7 @@ import LogDashboardDieuDo from './pages/LogDashboardDieuDo';
 import LogDashboardCus from './pages/LogDashboardCus';
 import LogDashboardOps from './pages/LogDashboardOps';
 import TransportCompaniesPage from './pages/TransportCompaniesPage';
+import CustomerDataPage from './pages/CustomerDataPage';
 
 const LOG_ROLES = ['truong_phong_log', 'dieu_do', 'cus', 'cus1', 'cus2', 'cus3', 'ops'];
 
@@ -93,6 +94,11 @@ export default function App() {
           <Route path="/transport-companies" element={
             <ProtectedRoute roles={['truong_phong_log', 'dieu_do']}>
               <TransportCompaniesPage />
+            </ProtectedRoute>
+          } />
+          <Route path="/customers" element={
+            <ProtectedRoute roles={['truong_phong_log', 'lead']}>
+              <CustomerDataPage />
             </ProtectedRoute>
           } />
           <Route path="*" element={<Navigate to="/" replace />} />

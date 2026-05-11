@@ -392,7 +392,7 @@ router.get('/customer-search', requireAuth, async (req, res) => {
       FROM customer_pipeline cp
       LEFT JOIN users u ON u.id = cp.sales_id
       LEFT JOIN customers c ON c.id = cp.customer_id
-      WHERE cp.stage = 'booked' AND cp.company_name ILIKE $1
+      WHERE cp.stage = 'booked' AND cp.deleted_at IS NULL AND cp.company_name ILIKE $1
       ORDER BY cp.company_name
       LIMIT 10
     `, [`%${q}%`]);
@@ -1026,6 +1026,7 @@ router.post('/', requireAuth, async (req, res) => {
            FROM customer_pipeline cp
            LEFT JOIN users u ON u.id = cp.sales_id
           WHERE cp.sales_id != $1
+            AND cp.deleted_at IS NULL
             AND ( LOWER(cp.company_name) = LOWER($2)
                   OR ($3::int IS NOT NULL AND cp.customer_id = $3::int) )`,
         [sales_id, customer_name, customer_id || null]
@@ -1037,12 +1038,16 @@ router.post('/', requireAuth, async (req, res) => {
       }
       // ON CONFLICT preserves existing invoice fields (DO UPDATE only sets stage/updated_at).
       // New rows get the values from the form; if the form didn't supply them, default ''.
+      // The `WHERE deleted_at IS NULL` predicate matches the partial unique index
+      // `idx_pipeline_sales_company_active` — required by Postgres ON CONFLICT inference.
+      // Without this, a soft-deleted pipeline would NOT collide and re-INSERT would fail;
+      // with this, soft-deleted rows are ignored, so the same (sales,company) can be re-added.
       const { rows: upserted } = await client.query(
         `INSERT INTO customer_pipeline
            (sales_id, company_name, customer_id, stage,
             company_full_name, invoice_address, tax_code)
          VALUES ($1, $2, $3, 'booked', $4, $5, $6)
-         ON CONFLICT (sales_id, LOWER(company_name))
+         ON CONFLICT (sales_id, LOWER(company_name)) WHERE deleted_at IS NULL
            DO UPDATE SET stage = 'booked', updated_at = NOW()
          RETURNING id, (xmax = 0) AS was_inserted`,
         [

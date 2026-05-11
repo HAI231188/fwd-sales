@@ -121,7 +121,7 @@ router.post('/', requireAuth, async (req, res) => {
     for (const cust of customers) {
       // Check if new company (used for both code generation and pipeline upsert)
       const { rows: existingPipeline } = await client.query(
-        `SELECT id, stage FROM customer_pipeline WHERE sales_id = $1 AND LOWER(company_name) = LOWER($2)`,
+        `SELECT id, stage FROM customer_pipeline WHERE sales_id = $1 AND LOWER(company_name) = LOWER($2) AND deleted_at IS NULL`,
         [req.user.id, cust.company_name]
       );
       const isNewCust = existingPipeline.length === 0;
@@ -279,7 +279,7 @@ router.post('/quick-customer', requireAuth, async (req, res) => {
 
     // Check if new company for this salesperson (affects new_customers count)
     const { rows: existPipe } = await client.query(
-      `SELECT id, stage FROM customer_pipeline WHERE sales_id = $1 AND LOWER(company_name) = LOWER($2)`,
+      `SELECT id, stage FROM customer_pipeline WHERE sales_id = $1 AND LOWER(company_name) = LOWER($2) AND deleted_at IS NULL`,
       [req.user.id, company_name]
     );
     const isNewCompany = existPipe.length === 0;

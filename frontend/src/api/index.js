@@ -114,6 +114,14 @@ export const generateBbbgPdf = (id, payload) =>
 // Global search (LOG team only)
 export const searchGlobal = (params) => api.get('/search', { params });
 
+// Customer pipeline (Data khách hàng — TP + lead management page)
+export const getCustomerPipelines = (search = '') =>
+  api.get('/customer-pipeline', { params: search ? { search } : {} });
+export const updateCustomerPipeline = (id, data) =>
+  api.patch(`/customer-pipeline/${id}`, data);
+export const deleteCustomerPipeline = (id) =>
+  api.delete(`/customer-pipeline/${id}`);
+
 // Transport companies (Quản lý tên vận tải)
 export const getTransportCompanies = (search = '') =>
   api.get('/transport-companies', { params: search ? { search } : {} });

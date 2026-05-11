@@ -5,9 +5,11 @@ const { requireAuth } = require('../middleware/auth');
 // Apply time-based stage transitions for a user (called lazily on GET)
 async function applyAutoTransitions(client, salesId) {
   // 1. new/following → dormant: no activity for 7+ days
+  //    Skip soft-deleted pipelines (Data khách hàng can soft-delete via deleted_at).
   const { rows: dormantCands } = await client.query(`
     SELECT id, stage FROM customer_pipeline
     WHERE sales_id = $1
+      AND deleted_at IS NULL
       AND stage IN ('new', 'following')
       AND (last_activity_date IS NULL OR last_activity_date < CURRENT_DATE - INTERVAL '7 days')
   `, [salesId]);
@@ -31,6 +33,7 @@ async function applyAutoTransitions(client, salesId) {
   const { rows: followCands } = await client.query(`
     SELECT cp.id FROM customer_pipeline cp
     WHERE cp.sales_id = $1
+      AND cp.deleted_at IS NULL
       AND cp.stage = 'new'
       AND EXISTS (
         SELECT 1 FROM customers c
@@ -60,7 +63,7 @@ router.get('/lead-all', requireAuth, async (req, res) => {
 
   const { userId, startDate, endDate } = req.query;
 
-  const conds = [`u.role = 'sales'`];
+  const conds = [`u.role = 'sales'`, `cp.deleted_at IS NULL`];
   const params = [];
   let idx = 1;
 
@@ -140,6 +143,7 @@ router.get('/search', requireAuth, async (req, res) => {
         cp.industry, cp.source, cp.stage, cp.last_activity_date
       FROM customer_pipeline cp
       WHERE cp.sales_id = $1
+        AND cp.deleted_at IS NULL
         ${searchClause}
       ORDER BY cp.last_activity_date DESC NULLS LAST, cp.company_name
       ${limitClause}
@@ -273,7 +277,7 @@ router.get('/', requireAuth, async (req, res) => {
       LEFT JOIN customers c   ON c.pipeline_id = cp.id
       LEFT JOIN reports r     ON r.id = c.report_id
       LEFT JOIN quotes q      ON q.customer_id = c.id
-      WHERE cp.sales_id = $1 ${dateFilter}
+      WHERE cp.sales_id = $1 AND cp.deleted_at IS NULL ${dateFilter}
       GROUP BY cp.id
       ORDER BY
         CASE cp.stage

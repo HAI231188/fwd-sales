@@ -90,6 +90,7 @@ fwd-sales/
 | INTERACTION | (part of pipeline) | `CustomerDetailModal.jsx` — threaded updates, follow-up completion |
 | BBBG | `GET /api/jobs/:id/bbbg-data`, `POST /api/jobs/:id/bbbg-pdf` | `services/bbbg-pdf.js`, `BBBGModal.jsx`, `LogDashboardDieuDo.jsx` — generate-on-demand delivery handover PDF (no persistence). Role-gated to `truong_phong_log` + `dieu_do`. Optional fonts at `backend/src/assets/fonts/Roboto-{Regular,Bold,Italic}.ttf`; falls back to Helvetica with a warning if absent. |
 | TRANSPORT | `/api/transport-companies/*` | `routes/transport.js`, `TransportPicker.jsx`, `TransportFormModal.jsx`, `TransportCompaniesPage.jsx` (route `/transport-companies`) — Quản lý tên vận tải. Picker-only inline UI for DieuDo grid + JobDetailModal; full management table at `/transport-companies` (Navbar link visible only to `truong_phong_log` + `dieu_do`). `GET /` returns `job_count` (LEFT JOIN job_truck) so the table can show "Số job đã chạy". `job_truck` carries both `transport_company_id` (FK, ON DELETE SET NULL) and `transport_name` (snapshot — survives company deletion or rename). Read-open to all authenticated users; write (POST/PATCH/DELETE) gated to `truong_phong_log` + `dieu_do`. Soft-delete only. Case-insensitive UNIQUE on name (`LOWER(name)`). |
+| CUSTOMER_PIPELINE | `/api/customer-pipeline/*` | `routes/customer-pipeline.js`, `CustomerEditModal.jsx`, `CustomerDataPage.jsx` (route `/customers`) — Data khách hàng. Admin (TP + lead) management page: list, edit (company_name + invoice fields + sales_id), soft-delete (TP only). GET returns sales JOIN + job_count (LOWER(j.customer_name)=LOWER(cp.company_name)). PATCH detects sales_id change → applies L14 transfer pattern (DELETE old pipeline + children, UPSERT under new sales, notifications, audit). Mounted at `/api/customer-pipeline` not `/api/customers` to avoid collision with `routes/customers.js` PUT/DELETE on the `customers` (interaction) table. Navbar link visible only to `truong_phong_log` + `lead`. Soft delete via `customer_pipeline.deleted_at` — partial unique index `idx_pipeline_sales_company_active WHERE deleted_at IS NULL` lets the same (sales, company) be re-created post-delete; the L14 UPSERT in `routes/jobs.js` POST `/` matches via `ON CONFLICT (sales_id, LOWER(company_name)) WHERE deleted_at IS NULL`. |
 
 ### Future modules (do not build yet)
 
@@ -309,6 +310,29 @@ Also applies to backend route handlers with parallel structure (e.g. PATCH /tk, 
 4. The empty-array default `'[]'` (not `''`, not `NULL`) keeps the parse helper trivial.
 
 Currently: `transport_companies.email_cc`. Future candidates: alternate phone numbers, supplier-provided tracking numbers per shipment, OPS-task tags, etc.
+
+### L17 — Soft delete on a table with composite unique index needs a partial index AND matching ON CONFLICT predicate
+
+**Root cause pattern:** Adding `deleted_at TIMESTAMPTZ` to a table that already has a UNIQUE INDEX on `(col_a, col_b)` looks like a one-line schema change, but it silently breaks two paths:
+
+1. **The unique index still enforces uniqueness against soft-deleted rows.** A user soft-deletes `(A, "ABC")`. Later, a legitimate re-create of `(A, "ABC")` fails or — worse — UPDATEs the tombstoned row via `ON CONFLICT DO UPDATE`, leaving the "fresh" entity hidden behind `deleted_at`.
+2. **Existing `ON CONFLICT` clauses key off the non-partial index.** If you replace it with a partial index `WHERE deleted_at IS NULL`, every `ON CONFLICT (col_a, col_b)` clause in the codebase that touched that table must be rewritten to `ON CONFLICT (col_a, col_b) WHERE deleted_at IS NULL`, otherwise Postgres errors out with "there is no unique or exclusion constraint matching the ON CONFLICT specification" or — depending on transient state — picks an unintended index.
+
+**Pattern (used by `transport_companies` and `customer_pipeline`):**
+- `ALTER TABLE x ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE;`
+- `DROP INDEX IF EXISTS idx_x_unique_cols;`
+- `CREATE UNIQUE INDEX IF NOT EXISTS idx_x_unique_cols_active ON x(col_a, col_b) WHERE deleted_at IS NULL;`
+- Add a partial index on `deleted_at IS NOT NULL` if soft-deleted rows are scanned regularly.
+- Update every UPSERT against the table to use `ON CONFLICT (col_a, col_b) WHERE deleted_at IS NULL DO UPDATE ...`.
+- Update every read query that should hide soft-deleted rows to add `AND deleted_at IS NULL`. Grep the codebase for the table name; don't trust a mental audit.
+
+**Rules:**
+1. Whenever soft-delete is added to a table, immediately audit every `customer_pipeline`/`<table_name>` reference in `backend/src/routes/**/*.js`. Each read needs `deleted_at IS NULL` unless the path intentionally serves deleted rows (e.g. tombstone resolver).
+2. Drop and re-create the unique index as a partial one in the same migration. Don't leave both — the old index alone will permit silent tombstone updates.
+3. Update every `ON CONFLICT` clause that references the rewritten index, with the matching `WHERE deleted_at IS NULL` predicate.
+4. The opposite pattern — hard delete with CASCADE — is also valid for tables where retention isn't needed. Choose deliberately; soft-delete adds long-term filter discipline.
+
+Applies to: `customer_pipeline.deleted_at` (added 2026-05-11), `transport_companies.deleted_at`. Future candidates: `jobs.deleted_at` (already exists; consider auditing its readers next).
 
 ### Note — `jobs.import_export` (Loại lô)
 

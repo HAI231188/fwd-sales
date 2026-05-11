@@ -13,6 +13,7 @@ const jobsRoutes = require('./routes/jobs');
 const notificationsRoutes = require('./routes/notifications');
 const searchRoutes = require('./routes/search');
 const transportRoutes = require('./routes/transport');
+const customerPipelineRoutes = require('./routes/customer-pipeline');
 
 const app = express();
 
@@ -40,6 +41,7 @@ app.use('/api/jobs', jobsRoutes);
 app.use('/api/notifications', notificationsRoutes);
 app.use('/api/search', searchRoutes);
 app.use('/api/transport-companies', transportRoutes);
+app.use('/api/customer-pipeline', customerPipelineRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {

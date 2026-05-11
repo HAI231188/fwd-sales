@@ -36,7 +36,7 @@ router.get('/:pipelineId/jobs', requireAuth, async (req, res) => {
            WHERE c.pipeline_id = cp.id AND c.address  IS NOT NULL
            ORDER BY c.created_at DESC LIMIT 1) AS address
       FROM customer_pipeline cp
-      WHERE cp.id = $1
+      WHERE cp.id = $1 AND cp.deleted_at IS NULL
     `, [pipelineId]);
 
     if (!cpRows[0]) return res.status(404).json({ error: 'Không tìm thấy khách hàng' });

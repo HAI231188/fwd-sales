@@ -99,7 +99,7 @@ async function backfill() {
         (customer_id, sales_id, company_name, contact_person, phone, industry, source, stage, last_activity_date)
       SELECT customer_id, sales_id, company_name, contact_person, phone, industry, source, stage, last_activity_date
       FROM correct_stages
-      ON CONFLICT (sales_id, LOWER(company_name)) DO NOTHING
+      ON CONFLICT (sales_id, LOWER(company_name)) WHERE deleted_at IS NULL DO NOTHING
     `);
     console.log(`  ↳ Inserted ${inserted} new pipeline entries`);
 

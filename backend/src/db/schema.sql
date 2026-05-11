@@ -547,3 +547,22 @@ ALTER TABLE jobs ADD COLUMN IF NOT EXISTS import_export VARCHAR(10) NOT NULL DEF
 ALTER TABLE jobs DROP CONSTRAINT IF EXISTS jobs_import_export_check;
 ALTER TABLE jobs ADD CONSTRAINT jobs_import_export_check
   CHECK (import_export IN ('export', 'import'));
+
+-- ============================================================
+-- Soft delete on customer_pipeline (Data khách hàng — TP/lead management page)
+-- Mirrors transport_companies pattern: deleted_at column + partial unique index
+-- so a re-create for the same (sales, company) pair after soft-delete is allowed.
+--
+-- The OLD non-partial index `idx_pipeline_sales_company` is dropped and replaced
+-- with a partial one `idx_pipeline_sales_company_active`. The L14 transfer logic
+-- in routes/jobs.js POST `/` references the (sales_id, LOWER(company_name)) pair
+-- in its ON CONFLICT clause — that clause MUST include `WHERE deleted_at IS NULL`
+-- to match the partial-index predicate, otherwise Postgres can't infer the
+-- constraint and the INSERT errors out. See routes/jobs.js.
+-- ============================================================
+ALTER TABLE customer_pipeline ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE;
+DROP INDEX IF EXISTS idx_pipeline_sales_company;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_pipeline_sales_company_active
+  ON customer_pipeline(sales_id, LOWER(company_name)) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_pipeline_deleted_at
+  ON customer_pipeline(deleted_at) WHERE deleted_at IS NOT NULL;
