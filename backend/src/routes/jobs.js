@@ -941,10 +941,16 @@ router.post('/', requireAuth, async (req, res) => {
     si_number, mbl_no, hbl_no,
     // Invoice info (L15) — sent by CreateJobModal in "Khách mới" mode.
     company_full_name, invoice_address, invoice_tax_code,
+    // Loại lô — required by the form; default 'export' as defensive fallback.
+    import_export,
   } = req.body;
 
   if (!customer_name || !service_type) {
     return res.status(400).json({ error: 'Tên khách hàng và loại dịch vụ là bắt buộc' });
+  }
+  const importExport = import_export || 'export';
+  if (!['export', 'import'].includes(importExport)) {
+    return res.status(400).json({ error: "Loại lô phải là 'export' hoặc 'import'" });
   }
 
   try {
@@ -978,8 +984,8 @@ router.post('/', requireAuth, async (req, res) => {
         sales_id, pol, pod, cont_number, cont_type, seal_number,
         etd, eta, tons, cbm, deadline, service_type, other_services,
         cargo_type, so_kien, kg, destination, created_by, han_lenh,
-        si_number, mbl_no, hbl_no
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)
+        si_number, mbl_no, hbl_no, import_export
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28)
       RETURNING *
     `, [
       job_code || null, customer_id || null, customer_name,
@@ -992,6 +998,7 @@ router.post('/', requireAuth, async (req, res) => {
       cargo_type || 'fcl', so_kien || null, kg || null,
       destination || null, req.user.id, han_lenh || null,
       si_number || null, mbl_no || null, hbl_no || null,
+      importExport,
     ]);
 
     const job = rows[0];

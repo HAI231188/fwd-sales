@@ -17,6 +17,8 @@ const INIT_FORM = {
   sales_id: '', pol: '', pod: '', mbl_no: '', hbl_no: '',
   etd: '', eta: '', tons: '', cbm: '', kg: '', so_kien: '', deadline: '', han_lenh: '',
   service_type: 'tk', other_services: {}, destination: '',
+  // Loại lô — required; 'export' is the dominant case so it's the safe default.
+  import_export: 'export',
 };
 
 export default function CreateJobModal({ onClose, onCreated }) {
@@ -108,6 +110,12 @@ export default function CreateJobModal({ onClose, onCreated }) {
   async function submit({ confirmedTransfer = false } = {}) {
     setInvoiceErr('');
     if (!form.customer_name || !form.service_type) return;
+    // Loại lô guard — required; default makes this near-impossible to hit, but
+    // we keep the check so a future caller that clears the field can't slip past.
+    if (!['export', 'import'].includes(form.import_export)) {
+      setInvoiceErr('Vui lòng chọn loại lô (Hàng xuất / Hàng nhập)');
+      return;
+    }
     // Invoice-info guard (L15) — required only in "Khách mới" mode (new customer).
     if (searchMode === 'new') {
       const missing = !form.company_full_name?.trim() || !form.invoice_tax_code?.trim() ||
@@ -202,6 +210,26 @@ export default function CreateJobModal({ onClose, onCreated }) {
                 {type.toUpperCase()}
               </label>
             ))}
+          </div>
+
+          {/* Loại lô (Import/Export) — required; default 'export'. */}
+          <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)', marginRight: 4 }}>Loại lô *:</span>
+            {[
+              { value: 'export', label: 'Hàng xuất', color: '#16a34a', dim: 'rgba(34,197,94,0.12)' },
+              { value: 'import', label: 'Hàng nhập', color: '#d97706', dim: 'rgba(217,119,6,0.12)' },
+            ].map(opt => {
+              const active = form.import_export === opt.value;
+              return (
+                <label key={opt.value} style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 13,
+                  padding: '4px 14px', borderRadius: 20, border: `1.5px solid ${active ? opt.color : 'var(--border)'}`,
+                  background: active ? opt.dim : '', fontWeight: active ? 600 : 400, color: active ? opt.color : 'var(--text)' }}>
+                  <input type="radio" name="import_export" value={opt.value} checked={active}
+                    onChange={() => set('import_export', opt.value)} style={{ accentColor: opt.color }} />
+                  {opt.label}
+                </label>
+              );
+            })}
           </div>
 
           {/* Customer search */}

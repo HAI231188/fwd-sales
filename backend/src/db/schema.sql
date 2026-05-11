@@ -535,3 +535,15 @@ ALTER TABLE customer_pipeline DROP COLUMN IF EXISTS short_name;
 -- consumed by the frontend. Validate at backend; never trust on read.
 -- ============================================================
 ALTER TABLE transport_companies ADD COLUMN IF NOT EXISTS email_cc TEXT DEFAULT '[]';
+
+-- ============================================================
+-- Loại lô (Import/Export) — chosen at job creation, immutable post-create for now.
+-- 'export' = Hàng xuất (default — vast majority of cases), 'import' = Hàng nhập.
+-- NOT NULL with DEFAULT 'export' auto-backfills every existing row on ADD COLUMN.
+-- CHECK enforced via DROP/ADD pair so the schema migration stays idempotent
+-- (Postgres does not support `ADD CONSTRAINT ... IF NOT EXISTS`).
+-- ============================================================
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS import_export VARCHAR(10) NOT NULL DEFAULT 'export';
+ALTER TABLE jobs DROP CONSTRAINT IF EXISTS jobs_import_export_check;
+ALTER TABLE jobs ADD CONSTRAINT jobs_import_export_check
+  CHECK (import_export IN ('export', 'import'));

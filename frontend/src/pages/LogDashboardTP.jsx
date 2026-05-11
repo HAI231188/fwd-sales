@@ -71,6 +71,7 @@ const ALL_COLS = [
   { key: 'stt',          label: '#' },
   { key: 'job_code',     label: 'Số job' },
   { key: 'si_number',    label: 'Mã SI' },
+  { key: 'import_export',label: 'Loại' },
   { key: 'created_at',   label: 'Ngày tạo' },
   { key: 'customer',     label: 'Tên khách' },
   { key: 'han_lenh',     label: 'Hạn lệnh' },
@@ -115,7 +116,12 @@ function loadVisibleCols() {
       const a = JSON.parse(s);
       if (Array.isArray(a)) {
         const valid = a.filter(k => allKeys.includes(k));
-        if (valid.length) return valid;
+        if (valid.length) {
+          // Append any newly-added columns not present in the saved list so feature
+          // additions (e.g. import_export → "Loại") show up without nuking user order.
+          const missing = allKeys.filter(k => !valid.includes(k));
+          return [...valid, ...missing];
+        }
       }
     }
   } catch {}
@@ -664,6 +670,14 @@ export default function LogDashboardTP() {
                         case 'stt':         return <td key={key} style={{ ...cs, color: 'var(--text-3)' }}>{i + 1}</td>;
                         case 'job_code':    return <td key={key} style={{ ...cs, whiteSpace: 'nowrap', fontSize: 12, color: 'var(--info)' }}>{j.job_code || '—'}</td>;
                         case 'si_number':   return <td key={key} style={{ ...cs, whiteSpace: 'nowrap', fontSize: 12, color: 'var(--text-2)' }}>{j.si_number || '—'}</td>;
+                        case 'import_export': {
+                          const imp = j.import_export === 'import';
+                          return <td key={key} style={{ ...cs, whiteSpace: 'nowrap' }}>
+                            <span style={{ background: imp ? 'rgba(217,119,6,0.12)' : 'rgba(34,197,94,0.12)',
+                              color: imp ? '#d97706' : '#16a34a', borderRadius: 6, padding: '2px 8px',
+                              fontSize: 11, fontWeight: 600 }}>{imp ? 'Nhập' : 'Xuất'}</span>
+                          </td>;
+                        }
                         case 'created_at':  return <td key={key} style={{ ...cs, whiteSpace: 'nowrap', fontSize: 12 }}>{fmtDate(j.created_at)}</td>;
                         case 'customer':    return <td key={key} style={{ ...cs, maxWidth: 150 }}><div style={{ fontWeight: 500, fontSize: 13 }}>{j.customer_name}</div></td>;
                         case 'han_lenh':    return <td key={key} style={{ ...cs, whiteSpace: 'nowrap', fontSize: 12 }}>{j.han_lenh ? <span style={deadlineStyle(j.han_lenh)}>{fmtDt(j.han_lenh)}</span> : <span style={{ color: 'var(--text-3)' }}>—</span>}</td>;

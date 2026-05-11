@@ -83,10 +83,23 @@ const TD = ({ children, style }) => (
   <td style={{ padding: '8px 8px', borderBottom: '1px solid var(--border)', fontSize: 13, ...style }}>{children}</td>
 );
 
+// Loại lô badge (Hàng xuất / Hàng nhập). Inline helper so all 5 OPS tables stay consistent.
+function IeCell({ value }) {
+  const imp = value === 'import';
+  return (
+    <TD style={{ whiteSpace: 'nowrap' }}>
+      <span style={{ background: imp ? 'rgba(217,119,6,0.12)' : 'rgba(34,197,94,0.12)',
+        color: imp ? '#d97706' : '#16a34a', borderRadius: 6, padding: '2px 8px',
+        fontSize: 11, fontWeight: 600 }}>{imp ? 'Nhập' : 'Xuất'}</span>
+    </TD>
+  );
+}
+
 const TQ_COLS = [
   { key: 'created_at',    label: 'Ngày' },
   { key: 'job_code',      label: 'Job',           filterType: 'text' },
   { key: 'si_number',     label: 'Mã SI',         filterType: 'text' },
+  { key: 'import_export', label: 'Loại' },
   { key: 'customer_name', label: 'Khách hàng',    filterType: 'text', accessor: j => j.customer_name || '' },
   { key: 'cargo',         label: 'Cont / Loại' },
   { key: 'etd_eta',       label: 'ETD / ETA' },
@@ -101,6 +114,7 @@ const DL_COLS = [
   { key: 'created_at',    label: 'Ngày' },
   { key: 'job_code',      label: 'Job',           filterType: 'text' },
   { key: 'si_number',     label: 'Mã SI',         filterType: 'text' },
+  { key: 'import_export', label: 'Loại' },
   { key: 'customer_name', label: 'Khách hàng',    filterType: 'text', accessor: j => j.customer_name || '' },
   { key: 'cargo',         label: 'Cont / Loại' },
   { key: 'deadline',      label: 'Hạn lệnh' },
@@ -111,6 +125,7 @@ const TODAY_COLS = [
   { key: 'created_at',    label: 'Ngày' },
   { key: 'job_code',      label: 'Job',           filterType: 'text' },
   { key: 'si_number',     label: 'Mã SI',         filterType: 'text' },
+  { key: 'import_export', label: 'Loại' },
   { key: 'customer_name', label: 'Khách hàng',    filterType: 'text', accessor: j => j.customer_name || '' },
   { key: 'cargo',         label: 'Cont / Loại' },
   { key: 'deadline',      label: 'Hạn lệnh' },
@@ -121,6 +136,7 @@ const DONE_COLS = [
   { key: 'ops_done_at',   label: 'Ngày xong' },
   { key: 'job_code',      label: 'Job',           filterType: 'text' },
   { key: 'si_number',     label: 'Mã SI',         filterType: 'text' },
+  { key: 'import_export', label: 'Loại' },
   { key: 'customer_name', label: 'Khách hàng',    filterType: 'text', accessor: j => j.customer_name || '' },
   { key: 'cargo',         label: 'Cont / Loại' },
   { key: 'tk_status',     label: 'Trạng thái TK', filterType: 'select', options: TK_STATUS_OPTS },
@@ -131,6 +147,7 @@ const HT_COLS = [
   { key: 'created_at',    label: 'Ngày' },
   { key: 'job_code',      label: 'Job',           filterType: 'text' },
   { key: 'si_number',     label: 'Mã SI',         filterType: 'text' },
+  { key: 'import_export', label: 'Loại' },
   { key: 'customer_name', label: 'Khách hàng',    filterType: 'text', accessor: j => j.customer_name || '' },
   { key: 'cargo',         label: 'Cont' },
   { key: 'etd_eta',       label: 'ETD / ETA' },
@@ -320,6 +337,7 @@ export default function LogDashboardOps() {
                     <TD style={{ whiteSpace: 'nowrap', fontSize: 12 }}>{fmtDate(j.created_at)}</TD>
                     <TD style={{ fontWeight: 600, color: 'var(--info)', whiteSpace: 'nowrap' }}>{j.job_code || `#${j.id}`}</TD>
                     <TD style={{ whiteSpace: 'nowrap', fontSize: 12, color: 'var(--text-2)' }}>{j.si_number || '—'}</TD>
+                    <IeCell value={j.import_export} />
                     <TD style={{ maxWidth: 140 }}>{j.customer_name}</TD>
                     <TD style={{ whiteSpace: 'nowrap', fontSize: 12 }}>{fmtCargo(j)}</TD>
                     <TD style={{ whiteSpace: 'nowrap', color: 'var(--text-2)', fontSize: 12 }}>{fmtDate(j.etd)}<br />{fmtDate(j.eta)}</TD>
@@ -357,6 +375,7 @@ export default function LogDashboardOps() {
                     <TD style={{ whiteSpace: 'nowrap', fontSize: 12 }}>{fmtDate(j.created_at)}</TD>
                     <TD style={{ fontWeight: 600, color: 'var(--info)', whiteSpace: 'nowrap' }}>{j.job_code || `#${j.id}`}</TD>
                     <TD style={{ whiteSpace: 'nowrap', fontSize: 12, color: 'var(--text-2)' }}>{j.si_number || '—'}</TD>
+                    <IeCell value={j.import_export} />
                     <TD style={{ maxWidth: 140 }}>{j.customer_name}</TD>
                     <TD style={{ whiteSpace: 'nowrap', fontSize: 12 }}>{fmtCargo(j)}</TD>
                     <TD style={{ whiteSpace: 'nowrap', ...deadlineStyle(j.deadline) }}>{j.deadline ? fmtDt(j.deadline) : '—'}</TD>
@@ -381,6 +400,7 @@ export default function LogDashboardOps() {
                     <TD style={{ whiteSpace: 'nowrap', fontSize: 12 }}>{fmtDate(j.created_at)}</TD>
                     <TD style={{ fontWeight: 600, color: 'var(--info)', whiteSpace: 'nowrap' }}>{j.job_code || `#${j.id}`}</TD>
                     <TD style={{ whiteSpace: 'nowrap', fontSize: 12, color: 'var(--text-2)' }}>{j.si_number || '—'}</TD>
+                    <IeCell value={j.import_export} />
                     <TD style={{ maxWidth: 140 }}>{j.customer_name}</TD>
                     <TD style={{ whiteSpace: 'nowrap', fontSize: 12 }}>{fmtCargo(j)}</TD>
                     <TD style={{ whiteSpace: 'nowrap', ...deadlineStyle(j.deadline) }}>{j.deadline ? fmtDt(j.deadline) : '—'}</TD>
@@ -404,6 +424,7 @@ export default function LogDashboardOps() {
                     <TD style={{ whiteSpace: 'nowrap', fontSize: 12, color: 'var(--primary)' }}>{fmtDt(j.ops_done_at)}</TD>
                     <TD style={{ fontWeight: 600, color: 'var(--info)', whiteSpace: 'nowrap' }}>{j.job_code || `#${j.id}`}</TD>
                     <TD style={{ whiteSpace: 'nowrap', fontSize: 12, color: 'var(--text-2)' }}>{j.si_number || '—'}</TD>
+                    <IeCell value={j.import_export} />
                     <TD style={{ maxWidth: 140 }}>{j.customer_name}</TD>
                     <TD style={{ whiteSpace: 'nowrap', fontSize: 12 }}>{fmtCargo(j)}</TD>
                     <TD>
@@ -430,6 +451,7 @@ export default function LogDashboardOps() {
                     <TD style={{ fontSize: 12 }}>{fmtDate(j.created_at)}</TD>
                     <TD style={{ fontWeight: 600, color: 'var(--primary)' }}>{j.job_code || `#${j.id}`}</TD>
                     <TD style={{ whiteSpace: 'nowrap', fontSize: 12, color: 'var(--text-2)' }}>{j.si_number || '—'}</TD>
+                    <IeCell value={j.import_export} />
                     <TD>{j.customer_name}</TD>
                     <TD style={{ fontSize: 12 }}>{fmtCargo(j)}</TD>
                     <TD style={{ color: 'var(--text-2)', fontSize: 12 }}>{fmtDate(j.etd)} / {fmtDate(j.eta)}</TD>

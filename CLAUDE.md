@@ -200,7 +200,7 @@ This codebase has no TypeScript, no API schema validation, no serializers. The S
 5. When a field is NULL/empty and shouldn't be, check **which table the data actually lives in** before assuming the JOIN or subquery is broken.
 
 **Known high-risk aliases** (consumed directly by frontend — never rename):
-- `GET /api/jobs/` → `tk_notes`, `truck_delivery_location`, `cus_name`, `ops_name`, `tk_status`, `tq_datetime`, `truck_completed_at`
+- `GET /api/jobs/` → `tk_notes`, `truck_delivery_location`, `cus_name`, `ops_name`, `tk_status`, `tq_datetime`, `truck_completed_at`, `import_export`
 - `GET /api/jobs/stats` → `total_pending`, `warn_soon`, `delete_requests`, `total_managing`, `sap_han`, `qua_han`
 - `GET /api/jobs/customer-search` → `customer_address`, `customer_tax_code`, `pipeline_id`, `sales_id`, `sales_name`
 
@@ -309,6 +309,10 @@ Also applies to backend route handlers with parallel structure (e.g. PATCH /tk, 
 4. The empty-array default `'[]'` (not `''`, not `NULL`) keeps the parse helper trivial.
 
 Currently: `transport_companies.email_cc`. Future candidates: alternate phone numbers, supplier-provided tracking numbers per shipment, OPS-task tags, etc.
+
+### Note — `jobs.import_export` (Loại lô)
+
+Two-value enum on `jobs`: `'export'` (Hàng xuất, default) or `'import'` (Hàng nhập). Selected at create time in `CreateJobModal` (radio segment under FCL/LCL). CHECK constraint enforces values; column is `NOT NULL DEFAULT 'export'` so legacy rows auto-fill on `ADD COLUMN`. **Not editable post-create** — `PUT /api/jobs/:id` does not list it in `FIELDS`. If we want to allow editing later, add `'import_export'` to that FIELDS list AND validate the value in the PUT handler against the same `['export','import']` whitelist. Frontend displays a tiny badge (Xuất green / Nhập amber) in all 4 LOG dashboards' job lists, and a readonly Row in `JobDetailModal` "Thông tin chung" section.
 
 ### L15 — Invoice info on customer_pipeline (snapshot semantics, preserve-on-conflict)
 

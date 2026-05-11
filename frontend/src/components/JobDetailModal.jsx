@@ -595,6 +595,8 @@ export default function JobDetailModal({ jobId, onClose }) {
                       <Row label="Người tạo" value={job.created_by_name || '—'} />
                       <Row label="Hạn lệnh" value={fmtDt(job.han_lenh)} color={deadlineColor(job.han_lenh)} />
                       <Row label="Điểm đến" value={fmtDest(job.destination)} />
+                      <Row label="Loại lô" value={job.import_export === 'import' ? 'Hàng nhập' : 'Hàng xuất'}
+                           color={job.import_export === 'import' ? '#d97706' : '#16a34a'} />
                       <Row label="Khách hàng" value={job.customer_name} />
                       <Row label="Địa chỉ" value={job.customer_address || '—'} />
                       <Row label="MST" value={job.customer_tax_code || '—'} />

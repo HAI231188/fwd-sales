@@ -90,6 +90,7 @@ const DD_COLS = [
   { key: 'created_at',    label: 'Ngày' },
   { key: 'job_code',      label: 'Job',            filterType: 'text' },
   { key: 'si_number',     label: 'Mã SI',          filterType: 'text' },
+  { key: 'import_export', label: 'Loại' },
   { key: 'customer_name', label: 'Khách hàng',     filterType: 'text', accessor: j => j.customer_name || '' },
   { key: 'cargo',         label: 'Cont / Tons' },
   { key: 'etd_eta',       label: 'ETD / ETA' },
@@ -299,6 +300,14 @@ export default function LogDashboardDieuDo() {
                       <td style={{ ...cs, whiteSpace: 'nowrap', fontSize: 12 }}>{fmtDate(j.created_at)}</td>
                       <td style={{ ...cs, whiteSpace: 'nowrap', fontWeight: 600, color: 'var(--info)' }}>{j.job_code || `#${j.id}`}</td>
                       <td style={{ ...cs, whiteSpace: 'nowrap', fontSize: 12, color: 'var(--text-2)' }}>{j.si_number || '—'}</td>
+                      <td style={{ ...cs, whiteSpace: 'nowrap' }}>
+                        {(() => {
+                          const imp = j.import_export === 'import';
+                          return <span style={{ background: imp ? 'rgba(217,119,6,0.12)' : 'rgba(34,197,94,0.12)',
+                            color: imp ? '#d97706' : '#16a34a', borderRadius: 6, padding: '2px 8px',
+                            fontSize: 11, fontWeight: 600 }}>{imp ? 'Nhập' : 'Xuất'}</span>;
+                        })()}
+                      </td>
                       <td style={{ ...cs, maxWidth: 140 }}>{j.customer_name}</td>
                       <td style={{ ...cs, whiteSpace: 'nowrap', fontSize: 12 }}>
                         {fmtCargo(j)}
