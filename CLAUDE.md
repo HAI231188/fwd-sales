@@ -336,7 +336,26 @@ Applies to: `customer_pipeline.deleted_at` (added 2026-05-11), `transport_compan
 
 ### Note — `jobs.import_export` (Loại lô)
 
-Two-value enum on `jobs`: `'export'` (Hàng xuất, default) or `'import'` (Hàng nhập). Selected at create time in `CreateJobModal` (radio segment under FCL/LCL). CHECK constraint enforces values; column is `NOT NULL DEFAULT 'export'` so legacy rows auto-fill on `ADD COLUMN`. **Not editable post-create** — `PUT /api/jobs/:id` does not list it in `FIELDS`. If we want to allow editing later, add `'import_export'` to that FIELDS list AND validate the value in the PUT handler against the same `['export','import']` whitelist. Frontend displays a tiny badge (Xuất green / Nhập amber) in all 4 LOG dashboards' job lists, and a readonly Row in `JobDetailModal` "Thông tin chung" section.
+Two-value enum on `jobs`: `'export'` (Hàng xuất, default) or `'import'` (Hàng nhập). Selected at create time in `CreateJobModal` — pill segment in the TOP-ROW grid alongside Mã Job / Mã SI / Loại dịch vụ / Điểm đến (the earlier placement below the FCL/LCL toggle was easy to miss; do not move it back). CHECK constraint enforces values; column is `NOT NULL DEFAULT 'export'` so legacy rows auto-fill on `ADD COLUMN`. **Not editable post-create** — `PUT /api/jobs/:id` does not list it in `FIELDS`. Frontend displays a tiny badge (Xuất green / Nhập amber) in all 4 LOG dashboards' job lists, and a readonly Row in `JobDetailModal` "Thông tin chung" section.
+
+### Note — FCL container quantity matrix (CreateJobModal)
+
+The old "+ Thêm cont / ✕ Xóa cont" UX in `CreateJobModal` was replaced with a 6-cell **quantity matrix** (one number input per `CONT_TYPES` entry — 20DC, 40DC, 40HC, 45HC, 20RF, 40RF) plus an auto-generated **detail list**. The matrix is the source of truth for row count and type; detail rows expose only `cont_number` + `seal_number` (the `cont_type` chip is read-only and follows the matrix).
+
+**Reconcile rules** (`setQty(type, raw)`):
+- Increase: append empty rows of that type at the end of the type's group.
+- Decrease: drop rows from the end of the type's group; if any dropped row has data (`cont_number` or `seal_number` non-blank), `window.confirm("Cont X sẽ bị xóa, tiếp tục?")` first.
+- Detail rows are always ordered by `CONT_TYPES` enumeration order, so visual grouping is stable.
+- Switching cargo type FCL→LCL→FCL via `selectCargoType()` resets both `contQty` and `containers` to empty (matrix all zeros, no detail rows).
+
+**Validation on submit** (`CreateJobModal`):
+- `Hàng nhập`: every detail row MUST have both `cont_number` AND `seal_number` non-blank. Error: `"Hàng nhập phải nhập đủ số cont và seal cho tất cả container"`.
+- `Hàng xuất`: row-level fields optional (numbers arrive later from carrier).
+- Zero rows is permitted at submit time (user may still be drafting; backend simply inserts zero `job_containers` rows).
+
+**Backend contract unchanged.** POST `/api/jobs` still reads `containers` as `Array<{cont_type, cont_number, seal_number}>` and the row-by-row INSERT in `routes/jobs.js:1006-1013` still skips rows with empty `cont_type`. The wire format is preserved; only the in-modal authoring UX changed.
+
+**Out of scope (not touched in this commit):** `JobDetailModal` edit UI still uses the old per-row `cont_type` dropdown + manual add/remove. If we adopt the matrix UX there too, copy the `contQty` + `setQty` pattern verbatim and reset matrix from `job.containers` group-by-type counts in `buildDraft`.
 
 ### L15 — Invoice info on customer_pipeline (snapshot semantics, preserve-on-conflict)
 

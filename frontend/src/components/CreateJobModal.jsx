@@ -8,7 +8,11 @@ const CONT_TYPES = ['20DC','40DC','40HC','45HC','20RF','40RF'];
 const OTHER_SVC_KEYS = ['ktcl','kiem_dich','hun_trung','co','khac'];
 const OTHER_SVC_LABEL = { ktcl:'KTCL', kiem_dich:'Kiểm dịch', hun_trung:'Hun trùng', co:'CO', khac:'Khác' };
 
-const EMPTY_CONT = () => ({ cont_type: '40DC', cont_number: '', seal_number: '' });
+// Container quantity matrix — keyed by CONT_TYPES, every type starts at 0.
+// Detail rows in `containers` state are reconciled from this map (see setQty
+// below): increasing a type appends empty rows, decreasing drops from the end
+// with a confirm-before-discard prompt if the dropped row carries data.
+const ZERO_QTY = () => Object.fromEntries(CONT_TYPES.map(t => [t, 0]));
 
 const INIT_FORM = {
   job_code: '', si_number: '', customer_name: '', customer_address: '', customer_tax_code: '',
@@ -37,7 +41,11 @@ export default function CreateJobModal({ onClose, onCreated }) {
 
   // Form
   const [cargoType, setCargoType] = useState('fcl');
-  const [containers, setContainers] = useState([EMPTY_CONT()]);
+  // The quantity matrix is the source of truth for FCL row count + types.
+  // `containers` is reconciled from it via setQty (preserves cont_number/seal
+  // values for surviving rows; warns before dropping rows with data).
+  const [contQty, setContQty] = useState(ZERO_QTY());
+  const [containers, setContainers] = useState([]);
   const [form, setForm] = useState(INIT_FORM);
   const [saving, setSaving] = useState(false);
   const [showTransferConfirm, setShowTransferConfirm] = useState(false);
@@ -47,10 +55,54 @@ export default function CreateJobModal({ onClose, onCreated }) {
   const toggleOs = k => setForm(f => ({ ...f, other_services: { ...f.other_services, [k]: !f.other_services[k] } }));
   const locked = !!selectedCustomer;
 
-  // Container helpers
-  const addCont = () => setContainers(cs => [...cs, EMPTY_CONT()]);
-  const removeCont = i => setContainers(cs => cs.filter((_, idx) => idx !== i));
+  // Cargo-type switcher — per spec, FCL↔LCL transitions reset the matrix + rows.
+  // Direct setter is only used inside this wrapper so the two stay aligned.
+  function selectCargoType(type) {
+    if (type === cargoType) return;
+    setCargoType(type);
+    setContQty(ZERO_QTY());
+    setContainers([]);
+  }
+
+  // Update only cont_number / seal_number — cont_type is now read-only and
+  // governed by the quantity matrix.
   const updateCont = (i, k, v) => setContainers(cs => cs.map((c, idx) => idx === i ? { ...c, [k]: v } : c));
+
+  const totalQty = Object.values(contQty).reduce((s, n) => s + (n || 0), 0);
+
+  // Reconcile a single matrix cell change into both contQty + containers.
+  // Walks CONT_TYPES in order so the detail list groups containers by type.
+  function setQty(type, raw) {
+    const n = Math.max(0, parseInt(raw, 10) || 0);
+    if (n === (contQty[type] || 0)) return;
+
+    if (n < (contQty[type] || 0)) {
+      const existingOfType = containers.filter(c => c.cont_type === type);
+      const toDrop = existingOfType.slice(n);
+      const withData = toDrop.filter(c => (c.cont_number || '').trim() || (c.seal_number || '').trim());
+      if (withData.length > 0) {
+        const names = withData
+          .map(c => (c.cont_number || '').trim() || `(${type} chưa nhập số)`)
+          .join(', ');
+        const ok = window.confirm(`Cont ${names} sẽ bị xóa, tiếp tục?`);
+        if (!ok) return;
+      }
+    }
+
+    const nextQty = { ...contQty, [type]: n };
+    setContQty(nextQty);
+    setContainers(cs => {
+      const out = [];
+      for (const t of CONT_TYPES) {
+        const existing = cs.filter(c => c.cont_type === t);
+        const want = nextQty[t] || 0;
+        for (let i = 0; i < want; i++) {
+          out.push(existing[i] || { cont_type: t, cont_number: '', seal_number: '' });
+        }
+      }
+      return out;
+    });
+  }
 
   // Debounced customer search
   useEffect(() => {
@@ -116,6 +168,16 @@ export default function CreateJobModal({ onClose, onCreated }) {
       setInvoiceErr('Vui lòng chọn loại lô (Hàng xuất / Hàng nhập)');
       return;
     }
+    // Hàng nhập: every auto-generated container row must carry cont_number + seal.
+    // Hàng xuất: optional (carrier supplies later) — no row-level check.
+    if (cargoType === 'fcl' && form.import_export === 'import') {
+      const incomplete = containers.some(c =>
+        !(c.cont_number || '').trim() || !(c.seal_number || '').trim());
+      if (incomplete) {
+        setInvoiceErr('Hàng nhập phải nhập đủ số cont và seal cho tất cả container');
+        return;
+      }
+    }
     // Invoice-info guard (L15) — required only in "Khách mới" mode (new customer).
     if (searchMode === 'new') {
       const missing = !form.company_full_name?.trim() || !form.invoice_tax_code?.trim() ||
@@ -167,8 +229,9 @@ export default function CreateJobModal({ onClose, onCreated }) {
         </div>
         <div className="modal-body">
 
-          {/* Service + Cargo type */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 12 }}>
+          {/* Service + Loại lô + Destination — Loại lô sits inline so users
+              cannot miss it (was buried below the FCL/LCL toggle previously). */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1.1fr 1.3fr 1fr', gap: 12 }}>
             <div className="form-group">
               <label className="form-label">Mã Job</label>
               <input className="form-input" value={form.job_code} onChange={e => set('job_code', e.target.value)} placeholder="VD: SLB-2024-001" />
@@ -186,6 +249,28 @@ export default function CreateJobModal({ onClose, onCreated }) {
               </select>
             </div>
             <div className="form-group">
+              <label className="form-label">Loại lô *</label>
+              <div style={{ display: 'flex', gap: 4 }}>
+                {[
+                  { value: 'export', label: 'Hàng xuất', color: '#16a34a', dim: 'rgba(34,197,94,0.12)' },
+                  { value: 'import', label: 'Hàng nhập', color: '#d97706', dim: 'rgba(217,119,6,0.12)' },
+                ].map(opt => {
+                  const active = form.import_export === opt.value;
+                  return (
+                    <label key={opt.value} style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4,
+                      cursor: 'pointer', fontSize: 12, padding: '6px 6px', borderRadius: 6, whiteSpace: 'nowrap',
+                      border: `1.5px solid ${active ? opt.color : 'var(--border)'}`,
+                      background: active ? opt.dim : '', fontWeight: active ? 600 : 400,
+                      color: active ? opt.color : 'var(--text)' }}>
+                      <input type="radio" name="import_export" value={opt.value} checked={active}
+                        onChange={() => set('import_export', opt.value)} style={{ accentColor: opt.color }} />
+                      {opt.label}
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+            <div className="form-group">
               <label className="form-label">Điểm đến</label>
               <select className="form-select" value={form.destination || ''} onChange={e => set('destination', e.target.value || null)}>
                 <option value="">— Chọn —</option>
@@ -198,7 +283,7 @@ export default function CreateJobModal({ onClose, onCreated }) {
             </div>
           </div>
 
-          {/* FCL / LCL toggle */}
+          {/* FCL / LCL toggle — uses selectCargoType so switching resets the matrix. */}
           <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
             <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)', marginRight: 4 }}>Loại hàng:</span>
             {['fcl','lcl'].map(type => (
@@ -206,30 +291,10 @@ export default function CreateJobModal({ onClose, onCreated }) {
                 padding: '4px 14px', borderRadius: 20, border: `1.5px solid ${cargoType === type ? 'var(--primary)' : 'var(--border)'}`,
                 background: cargoType === type ? 'var(--primary-dim)' : '', fontWeight: cargoType === type ? 600 : 400 }}>
                 <input type="radio" name="cargo_type" value={type} checked={cargoType === type}
-                  onChange={() => setCargoType(type)} style={{ accentColor: 'var(--primary)' }} />
+                  onChange={() => selectCargoType(type)} style={{ accentColor: 'var(--primary)' }} />
                 {type.toUpperCase()}
               </label>
             ))}
-          </div>
-
-          {/* Loại lô (Import/Export) — required; default 'export'. */}
-          <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)', marginRight: 4 }}>Loại lô *:</span>
-            {[
-              { value: 'export', label: 'Hàng xuất', color: '#16a34a', dim: 'rgba(34,197,94,0.12)' },
-              { value: 'import', label: 'Hàng nhập', color: '#d97706', dim: 'rgba(217,119,6,0.12)' },
-            ].map(opt => {
-              const active = form.import_export === opt.value;
-              return (
-                <label key={opt.value} style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 13,
-                  padding: '4px 14px', borderRadius: 20, border: `1.5px solid ${active ? opt.color : 'var(--border)'}`,
-                  background: active ? opt.dim : '', fontWeight: active ? 600 : 400, color: active ? opt.color : 'var(--text)' }}>
-                  <input type="radio" name="import_export" value={opt.value} checked={active}
-                    onChange={() => set('import_export', opt.value)} style={{ accentColor: opt.color }} />
-                  {opt.label}
-                </label>
-              );
-            })}
           </div>
 
           {/* Customer search */}
@@ -374,30 +439,66 @@ export default function CreateJobModal({ onClose, onCreated }) {
             </div>
           </div>
 
-          {/* FCL: container list */}
+          {/* FCL: quantity matrix (Block 1) + auto-generated detail rows (Block 2) */}
           {cargoType === 'fcl' && (
             <div style={{ marginTop: 12 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                <label className="form-label" style={{ margin: 0 }}>Danh sách cont (FCL)</label>
-                <button type="button" className="btn btn-ghost btn-sm" onClick={addCont}
-                  style={{ fontSize: 12, padding: '2px 10px' }}>+ Thêm cont</button>
+              {/* Block 1 — quantity matrix */}
+              <div style={{ padding: 12, background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 8 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)', marginBottom: 8 }}>
+                  Số lượng cont theo loại
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+                  {CONT_TYPES.map(t => (
+                    <div key={t} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ minWidth: 48, fontWeight: 600, fontSize: 13, color: 'var(--text)' }}>{t}:</span>
+                      <input type="number" min="0" step="1" className="form-input"
+                        value={contQty[t] || 0}
+                        onChange={e => setQty(t, e.target.value)}
+                        style={{ width: 70, fontSize: 13, padding: '4px 8px' }} />
+                    </div>
+                  ))}
+                </div>
+                <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text-2)' }}>
+                  Tổng: <strong style={{ color: 'var(--text)' }}>{totalQty}</strong> cont
+                </div>
               </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {containers.map((c, i) => (
-                  <div key={i} style={{ display: 'grid', gridTemplateColumns: '130px 1fr 1fr auto', gap: 6, alignItems: 'center' }}>
-                    <select className="form-select" value={c.cont_type} onChange={e => updateCont(i, 'cont_type', e.target.value)} style={{ fontSize: 12 }}>
-                      {CONT_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
-                    </select>
-                    <input className="form-input" value={c.cont_number} placeholder="Số cont"
-                      onChange={e => updateCont(i, 'cont_number', e.target.value)} style={{ fontSize: 12 }} />
-                    <input className="form-input" value={c.seal_number} placeholder="Số seal"
-                      onChange={e => updateCont(i, 'seal_number', e.target.value)} style={{ fontSize: 12 }} />
-                    <button type="button" className="btn btn-ghost btn-sm btn-icon"
-                      style={{ color: 'var(--danger)', visibility: containers.length > 1 ? 'visible' : 'hidden' }}
-                      onClick={() => removeCont(i)}>✕</button>
+
+              {/* Block 2 — auto-generated detail rows (cont_type is read-only) */}
+              {totalQty > 0 && (
+                <div style={{ marginTop: 12 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                    <label className="form-label" style={{ margin: 0 }}>Chi tiết cont</label>
+                    {form.import_export === 'import' && (
+                      <span style={{ fontSize: 11, color: 'var(--warning)', fontWeight: 500 }}>
+                        ⚠ Hàng nhập: bắt buộc nhập đủ số cont và seal
+                      </span>
+                    )}
                   </div>
-                ))}
-              </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {containers.map((c, i) => {
+                      const importMissing = form.import_export === 'import'
+                        && (!(c.cont_number || '').trim() || !(c.seal_number || '').trim());
+                      return (
+                        <div key={i} style={{ display: 'grid', gridTemplateColumns: '90px 1fr 1fr', gap: 6, alignItems: 'center' }}>
+                          <span style={{ fontWeight: 600, fontSize: 12, padding: '6px 10px', textAlign: 'center',
+                            background: 'var(--bg)', borderRadius: 6, border: '1px solid var(--border)', color: 'var(--text-2)' }}>
+                            {c.cont_type}
+                          </span>
+                          <input className="form-input" value={c.cont_number} placeholder="Số cont"
+                            onChange={e => updateCont(i, 'cont_number', e.target.value)}
+                            style={{ fontSize: 12, ...(importMissing && !(c.cont_number || '').trim()
+                              ? { borderColor: 'var(--warning)' } : {}) }} />
+                          <input className="form-input" value={c.seal_number} placeholder="Số seal"
+                            onChange={e => updateCont(i, 'seal_number', e.target.value)}
+                            style={{ fontSize: 12, ...(importMissing && !(c.seal_number || '').trim()
+                              ? { borderColor: 'var(--warning)' } : {}) }} />
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
               <div className="grid-2" style={{ gap: 12, marginTop: 10 }}>
                 <div className="form-group">
                   <label className="form-label">Tấn (tuỳ chọn)</label>
