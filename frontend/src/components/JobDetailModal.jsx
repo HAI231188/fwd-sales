@@ -1,7 +1,8 @@
 import { useState, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getJob, updateJobTk, updateJobTruck, updateJob, deleteJob, requestJobDelete, getLogStaff } from '../api';
+// Phase 4: updateJobTruck removed — JobDetailModal "Vận chuyển" section is now read-only.
+import { getJob, updateJobTk, updateJob, deleteJob, requestJobDelete, getLogStaff } from '../api';
 import TransportPicker from './TransportPicker';
 import { useModalZIndex } from '../hooks/useModalZIndex';
 import { useAuth } from '../App';
@@ -297,10 +298,7 @@ export default function JobDetailModal({ jobId, onClose }) {
     mutationFn: data => updateJobTk(jobId, data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['job', jobId] }),
   });
-  const truckMut = useMutation({
-    mutationFn: data => updateJobTruck(jobId, data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['job', jobId] }),
-  });
+  // Phase 4: truckMut removed (legacy section is read-only).
   const editMut = useMutation({
     mutationFn: data => updateJob(jobId, data),
     onSuccess: () => {
@@ -799,40 +797,14 @@ export default function JobDetailModal({ jobId, onClose }) {
 
                 {job.truck && (() => {
                   const truck = job.truck;
+                  // Phase 4: legacy job_truck section is now READ-ONLY. New jobs
+                  // have no job_truck row at all; for legacy rows we just display
+                  // what's there. Booking edits live on the DD dashboard's
+                  // Quản lý đặt xe section via /api/truck-bookings.
                   return (
-                    <Section title="Vận chuyển">
-                      {canEditTruck ? (
-                        <>
-                          <ERow label="Vận tải">
-                            <TransportPicker
-                              value={{ transport_company_id: truck.transport_company_id, transport_name: truck.transport_name }}
-                              onChange={v => truckMut.mutate({ transport_company_id: v.transport_company_id, transport_name: v.transport_name })} />
-                          </ERow>
-                          <ERow label="Số xe">
-                            <InlineInput value={truck.vehicle_number} onSave={v => truckMut.mutate({ vehicle_number: v })} />
-                          </ERow>
-                          <ERow label="KH ngày giờ">
-                            <InlineInput type="datetime-local" value={toDatetimeLocal(truck.planned_datetime)}
-                              onSave={v => truckMut.mutate({ planned_datetime: v })} />
-                          </ERow>
-                          <ERow label="TH ngày giờ">
-                            <InlineInput type="datetime-local" value={toDatetimeLocal(truck.actual_datetime)}
-                              onSave={v => truckMut.mutate({ actual_datetime: v })} />
-                          </ERow>
-                          <ERow label="Lấy hàng">
-                            <InlineInput value={truck.pickup_location} onSave={v => truckMut.mutate({ pickup_location: v })} />
-                          </ERow>
-                          <ERow label="Giao hàng">
-                            <InlineInput value={truck.delivery_location} onSave={v => truckMut.mutate({ delivery_location: v })} />
-                          </ERow>
-                          <ERow label="Cước">
-                            <InlineInput type="number" value={truck.cost != null ? String(truck.cost) : ''}
-                              onSave={v => truckMut.mutate({ cost: v ? Number(v) : null })} />
-                          </ERow>
-                          <ERow label="Ghi chú vận tải">
-                            <InlineInput value={truck.notes} onSave={v => truckMut.mutate({ notes: v })} />
-                          </ERow>
-                        </>
+                    <Section title="Vận chuyển (legacy job_truck)">
+                      {false ? (
+                        <></>
                       ) : (
                         <>
                           <Row label="Vận tải" value={truck.transport_name || '—'} />

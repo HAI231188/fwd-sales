@@ -3,6 +3,7 @@ const db = require('../db');
 const { requireAuth } = require('../middleware/auth');
 const { suggestCus, suggestOps } = require('../services/ai-assignment');
 const { buildBbbgPdf } = require('../services/bbbg-pdf');
+const { checkAndCompleteJob: _checkAndCompleteJob } = require('../services/job-completion');
 
 // In-memory suggestion cache (60s TTL) — invalidated on manual assignment
 let suggestionCache = { data: null, ts: 0 };
@@ -31,46 +32,11 @@ function withTimeout(promise, ms) {
 // Call after any sub-task completion event (CUS HT, DieuDo HT, OPS done).
 // Decides whether the parent job is fully done based on service_type, destination,
 // sub-task completed_at columns, and ja.ops_done.
+// Phase 4: moved to services/job-completion.js — single source of truth so
+// truck-bookings.js can reuse it without duplicating the SQL. This thin
+// wrapper preserves the local 3-arg call signature used by existing call sites.
 async function checkAndCompleteJob(client, jobId, changedBy) {
-  const { rows } = await client.query(`
-    SELECT j.id, j.status, j.service_type, j.destination,
-           jt.completed_at  AS tk_completed_at,
-           jtr.completed_at AS truck_completed_at,
-           COALESCE(ja.ops_done, FALSE) AS ops_done
-    FROM jobs j
-    LEFT JOIN job_tk jt ON jt.job_id = j.id
-    LEFT JOIN job_truck jtr ON jtr.job_id = j.id
-    LEFT JOIN job_assignments ja ON ja.job_id = j.id
-    WHERE j.id = $1 AND j.deleted_at IS NULL
-  `, [jobId]);
-  if (!rows[0]) return false;
-  const j = rows[0];
-  if (j.status === 'completed') return false;
-
-  const tkDone    = !!j.tk_completed_at;
-  const truckDone = !!j.truck_completed_at;
-  const opsDone   = !!j.ops_done;
-
-  let ready = false;
-  if (j.service_type === 'tk')         ready = tkDone;
-  else if (j.service_type === 'truck') ready = truckDone;
-  else if (j.service_type === 'both')  ready = tkDone && truckDone;
-
-  // Hai Phong destination + truck involvement also requires OPS sign-off
-  if (ready
-      && j.destination === 'hai_phong'
-      && (j.service_type === 'truck' || j.service_type === 'both')) {
-    ready = ready && opsDone;
-  }
-
-  if (!ready) return false;
-
-  await client.query(
-    `UPDATE jobs SET status = 'completed', updated_at = NOW() WHERE id = $1`,
-    [jobId]
-  );
-  await recordHistory(client, jobId, changedBy, 'status', 'pending', 'completed');
-  return true;
+  return _checkAndCompleteJob(client, jobId, changedBy, recordHistory);
 }
 
 // ─── Staff stats query helpers ─────────────────────────────────────────────────
@@ -106,25 +72,32 @@ function queryCusStaffStats(scope) {
 function queryDieuDoStaffStats(scope) {
   const where = scope.userId ? `u.id = $1` : `u.role = 'dieu_do'`;
   const params = scope.userId ? [scope.userId] : [];
+  // Phase 4: all DD stats now sourced from get_truck_booking_status() — the
+  // legacy job_truck-derived counts (planned_datetime / transport_name /
+  // completed_at) are replaced by the canonical 5-state enum so the same
+  // logic powers stats + drilldowns + dashboard view (L19/L20).
   return db.query(`
     SELECT u.id, u.name, u.role, u.code, u.avatar_color,
       COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL) AS pending_dd,
-      COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND jtr.planned_datetime IS NULL) AS no_plan,
-      COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND jtr.planned_datetime IS NOT NULL) AS has_plan,
-      COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND jtr.transport_name IS NOT NULL) AS booked,
-      COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND jtr.planned_datetime IS NOT NULL AND jtr.transport_name IS NULL) AS plan_no_truck,
-      COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND jtr.planned_datetime BETWEEN NOW() AND NOW() + INTERVAL '16 hours' AND jtr.transport_name IS NULL) AS urgent_no_truck,
-      COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND jtr.planned_datetime < NOW() AND jtr.completed_at IS NULL) AS overdue_delivery,
-      -- Phase 3 (temporary): jobs still needing DD action on truck_bookings.
-      -- Long-term, the legacy job_truck-derived columns above will be replaced
-      -- by status enum from get_truck_booking_status() entirely (Phase 4).
       COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL
-        AND get_truck_booking_status(j.id) IN ('chua_dat_xe','dat_xe_1_phan','da_dat_xe_du_cho_so_xe')
-      ) AS quan_ly_dat_xe
+        AND get_truck_booking_status(j.id) = 'chua_dat_xe') AS no_plan,
+      COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL
+        AND get_truck_booking_status(j.id) IN ('dat_xe_1_phan','da_dat_xe_du_cho_so_xe')) AS has_plan,
+      COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL
+        AND get_truck_booking_status(j.id) IN ('dat_xe_1_phan','da_dat_xe_du_cho_so_xe','da_giao_xong')) AS booked,
+      COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL
+        AND get_truck_booking_status(j.id) = 'dat_xe_1_phan') AS plan_no_truck,
+      -- "Sắp giao chưa đặt xe" = chua_dat_xe AND earliest deadline (han_lenh) within 24h.
+      COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL
+        AND get_truck_booking_status(j.id) = 'chua_dat_xe'
+        AND j.han_lenh BETWEEN NOW() AND NOW() + INTERVAL '24 hours') AS urgent_no_truck,
+      COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL
+        AND get_truck_booking_status(j.id) = 'da_dat_xe_du_cho_so_xe') AS overdue_delivery,
+      COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL
+        AND get_truck_booking_status(j.id) IN ('chua_dat_xe','dat_xe_1_phan','da_dat_xe_du_cho_so_xe')) AS quan_ly_dat_xe
     FROM users u
     LEFT JOIN job_assignments ja ON ja.dieu_do_id = u.id
     LEFT JOIN jobs j ON j.id = ja.job_id
-    LEFT JOIN job_truck jtr ON jtr.job_id = j.id
     WHERE ${where}
     GROUP BY u.id, u.name, u.role, u.code, u.avatar_color
     ORDER BY u.name
@@ -210,15 +183,18 @@ router.get('/stats', requireAuth, async (req, res) => {
         truck_pending:         parseInt(truckPend.rows[0].v),
       });
     } else if (role === 'dieu_do') {
-      const BASE = `FROM job_truck jt JOIN jobs j ON j.id = jt.job_id JOIN job_assignments ja ON ja.job_id = j.id WHERE ja.dieu_do_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL`;
+      // Phase 4: BASE no longer JOINs job_truck. All DD stats derive from
+      // get_truck_booking_status(j.id) so a single source of truth governs
+      // staff stats + dashboard tabs + drilldowns.
+      const BASE = `FROM jobs j JOIN job_assignments ja ON ja.job_id = j.id WHERE ja.dieu_do_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL`;
       const [tongJob, coKhXe, chuaKhXe, datXe, canhBaoVanTai, canhBaoDoiLenh, canhBaoHoanThanh, sapHan, dieuDoStats] = await Promise.all([
         db.query(`SELECT COUNT(*) AS v ${BASE}`, [userId]),
-        db.query(`SELECT COUNT(*) AS v ${BASE} AND jt.planned_datetime IS NOT NULL`, [userId]),
-        db.query(`SELECT COUNT(*) AS v ${BASE} AND jt.planned_datetime IS NULL`, [userId]),
-        db.query(`SELECT COUNT(*) AS v ${BASE} AND jt.transport_name IS NOT NULL`, [userId]),
-        db.query(`SELECT COUNT(*) AS v ${BASE} AND jt.planned_datetime BETWEEN NOW() AND NOW() + INTERVAL '24 hours' AND (jt.transport_name IS NULL OR jt.transport_name = '')`, [userId]),
-        db.query(`SELECT COUNT(*) AS v ${BASE} AND jt.transport_name IS NOT NULL AND j.destination = 'hai_phong' AND COALESCE(ja.ops_done, FALSE) = FALSE`, [userId]),
-        db.query(`SELECT COUNT(*) AS v ${BASE} AND jt.planned_datetime < NOW() AND jt.completed_at IS NULL`, [userId]),
+        db.query(`SELECT COUNT(*) AS v ${BASE} AND get_truck_booking_status(j.id) IN ('dat_xe_1_phan','da_dat_xe_du_cho_so_xe')`, [userId]),
+        db.query(`SELECT COUNT(*) AS v ${BASE} AND get_truck_booking_status(j.id) = 'chua_dat_xe'`, [userId]),
+        db.query(`SELECT COUNT(*) AS v ${BASE} AND get_truck_booking_status(j.id) IN ('dat_xe_1_phan','da_dat_xe_du_cho_so_xe','da_giao_xong')`, [userId]),
+        db.query(`SELECT COUNT(*) AS v ${BASE} AND get_truck_booking_status(j.id) = 'chua_dat_xe' AND j.han_lenh BETWEEN NOW() AND NOW() + INTERVAL '24 hours'`, [userId]),
+        db.query(`SELECT COUNT(*) AS v ${BASE} AND get_truck_booking_status(j.id) IN ('dat_xe_1_phan','da_dat_xe_du_cho_so_xe') AND j.destination = 'hai_phong' AND COALESCE(ja.ops_done, FALSE) = FALSE`, [userId]),
+        db.query(`SELECT COUNT(*) AS v ${BASE} AND get_truck_booking_status(j.id) = 'da_dat_xe_du_cho_so_xe'`, [userId]),
         db.query(`SELECT COUNT(*) AS v ${BASE} AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '48 hours'`, [userId]),
         queryDieuDoStaffStats({ userId }),
       ]);
@@ -661,32 +637,39 @@ router.get('/filtered', requireAuth, async (req, res) => {
           OR (ja.ops_id IS NULL AND (j.ops_partner IS NULL OR j.ops_partner = ''))
         )`;
         break;
+      // Phase 4: all staff_dd_* drilldowns mirror the new stat queries via
+      // get_truck_booking_status() so the row sets stay in sync with the
+      // count cells (L5).
       case 'staff_dd_pending':
         staffField = 'dieu_do_id';
         break;
       case 'staff_dd_no_plan':
         staffField = 'dieu_do_id';
-        extraWhere = `AND jtr.planned_datetime IS NULL`;
+        extraWhere = `AND get_truck_booking_status(j.id) = 'chua_dat_xe'`;
         break;
       case 'staff_dd_has_plan':
         staffField = 'dieu_do_id';
-        extraWhere = `AND jtr.planned_datetime IS NOT NULL`;
+        extraWhere = `AND get_truck_booking_status(j.id) IN ('dat_xe_1_phan','da_dat_xe_du_cho_so_xe')`;
         break;
       case 'staff_dd_booked':
         staffField = 'dieu_do_id';
-        extraWhere = `AND jtr.transport_name IS NOT NULL`;
+        extraWhere = `AND get_truck_booking_status(j.id) IN ('dat_xe_1_phan','da_dat_xe_du_cho_so_xe','da_giao_xong')`;
         break;
       case 'staff_dd_plan_no_truck':
         staffField = 'dieu_do_id';
-        extraWhere = `AND jtr.planned_datetime IS NOT NULL AND jtr.transport_name IS NULL`;
+        extraWhere = `AND get_truck_booking_status(j.id) = 'dat_xe_1_phan'`;
         break;
       case 'staff_dd_urgent_no_truck':
         staffField = 'dieu_do_id';
-        extraWhere = `AND jtr.planned_datetime BETWEEN NOW() AND NOW() + INTERVAL '16 hours' AND jtr.transport_name IS NULL`;
+        extraWhere = `AND get_truck_booking_status(j.id) = 'chua_dat_xe' AND j.han_lenh BETWEEN NOW() AND NOW() + INTERVAL '24 hours'`;
         break;
       case 'staff_dd_overdue_delivery':
         staffField = 'dieu_do_id';
-        extraWhere = `AND jtr.planned_datetime < NOW() AND jtr.completed_at IS NULL`;
+        extraWhere = `AND get_truck_booking_status(j.id) = 'da_dat_xe_du_cho_so_xe'`;
+        break;
+      case 'staff_dd_quan_ly_dat_xe':
+        staffField = 'dieu_do_id';
+        extraWhere = `AND get_truck_booking_status(j.id) IN ('chua_dat_xe','dat_xe_1_phan','da_dat_xe_du_cho_so_xe')`;
         break;
       case 'staff_ops_managing':
         staffField = 'ops_id';
@@ -774,17 +757,17 @@ router.get('/filtered', requireAuth, async (req, res) => {
     case 'cus_waiting_confirm': extraWhere = `AND ja.cus_id IS NOT NULL AND ja.cus_confirm_status = 'pending'`; break;
     case 'cus_near_deadline':   extraWhere = `AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '24 hours'`; break;
     case 'cus_overdue':         extraWhere = `AND j.deadline < NOW()`; break;
-    // DieuDo filters
-    case 'truck_total':
-    case 'truck_pending':    extraWhere = `AND jtr.completed_at IS NULL`; break;
-    case 'truck_booked':     extraWhere = `AND jtr.transport_name IS NOT NULL AND jtr.vehicle_number IS NOT NULL`; break;
-    case 'truck_not_booked': extraWhere = `AND jtr.planned_datetime IS NOT NULL AND (jtr.transport_name IS NULL OR jtr.transport_name = '')`; break;
-    case 'truck_warning':    extraWhere = `AND jtr.completed_at IS NULL AND jtr.planned_datetime <= NOW() + INTERVAL '24 hours'`; break;
-    case 'dd_co_kh_xe':      extraWhere = `AND jtr.planned_datetime IS NOT NULL`; break;
-    case 'dd_chua_kh_xe':    extraWhere = `AND jtr.planned_datetime IS NULL`; break;
-    case 'dd_canh_bao_chua_van_tai':   extraWhere = `AND jtr.planned_datetime BETWEEN NOW() AND NOW() + INTERVAL '24 hours' AND (jtr.transport_name IS NULL OR jtr.transport_name = '')`; break;
-    case 'dd_canh_bao_chua_doi_lenh':  extraWhere = `AND jtr.transport_name IS NOT NULL AND j.destination = 'hai_phong' AND COALESCE(ja.ops_done, FALSE) = FALSE`; break;
-    case 'dd_canh_bao_chua_hoan_thanh':extraWhere = `AND jtr.planned_datetime < NOW() AND jtr.completed_at IS NULL`; break;
+    // DieuDo filters — Phase 4: all migrated to get_truck_booking_status()
+    case 'truck_total':      break;
+    case 'truck_pending':    extraWhere = `AND get_truck_booking_status(j.id) <> 'da_giao_xong'`; break;
+    case 'truck_booked':     extraWhere = `AND get_truck_booking_status(j.id) = 'da_giao_xong'`; break;
+    case 'truck_not_booked': extraWhere = `AND get_truck_booking_status(j.id) = 'dat_xe_1_phan'`; break;
+    case 'truck_warning':    extraWhere = `AND get_truck_booking_status(j.id) <> 'da_giao_xong' AND j.han_lenh BETWEEN NOW() AND NOW() + INTERVAL '24 hours'`; break;
+    case 'dd_co_kh_xe':      extraWhere = `AND get_truck_booking_status(j.id) IN ('dat_xe_1_phan','da_dat_xe_du_cho_so_xe')`; break;
+    case 'dd_chua_kh_xe':    extraWhere = `AND get_truck_booking_status(j.id) = 'chua_dat_xe'`; break;
+    case 'dd_canh_bao_chua_van_tai':   extraWhere = `AND get_truck_booking_status(j.id) = 'chua_dat_xe' AND j.han_lenh BETWEEN NOW() AND NOW() + INTERVAL '24 hours'`; break;
+    case 'dd_canh_bao_chua_doi_lenh':  extraWhere = `AND get_truck_booking_status(j.id) IN ('dat_xe_1_phan','da_dat_xe_du_cho_so_xe') AND j.destination = 'hai_phong' AND COALESCE(ja.ops_done, FALSE) = FALSE`; break;
+    case 'dd_canh_bao_chua_hoan_thanh':extraWhere = `AND get_truck_booking_status(j.id) = 'da_dat_xe_du_cho_so_xe'`; break;
     case 'dd_sap_han':       extraWhere = `AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '48 hours'`; break;
     // OPS filters — must match the corresponding stat-card WHERE clauses exactly (CLAUDE.md L5)
     case 'ops_waiting_tq_doilenh':
@@ -2082,25 +2065,11 @@ router.patch('/:id/tk', requireAuth, async (req, res) => {
       await client.query(`UPDATE job_tk SET completed_at = NOW() WHERE job_id = $1`, [req.params.id]);
     }
 
-    // **DEPRECATED (Phase 2)** — Sync to job_truck when CUS ticks "Đặt xe".
-    // Kept alive for backward compat; new flow uses truck_bookings instead.
-    if (req.body.truck_booked === true) {
-      const plannedDt    = rows[0].delivery_datetime;
-      const deliveryLoc  = rows[0].delivery_location;
-      const { rows: trk } = await client.query(`SELECT id FROM job_truck WHERE job_id = $1`, [req.params.id]);
-      if (trk[0]) {
-        await client.query(
-          `UPDATE job_truck SET planned_datetime = $1, delivery_location = $2 WHERE job_id = $3`,
-          [plannedDt, deliveryLoc, req.params.id]
-        );
-      } else {
-        await client.query(
-          `INSERT INTO job_truck (job_id, planned_datetime, delivery_location) VALUES ($1, $2, $3)`,
-          [req.params.id, plannedDt, deliveryLoc]
-        );
-      }
-      await recordHistory(client, req.params.id, req.user.id, 'truck_synced_from_tk', null, `${plannedDt} | ${deliveryLoc}`);
-    }
+    // Phase 4: the legacy "truck_booked sync to job_truck" block has been removed.
+    // CUS ticking "Đặt xe" no longer pre-seeds a job_truck row — DD creates a
+    // booking via POST /api/truck-bookings when they're ready. The tk row's
+    // truck_booked flag is still flipped above (in the FIELDS loop) for any
+    // legacy reader that hasn't migrated; no downstream side effect needed.
 
     await client.query('COMMIT');
     res.json(rows[0]);
@@ -2112,42 +2081,7 @@ router.patch('/:id/tk', requireAuth, async (req, res) => {
   }
 });
 
-// PATCH /api/jobs/:id/truck
-// **DEPRECATED (Phase 2)** — writes to the legacy job_truck table. Kept alive
-// while existing DieuDo dashboard rows still bind to job_truck fields; will be
-// removed once Phase 3 UI migrates to /api/truck-bookings entirely. New code
-// MUST use POST /api/truck-bookings + PATCH /api/truck-bookings/:id instead.
-router.patch('/:id/truck', requireAuth, async (req, res) => {
-  if (req.user.role !== 'truong_phong_log' && req.user.role !== 'dieu_do') {
-    return res.status(403).json({ error: 'Không có quyền' });
-  }
-  const FIELDS = ['transport_name','transport_company_id','planned_datetime','actual_datetime',
-    'vehicle_number','pickup_location','delivery_location','cost','notes'];
-  const client = await db.pool.connect();
-  try {
-    await client.query('BEGIN');
-    const { rows: cur } = await client.query(`SELECT * FROM job_truck WHERE job_id = $1`, [req.params.id]);
-    if (!cur[0]) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Không tìm thấy truck' }); }
-
-    const sets = []; const params = []; let idx = 1;
-    for (const f of FIELDS) {
-      if (req.body[f] === undefined) continue;
-      sets.push(`${f} = $${idx++}`);
-      params.push(req.body[f]);
-      await recordHistory(client, req.params.id, req.user.id, `truck_${f}`, cur[0][f], req.body[f]);
-    }
-    if (!sets.length) { await client.query('ROLLBACK'); return res.json(cur[0]); }
-    params.push(req.params.id);
-    const { rows } = await client.query(`UPDATE job_truck SET ${sets.join(', ')} WHERE job_id = $${idx} RETURNING *`, params);
-    await client.query('COMMIT');
-    res.json(rows[0]);
-  } catch (err) {
-    await client.query('ROLLBACK');
-    res.status(500).json({ error: err.message });
-  } finally {
-    client.release();
-  }
-});
+// PATCH /api/jobs/:id/truck — REMOVED (Phase 4). Use POST/PATCH /api/truck-bookings instead.
 
 // PATCH /api/jobs/:id/truck/complete  — DieuDo marks the truck side complete
 router.patch('/:id/truck/complete', requireAuth, async (req, res) => {
@@ -2425,16 +2359,24 @@ function isBbbgRole(req) {
 router.get('/:id/bbbg-data', requireAuth, async (req, res) => {
   if (!isBbbgRole(req)) return res.status(403).json({ error: 'Không có quyền' });
   try {
+    // Phase 4: pull truck-delivery info from truck_bookings (earliest by
+    // planned_datetime; falls back to job_tk legacy if no booking exists yet).
     const { rows: jobRows } = await db.query(`
       SELECT j.id, j.job_code, j.customer_id, j.customer_name, j.customer_address,
              j.customer_tax_code, j.cargo_type, j.tons, j.kg, j.so_kien, j.cbm,
              j.hbl_no, j.mbl_no, j.si_number,
-             jtr.delivery_location AS truck_delivery, jtr.transport_name,
-             jtr.vehicle_number, jtr.planned_datetime,
+             tb.delivery_location AS truck_delivery, tb.transport_name,
+             tb.vehicle_number, tb.planned_datetime,
              jt.delivery_location AS tk_delivery,
              cp.company_full_name, cp.tax_code AS pipeline_tax_code, cp.invoice_address
         FROM jobs j
-        LEFT JOIN job_truck jtr ON jtr.job_id = j.id
+        LEFT JOIN LATERAL (
+          SELECT delivery_location, transport_name, vehicle_number, planned_datetime
+            FROM truck_bookings
+           WHERE job_id = j.id AND deleted_at IS NULL
+           ORDER BY planned_datetime ASC NULLS LAST, id ASC
+           LIMIT 1
+        ) tb ON true
         LEFT JOIN job_tk    jt  ON jt.job_id  = j.id
         LEFT JOIN LATERAL (
           SELECT company_full_name, tax_code, invoice_address
@@ -2452,19 +2394,30 @@ router.get('/:id/bbbg-data', requireAuth, async (req, res) => {
       [req.params.id]
     );
 
-    // Past delivery locations for this customer (name match — customer_id often NULL).
+    // Past delivery locations for this customer (Phase 4: prefer truck_bookings;
+    // legacy job_truck UNION'd for any data created before Phase 2). Same shape
+    // as GET /:id/past-delivery-locations — kept inline here to avoid coupling.
     const { rows: pastLocations } = await db.query(`
-      SELECT jtr.delivery_location, MAX(j.created_at) AS last_used
-        FROM jobs j
-        JOIN job_truck jtr ON jtr.job_id = j.id
-       WHERE LOWER(j.customer_name) = LOWER($1)
-         AND j.id <> $2
-         AND j.deleted_at IS NULL
-         AND jtr.delivery_location IS NOT NULL
-         AND jtr.delivery_location <> ''
-       GROUP BY jtr.delivery_location
-       ORDER BY last_used DESC
-       LIMIT 5
+      SELECT loc AS delivery_location, MAX(used) AS last_used FROM (
+        SELECT tb.delivery_location AS loc, MAX(tb.created_at) AS used
+          FROM truck_bookings tb
+          JOIN jobs j ON j.id = tb.job_id
+         WHERE LOWER(j.customer_name) = LOWER($1) AND j.id <> $2
+           AND tb.deleted_at IS NULL
+           AND tb.delivery_location IS NOT NULL AND tb.delivery_location <> ''
+         GROUP BY tb.delivery_location
+        UNION ALL
+        SELECT jtr.delivery_location AS loc, MAX(j.created_at) AS used
+          FROM jobs j
+          JOIN job_truck jtr ON jtr.job_id = j.id
+         WHERE LOWER(j.customer_name) = LOWER($1) AND j.id <> $2
+           AND j.deleted_at IS NULL
+           AND jtr.delivery_location IS NOT NULL AND jtr.delivery_location <> ''
+         GROUP BY jtr.delivery_location
+      ) u
+      GROUP BY loc
+      ORDER BY last_used DESC
+      LIMIT 5
     `, [job.customer_name, req.params.id]);
 
     const isFcl = (job.cargo_type || 'fcl') === 'fcl';

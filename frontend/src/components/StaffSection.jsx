@@ -20,10 +20,9 @@ export const DD_COLS = [
   { key: 'plan_no_truck',    label: 'Đã có KH chưa đặt xe',    filter: 'staff_dd_plan_no_truck',    color: 'var(--warning)' },
   { key: 'urgent_no_truck',  label: 'Sắp giao chưa đặt xe',    filter: 'staff_dd_urgent_no_truck',  color: 'var(--danger)'  },
   { key: 'overdue_delivery', label: 'Giao rồi chưa hoàn thành',filter: 'staff_dd_overdue_delivery', color: 'var(--danger)'  },
-  // Phase 3 — temporary column derived from get_truck_booking_status(). No
-  // filter drilldown yet (deferred to Phase 4 when the rest of the columns
-  // also migrate from job_truck to truck_bookings).
-  { key: 'quan_ly_dat_xe',   label: 'Quản lý đặt xe',          filter: null,                        color: 'var(--purple)'  },
+  // Phase 4: drilldown wired to staff_dd_quan_ly_dat_xe — opens JobListModal
+  // with the same set of jobs as the BookingManagementSection table above.
+  { key: 'quan_ly_dat_xe',   label: 'Quản lý đặt xe',          filter: 'staff_dd_quan_ly_dat_xe',   color: 'var(--purple)'  },
 ];
 
 export const OPS_COLS = [

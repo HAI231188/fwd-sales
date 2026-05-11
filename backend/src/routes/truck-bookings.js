@@ -17,6 +17,7 @@
 const router = require('express').Router();
 const db = require('../db');
 const { requireAuth } = require('../middleware/auth');
+const { checkAndCompleteJob } = require('../services/job-completion');
 
 const WRITE_ROLES = ['dieu_do', 'truong_phong_log'];
 function canWrite(req) { return WRITE_ROLES.includes(req.user?.role); }
@@ -261,13 +262,16 @@ router.patch('/:id', requireAuth, async (req, res) => {
     }
 
     // vehicle_number lifecycle → completed_at side effect.
+    let vehicleTransitioned = false;
     if (req.body.vehicle_number !== undefined) {
       const prev = (cur.vehicle_number || '').trim();
       const next = (req.body.vehicle_number || '').trim();
       if (!prev && next) {
         sets.push(`completed_at = NOW()`);
+        vehicleTransitioned = true;
       } else if (prev && !next) {
         sets.push(`completed_at = NULL`);
+        vehicleTransitioned = true;
       }
     }
 
@@ -280,6 +284,13 @@ router.patch('/:id', requireAuth, async (req, res) => {
     await client.query(
       `UPDATE truck_bookings SET ${sets.join(', ')} WHERE id = $${idx}`, params
     );
+
+    // Phase 4: vehicle_number transitions may flip the job's truck_booking_status
+    // to/from 'da_giao_xong', which can complete (or un-complete) the parent job.
+    // Call inside the same transaction so completion is atomic with the booking update.
+    if (vehicleTransitioned) {
+      await checkAndCompleteJob(client, cur.job_id, req.user.id, null);
+    }
 
     await client.query('COMMIT');
     res.json(await loadBookingById(db, id));

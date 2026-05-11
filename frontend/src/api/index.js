@@ -83,7 +83,7 @@ export const reviewDeadlineRequest = (rid, action, new_deadline) =>
   api.patch(`/jobs/deadline-requests/${rid}/review`, { action, new_deadline });
 export const getDeadlineRequests = () => api.get('/jobs/deadline-requests');
 export const updateJobTk = (jobId, data) => api.patch(`/jobs/${jobId}/tk`, data);
-export const updateJobTruck = (jobId, data) => api.patch(`/jobs/${jobId}/truck`, data);
+// Phase 4: updateJobTruck removed — use createTruckBooking / updateTruckBooking instead.
 export const completeJobTruck = (jobId) => api.patch(`/jobs/${jobId}/truck/complete`, {});
 export const createOpsTask = (jobId, data) => api.post(`/jobs/${jobId}/ops-task`, data);
 export const completeOpsTask = (tid, notes) => api.patch(`/jobs/ops-task/${tid}/complete`, { notes });

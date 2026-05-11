@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import Navbar from '../components/Navbar';
 import JobDetailModal from '../components/JobDetailModal';
@@ -8,10 +8,11 @@ import FilteredTable from '../components/FilteredTable';
 import DateRangeFilter from '../components/DateRangeFilter';
 import StaffSection, { DD_COLS as STAFF_DD_COLS } from '../components/StaffSection';
 import BBBGModal from '../components/BBBGModal';
-import TransportPicker from '../components/TransportPicker';
 import BookingModal from '../components/BookingModal';
 import toast from 'react-hot-toast';
-import { getJobStats, getJobs, updateJobTruck, completeJobTruck, requestJobDelete, createJob,
+// Phase 4: TransportPicker no longer needed on DD main grid — bookings hold
+// carrier info via BookingModal. updateJobTruck + completeJobTruck removed.
+import { getJobStats, getJobs, requestJobDelete, createJob,
          getTruckBookings, deleteTruckBooking } from '../api';
 import {
   TRUCK_BOOKING_STATUS_LABELS, TRUCK_BOOKING_STATUS_SORT_RANK,
@@ -39,12 +40,6 @@ function fmtCargo(j) {
   if (j.cont_number) return `${j.cont_number}${j.cont_type ? ' / ' + j.cont_type : ''}`;
   return '—';
 }
-function toDatetimeLocal(val) {
-  if (!val) return '';
-  const d = new Date(val);
-  const pad = n => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
 function deadlineStyle(dl) {
   if (!dl) return {};
   const ms = new Date(dl) - Date.now();
@@ -65,53 +60,25 @@ function StatCard({ label, value, color, onClick }) {
   );
 }
 
-function InlineInput({ value, onSave, type = 'text', placeholder }) {
-  const [editing, setEditing] = useState(false);
-  const [val, setVal] = useState(value || '');
-  const ref = useRef();
+// Phase 4: InlineInput removed — DD main grid is read-only; booking edits live
+// in the Quản lý đặt xe section via BookingModal.
 
-  function start() { setVal(value || ''); setEditing(true); setTimeout(() => ref.current?.focus(), 0); }
-  function save() {
-    setEditing(false);
-    // Read DOM value — datetime-local onChange doesn't always fire synchronously.
-    const current = ref.current?.value ?? val;
-    if (current !== (value || '')) onSave(current || null);
-  }
-
-  if (!editing) return (
-    <span onClick={start} title="Click để sửa"
-      style={{ cursor: 'pointer', borderBottom: '1px dashed var(--border)', minWidth: 40, display: 'inline-block', fontSize: 13 }}>
-      {value || <span style={{ color: 'var(--text-3)' }}>{placeholder || '—'}</span>}
-    </span>
-  );
-  return (
-    <input ref={ref} type={type} value={val}
-      onChange={e => setVal(e.target.value)}
-      onBlur={save}
-      onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') setEditing(false); }}
-      style={{ width: '100%', padding: '2px 6px', border: '1px solid var(--primary)', borderRadius: 4, fontSize: 13 }} />
-  );
-}
-
+// Phase 4: DD main grid is a read-only summary view. Booking edits happen in
+// the "Quản lý đặt xe" section above (one job → N bookings, can't fit inline).
+// Click a row → JobDetailModal opens for full audit.
 const DD_COLS = [
-  { key: 'created_at',    label: 'Ngày' },
-  { key: 'job_code',      label: 'Job',            filterType: 'text' },
-  { key: 'si_number',     label: 'Mã SI',          filterType: 'text' },
-  { key: 'import_export', label: 'Loại' },
-  { key: 'customer_name', label: 'Khách hàng',     filterType: 'text', accessor: j => j.customer_name || '' },
-  { key: 'cargo',         label: 'Cont / Tons' },
-  { key: 'etd_eta',       label: 'ETD / ETA' },
-  { key: 'han_lenh',      label: 'Hạn lệnh / Cutoff' },
-  { key: 'doi_lenh',      label: 'TT đổi lệnh' },
-  { key: 'transport',     label: 'Tên vận tải',    filterType: 'text', accessor: j => j.transport_name || '' },
-  { key: 'planned_dt',    label: 'KH ngày giờ' },
-  { key: 'actual_dt',     label: 'TH ngày giờ' },
-  { key: 'vehicle',       label: 'Số xe',          filterType: 'text', accessor: j => j.vehicle_number || '' },
-  { key: 'pickup_loc',    label: 'Địa điểm lấy' },
-  { key: 'delivery_loc',  label: 'Địa điểm giao' },
-  { key: 'cost',          label: 'Cước' },
-  { key: 'ht',            label: 'HT' },
-  { key: 'notes',         label: 'Ghi chú' },
+  { key: 'created_at',     label: 'Ngày' },
+  { key: 'job_code',       label: 'Job',              filterType: 'text' },
+  { key: 'si_number',      label: 'Mã SI',            filterType: 'text' },
+  { key: 'import_export',  label: 'Loại' },
+  { key: 'customer_name',  label: 'Khách hàng',       filterType: 'text', accessor: j => j.customer_name || '' },
+  { key: 'cargo',          label: 'Cont / Tons' },
+  { key: 'etd_eta',        label: 'ETD / ETA' },
+  { key: 'han_lenh',       label: 'Hạn lệnh / Cutoff' },
+  { key: 'booking_status', label: 'Trạng thái đặt xe' },
+  { key: 'cont_coverage',  label: 'Cont' },
+  { key: 'booking_count',  label: 'Booking' },
+  { key: 'doi_lenh',       label: 'TT đổi lệnh' },
 ];
 
 export default function LogDashboardDieuDo() {
@@ -145,26 +112,21 @@ export default function LogDashboardDieuDo() {
     enabled: tab === 'completed',
     refetchInterval: 30000,
   });
-  const coKhXeJobs = pendingJobs.filter(j => !!j.planned_datetime);
-  const chuaKhXeJobs = pendingJobs.filter(j => !j.planned_datetime);
+  // Phase 4: tab filters use truck_booking_status. "Đã có KH xe" = at least one
+  // booking exists (any non-final live status); "Chưa có KH xe" = no bookings.
+  const coKhXeJobs = pendingJobs.filter(j =>
+    j.truck_booking_status === 'dat_xe_1_phan' ||
+    j.truck_booking_status === 'da_dat_xe_du_cho_so_xe');
+  const chuaKhXeJobs = pendingJobs.filter(j => j.truck_booking_status === 'chua_dat_xe');
   const jobs = tab === 'completed' ? completedJobs
     : tab === 'co_kh_xe' ? coKhXeJobs
     : tab === 'chua_kh_xe' ? chuaKhXeJobs
     : pendingJobs;
   const isLoading = tab === 'completed' ? isLoadingCompleted : isLoadingPending;
 
-  const truckMut = useMutation({
-    mutationFn: ({ jobId, data }) => updateJobTruck(jobId, data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['jobs'] }),
-  });
-  const completeMut = useMutation({
-    mutationFn: id => completeJobTruck(id),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['jobs'] });
-      qc.invalidateQueries({ queryKey: ['jobStats'] });
-    },
-    onError: (err) => alert(err?.error || err?.message || 'Không thể hoàn thành. Thử lại sau.'),
-  });
+  // Phase 4: truckMut + completeMut removed. Booking edits go through BookingModal
+  // → updateTruckBooking / createTruckBooking. Job auto-completes when every
+  // booking has a vehicle_number (server-side trigger in PATCH /api/truck-bookings).
   const deleteReqMut = useMutation({
     mutationFn: ({ id, reason }) => requestJobDelete(id, reason),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['jobs'] }),
@@ -177,27 +139,9 @@ export default function LogDashboardDieuDo() {
     },
   });
 
-  function getMissingFieldsTruck(j) {
-    const missing = [];
-    if (!j.transport_name || !String(j.transport_name).trim()) missing.push('vận tải');
-    if (!j.vehicle_number || !String(j.vehicle_number).trim()) missing.push('số xe');
-    if (!j.planned_datetime) missing.push('giờ giao');
-    if (!j.truck_delivery_location || !String(j.truck_delivery_location).trim()) missing.push('địa điểm giao');
-    if (j.cost === null || j.cost === undefined || Number(j.cost) <= 0) missing.push('cước phí');
-    return missing;
-  }
-  // 4-state HT logic — priority: completed > missing > waiting-ops > ready
-  function htState(j) {
-    if (j.truck_completed_at) return { kind: 'done' };
-    const missing = getMissingFieldsTruck(j);
-    if (missing.length) return { kind: 'missing', missing };
-    const needsOps = j.destination === 'hai_phong' && (j.service_type === 'truck' || j.service_type === 'both');
-    if (needsOps && !j.ops_done) return { kind: 'wait_ops' };
-    return { kind: 'ready' };
-  }
-  function canComplete(j) {
-    return htState(j).kind === 'ready';
-  }
+  // Phase 4: getMissingFieldsTruck / htState / canComplete removed.
+  // Status now derives entirely from get_truck_booking_status() on the backend;
+  // the "Quản lý đặt xe" section drives all DD action.
 
   return (
     <div className="page">
@@ -310,27 +254,24 @@ export default function LogDashboardDieuDo() {
                 emptyText="Không có job nào"
                 tableStyle={{ fontSize: 13 }}
                 renderRow={(j) => {
-                  const planned = j.planned_datetime;
-                  const isPastDue = planned && new Date(planned) < Date.now() && !j.truck_completed_at;
-                  const isWarnSoon = planned && !isPastDue && (new Date(planned) - Date.now()) < 24 * 3600 * 1000;
-                  const rowBg = isPastDue ? 'rgba(239,68,68,0.04)' : isWarnSoon ? 'rgba(217,119,6,0.04)' : '';
-                  const cs = { padding: '8px 8px' };
-
+                  // Phase 4: read-only summary. Booking-level edits live in the
+                  // Quản lý đặt xe section above. Click row → JobDetailModal.
+                  const cs = { padding: '8px 8px', verticalAlign: 'middle' };
+                  const total = Array.isArray(j.containers) ? j.containers.length : 0;
+                  const booked = j.truck_booked_containers_count || 0;
+                  const imp = j.import_export === 'import';
                   return (
-                    <tr key={j.id} style={{ borderBottom: '1px solid var(--border)', background: rowBg }}
-                      onDoubleClick={() => setDetailJobId(j.id)}>
+                    <tr key={j.id} style={{ borderBottom: '1px solid var(--border)', cursor: 'pointer' }}
+                      onClick={() => setDetailJobId(j.id)}>
                       <td style={{ ...cs, whiteSpace: 'nowrap', fontSize: 12 }}>{fmtDate(j.created_at)}</td>
                       <td style={{ ...cs, whiteSpace: 'nowrap', fontWeight: 600, color: 'var(--info)' }}>{j.job_code || `#${j.id}`}</td>
                       <td style={{ ...cs, whiteSpace: 'nowrap', fontSize: 12, color: 'var(--text-2)' }}>{j.si_number || '—'}</td>
                       <td style={{ ...cs, whiteSpace: 'nowrap' }}>
-                        {(() => {
-                          const imp = j.import_export === 'import';
-                          return <span style={{ background: imp ? 'rgba(217,119,6,0.12)' : 'rgba(34,197,94,0.12)',
-                            color: imp ? '#d97706' : '#16a34a', borderRadius: 6, padding: '2px 8px',
-                            fontSize: 11, fontWeight: 600 }}>{imp ? 'Nhập' : 'Xuất'}</span>;
-                        })()}
+                        <span style={{ background: imp ? 'rgba(217,119,6,0.12)' : 'rgba(34,197,94,0.12)',
+                          color: imp ? '#d97706' : '#16a34a', borderRadius: 6, padding: '2px 8px',
+                          fontSize: 11, fontWeight: 600 }}>{imp ? 'Nhập' : 'Xuất'}</span>
                       </td>
-                      <td style={{ ...cs, maxWidth: 140 }}>{j.customer_name}</td>
+                      <td style={{ ...cs, maxWidth: 160 }}>{j.customer_name}</td>
                       <td style={{ ...cs, whiteSpace: 'nowrap', fontSize: 12 }}>
                         {fmtCargo(j)}
                         {j.tons && <div style={{ color: 'var(--text-3)' }}>{j.tons} tấn</div>}
@@ -340,113 +281,27 @@ export default function LogDashboardDieuDo() {
                       </td>
                       <td style={{ ...cs, whiteSpace: 'nowrap', ...deadlineStyle(j.han_lenh) }}>
                         {j.han_lenh
-                          ? (j.import_export === 'import'
+                          ? (imp
                               ? fmtDate(j.han_lenh)
                               : new Date(j.han_lenh).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }))
                           : '—'}
                       </td>
+                      <td style={cs}>
+                        <span style={truckBookingPillStyle(j.truck_booking_status)}>
+                          {TRUCK_BOOKING_STATUS_LABELS[j.truck_booking_status] || j.truck_booking_status || '—'}
+                        </span>
+                      </td>
+                      <td style={{ ...cs, fontWeight: 600,
+                        color: total === 0 ? 'var(--text-3)' : booked < total ? 'var(--warning)' : 'var(--primary)' }}>
+                        {booked}/{total}
+                      </td>
+                      <td style={{ ...cs, fontWeight: 600 }}>{j.truck_bookings_count || 0}</td>
                       <td style={{ ...cs, whiteSpace: 'nowrap' }}>
                         {(j.destination === 'hai_phong' && (j.service_type === 'truck' || j.service_type === 'both'))
                           ? j.ops_done
                             ? <span style={{ background: 'rgba(34,197,94,0.15)', color: '#16a34a', borderRadius: 6, padding: '2px 8px', fontSize: 11, fontWeight: 600 }}>Đã đổi</span>
                             : <span style={{ background: 'rgba(217,119,6,0.12)', color: '#b45309', borderRadius: 6, padding: '2px 8px', fontSize: 11, fontWeight: 600 }}>Chưa đổi</span>
                           : <span style={{ color: 'var(--text-3)' }}>—</span>}
-                      </td>
-                      <td style={{ padding: '8px 6px', minWidth: 130 }}>
-                        <TransportPicker compact
-                          value={{ transport_company_id: j.transport_company_id, transport_name: j.transport_name }}
-                          onChange={v => truckMut.mutate({ jobId: j.id, data: { transport_company_id: v.transport_company_id, transport_name: v.transport_name } })} />
-                      </td>
-                      <td style={{ padding: '8px 6px', minWidth: 155 }}>
-                        <InlineInput type="datetime-local" value={toDatetimeLocal(j.planned_datetime)}
-                          onSave={v => truckMut.mutate({ jobId: j.id, data: { planned_datetime: v } })} />
-                      </td>
-                      <td style={{ padding: '8px 6px', minWidth: 155 }}>
-                        <InlineInput type="datetime-local" value={toDatetimeLocal(j.actual_datetime)}
-                          onSave={v => truckMut.mutate({ jobId: j.id, data: { actual_datetime: v } })} />
-                      </td>
-                      <td style={{ padding: '8px 6px', minWidth: 80 }}>
-                        <InlineInput value={j.vehicle_number} placeholder="Số xe..."
-                          onSave={v => truckMut.mutate({ jobId: j.id, data: { vehicle_number: v } })} />
-                      </td>
-                      <td style={{ padding: '8px 6px', minWidth: 130 }}>
-                        <InlineInput value={j.pickup_location} placeholder="Địa điểm lấy..."
-                          onSave={v => truckMut.mutate({ jobId: j.id, data: { pickup_location: v } })} />
-                      </td>
-                      <td style={{ padding: '8px 6px', minWidth: 130 }}>
-                        <InlineInput value={j.truck_delivery_location} placeholder="Địa điểm giao..."
-                          onSave={v => truckMut.mutate({ jobId: j.id, data: { delivery_location: v } })} />
-                      </td>
-                      <td style={{ padding: '8px 6px', minWidth: 90 }}>
-                        <InlineInput value={j.cost ? String(j.cost) : ''} type="number" placeholder="Cước..."
-                          onSave={v => truckMut.mutate({ jobId: j.id, data: { cost: v ? Number(v) : null } })} />
-                      </td>
-                      <td style={{ ...cs, textAlign: 'center' }}>
-                        {tab === 'completed' ? (
-                          <span style={{ color: 'var(--primary)', fontSize: 16 }}>✓</span>
-                        ) : (() => {
-                          const st = htState(j);
-                          if (st.kind === 'done') {
-                            return (
-                              <span title="Đã hoàn thành phần Điều Độ"
-                                style={{ fontSize: 11, color: 'var(--primary)', fontWeight: 600,
-                                         background: 'rgba(34,197,94,0.12)', padding: '3px 6px', borderRadius: 6, whiteSpace: 'nowrap' }}>
-                                ✓ Xong
-                              </span>
-                            );
-                          }
-                          if (st.kind === 'missing') {
-                            return (
-                              <button className="btn btn-ghost btn-sm" disabled
-                                title={`Vui lòng nhập đủ thông tin: ${st.missing.join(', ')}`}
-                                style={{ padding: '3px 10px', fontSize: 11, color: 'var(--danger)', borderColor: 'var(--danger)' }}>
-                                Thiếu: {st.missing[0]}{st.missing.length > 1 ? '…' : ''}
-                              </button>
-                            );
-                          }
-                          if (st.kind === 'wait_ops') {
-                            return (
-                              <button className="btn btn-ghost btn-sm" disabled
-                                title="Chờ OPS xác nhận đã đổi lệnh xong"
-                                style={{ padding: '3px 10px', fontSize: 11, color: 'var(--warning)', borderColor: 'var(--warning)' }}>
-                                Chờ OPS đổi lệnh
-                              </button>
-                            );
-                          }
-                          return (
-                            <button className="btn btn-primary btn-sm"
-                              title="Hoàn thành phần Điều Độ"
-                              style={{ padding: '3px 10px', fontSize: 11 }}
-                              onClick={() => completeMut.mutate(j.id)}>
-                              HT
-                            </button>
-                          );
-                        })()}
-                      </td>
-                      <td style={{ padding: '8px 6px', minWidth: 120 }}>
-                        <InlineInput value={j.truck_notes}
-                          onSave={v => truckMut.mutate({ jobId: j.id, data: { notes: v } })} />
-                      </td>
-                      <td style={{ ...cs, whiteSpace: 'nowrap' }}>
-                        {(j.transport_name || j.vehicle_number || j.planned_datetime) && (
-                          <button className="btn btn-ghost btn-sm"
-                            title="Tạo Biên Bản Bàn Giao"
-                            style={{ fontSize: 11, padding: '3px 8px', marginRight: 4, color: 'var(--info)', borderColor: 'var(--info)' }}
-                            onClick={() => setBbbgJob({ id: j.id, code: j.job_code || `#${j.id}` })}>
-                            BBBG
-                          </button>
-                        )}
-                        {tab === 'pending' && (
-                          <button className="btn btn-ghost btn-sm btn-icon"
-                            title="Yêu cầu xóa job" style={{ color: 'var(--danger)' }}
-                            onClick={() => {
-                              if (window.confirm(`Gửi yêu cầu xóa job ${j.job_code || '#' + j.id}?`)) {
-                                deleteReqMut.mutate({ id: j.id, reason: null });
-                              }
-                            }}>🗑</button>
-                        )}
-                        <button className="btn btn-ghost btn-sm btn-icon" title="Chi tiết"
-                          onClick={() => setDetailJobId(j.id)}>🔍</button>
                       </td>
                     </tr>
                   );
