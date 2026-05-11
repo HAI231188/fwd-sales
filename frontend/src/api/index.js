@@ -114,6 +114,22 @@ export const generateBbbgPdf = (id, payload) =>
 // Global search (LOG team only)
 export const searchGlobal = (params) => api.get('/search', { params });
 
+// Truck bookings (Phase 2 — multi-truck booking system; replaces job_truck workflow)
+export const getTruckBookings = (jobId) =>
+  api.get('/truck-bookings', { params: { job_id: jobId } });
+export const createTruckBooking = (body) =>
+  api.post('/truck-bookings', body);
+export const updateTruckBooking = (id, body) =>
+  api.patch(`/truck-bookings/${id}`, body);
+export const deleteTruckBooking = (id) =>
+  api.delete(`/truck-bookings/${id}`);
+export const getTruckBookingStatus = (jobId) =>
+  api.get(`/jobs/${jobId}/truck-booking-status`);
+export const getAvailableContainers = (jobId) =>
+  api.get(`/jobs/${jobId}/available-containers`);
+export const getPastDeliveryLocations = (jobId) =>
+  api.get(`/jobs/${jobId}/past-delivery-locations`);
+
 // Customer pipeline (Data khách hàng — TP + lead management page)
 export const getCustomerPipelines = (search = '') =>
   api.get('/customer-pipeline', { params: search ? { search } : {} });

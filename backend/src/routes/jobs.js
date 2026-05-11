@@ -114,7 +114,13 @@ function queryDieuDoStaffStats(scope) {
       COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND jtr.transport_name IS NOT NULL) AS booked,
       COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND jtr.planned_datetime IS NOT NULL AND jtr.transport_name IS NULL) AS plan_no_truck,
       COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND jtr.planned_datetime BETWEEN NOW() AND NOW() + INTERVAL '16 hours' AND jtr.transport_name IS NULL) AS urgent_no_truck,
-      COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND jtr.planned_datetime < NOW() AND jtr.completed_at IS NULL) AS overdue_delivery
+      COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND jtr.planned_datetime < NOW() AND jtr.completed_at IS NULL) AS overdue_delivery,
+      -- Phase 3 (temporary): jobs still needing DD action on truck_bookings.
+      -- Long-term, the legacy job_truck-derived columns above will be replaced
+      -- by status enum from get_truck_booking_status() entirely (Phase 4).
+      COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL
+        AND get_truck_booking_status(j.id) IN ('chua_dat_xe','dat_xe_1_phan','da_dat_xe_du_cho_so_xe')
+      ) AS quan_ly_dat_xe
     FROM users u
     LEFT JOIN job_assignments ja ON ja.dieu_do_id = u.id
     LEFT JOIN jobs j ON j.id = ja.job_id
@@ -920,7 +926,15 @@ router.get('/', requireAuth, async (req, res) => {
         COALESCE((
           SELECT COUNT(*)::int FROM truck_bookings
            WHERE job_id = j.id AND deleted_at IS NULL
-        ), 0) AS truck_bookings_count
+        ), 0) AS truck_bookings_count,
+        -- Booked-container count (distinct containers in any live booking).
+        -- Drives the "booked/total" coverage badge in the Quản lý đặt xe table.
+        COALESCE((
+          SELECT COUNT(DISTINCT tbc.container_id)::int
+            FROM truck_booking_containers tbc
+            JOIN truck_bookings tb ON tb.id = tbc.booking_id
+           WHERE tb.job_id = j.id AND tb.deleted_at IS NULL
+        ), 0) AS truck_booked_containers_count
       FROM jobs j
       LEFT JOIN LATERAL (
         SELECT * FROM job_assignments WHERE job_id = j.id ORDER BY id DESC LIMIT 1
@@ -2613,6 +2627,57 @@ router.get('/:id/available-containers', requireAuth, async (req, res) => {
     res.json(rows);
   } catch (err) {
     console.error('GET /:id/available-containers error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/jobs/:id/past-delivery-locations
+// Top 5 distinct delivery_location strings used in prior bookings for the
+// same customer (by name match — customer_id often NULL on legacy rows).
+// Powers the autocomplete in the BookingModal create form. Sources from
+// truck_bookings (new) with a UNION fallback to legacy job_truck so any
+// pre-Phase-2 data still surfaces during the transition window.
+router.get('/:id/past-delivery-locations', requireAuth, async (req, res) => {
+  if (!['dieu_do', 'truong_phong_log'].includes(req.user.role)) {
+    return res.status(403).json({ error: 'Không có quyền' });
+  }
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isFinite(id)) return res.status(400).json({ error: 'ID không hợp lệ' });
+  try {
+    const { rows: jr } = await db.query(
+      `SELECT customer_name FROM jobs WHERE id = $1 AND deleted_at IS NULL`, [id]
+    );
+    if (!jr[0]) return res.json([]);
+    const name = jr[0].customer_name;
+    const { rows } = await db.query(`
+      SELECT loc, MAX(used) AS last_used FROM (
+        SELECT tb.delivery_location AS loc, MAX(tb.created_at) AS used
+          FROM truck_bookings tb
+          JOIN jobs j ON j.id = tb.job_id
+         WHERE LOWER(j.customer_name) = LOWER($1)
+           AND tb.deleted_at IS NULL
+           AND tb.delivery_location IS NOT NULL
+           AND tb.delivery_location <> ''
+           AND j.id <> $2
+         GROUP BY tb.delivery_location
+        UNION ALL
+        SELECT jtr.delivery_location AS loc, MAX(j.created_at) AS used
+          FROM jobs j
+          JOIN job_truck jtr ON jtr.job_id = j.id
+         WHERE LOWER(j.customer_name) = LOWER($1)
+           AND j.deleted_at IS NULL
+           AND jtr.delivery_location IS NOT NULL
+           AND jtr.delivery_location <> ''
+           AND j.id <> $2
+         GROUP BY jtr.delivery_location
+      ) u
+      GROUP BY loc
+      ORDER BY last_used DESC
+      LIMIT 5
+    `, [name, id]);
+    res.json(rows.map(r => r.loc));
+  } catch (err) {
+    console.error('GET /:id/past-delivery-locations error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
