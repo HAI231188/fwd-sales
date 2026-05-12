@@ -798,6 +798,7 @@ router.get('/filtered', requireAuth, async (req, res) => {
           j.customer_name,
           j.import_export,
           j.han_lenh,
+          tb.transport_company_id,
           tb.transport_name,
           tb.vehicle_number,
           tb.planned_datetime,

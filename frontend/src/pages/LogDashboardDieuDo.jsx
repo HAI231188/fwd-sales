@@ -236,7 +236,7 @@ export default function LogDashboardDieuDo() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {[
                 { label: 'Job chưa hoàn thành', value: stats?.job_chua_hoan_thanh, color: 'var(--info)',    filter: 'truck_pending' },
-                { label: 'Kế hoạch đã đặt',     value: stats?.ke_hoach_da_dat,     color: 'var(--primary)', filter: 'dd_kh_da_dat_chi_tiet' },
+                { label: 'Kế hoạch đã chốt',    value: stats?.ke_hoach_da_dat,     color: 'var(--primary)', filter: 'dd_kh_da_dat_chi_tiet' },
                 { label: 'Kế hoạch chưa đặt',   value: stats?.ke_hoach_chua_dat,   color: 'var(--warning)', filter: 'dd_ke_hoach_chua_dat' },
               ].map(r => (
                 <div key={r.label} onClick={() => setJobListFilter(r.filter)}

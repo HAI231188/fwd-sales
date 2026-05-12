@@ -30,7 +30,7 @@ const FILTER_TITLES = {
   // Phase 5 Step 1 — new DD card filters
   dd_ke_hoach_da_dat:      'Kế hoạch đã đặt (job)',
   dd_ke_hoach_chua_dat:    'Kế hoạch chưa đặt',
-  dd_kh_da_dat_chi_tiet:   'Kế hoạch đã đặt',
+  dd_kh_da_dat_chi_tiet:   'Kế hoạch đã chốt',
   dd_canh_bao_chua_van_tai: 'Cảnh báo: chưa có vận tải',
   dd_canh_bao_chua_doi_lenh: 'Cảnh báo: chưa đổi lệnh',
   dd_canh_bao_chua_hoan_thanh: 'Cảnh báo: chưa hoàn thành',
@@ -241,6 +241,10 @@ const TD = ({ children, style }) => (
 
 export default function JobListModal({ filterType, staffId, staffName, onClose }) {
   const [detailJobId, setDetailJobId] = useState(null);
+  // Phase 5 Step 1 follow-up: tab state for the booking-level drilldown
+  // ('dd_kh_da_dat_chi_tiet'). Resets to 'all' on each mount because the modal
+  // unmounts when closed — useState default applies fresh on next open.
+  const [bookingTab, setBookingTab] = useState('all');
   const zIndex = useModalZIndex();
 
   const { data: jobs = [], isLoading } = useQuery({
@@ -251,6 +255,16 @@ export default function JobListModal({ filterType, staffId, staffName, onClose }
   const baseTitle = FILTER_TITLES[filterType] || filterType;
   const title = staffName ? `${baseTitle} — ${staffName}` : baseTitle;
   const columns = getColumns(filterType);
+
+  // Booking-tab client-side split (only meaningful for the booking-level view).
+  const isBookingTabView = filterType === 'dd_kh_da_dat_chi_tiet';
+  const withTransport    = isBookingTabView ? jobs.filter(j => j.transport_company_id != null) : [];
+  const withoutTransport = isBookingTabView ? jobs.filter(j => j.transport_company_id == null) : [];
+  const displayJobs = !isBookingTabView
+    ? jobs
+    : bookingTab === 'with_transport'    ? withTransport
+    : bookingTab === 'without_transport' ? withoutTransport
+    : jobs;
 
   return (
     <>
@@ -266,34 +280,56 @@ export default function JobListModal({ filterType, staffId, staffName, onClose }
           <div className="modal-body" style={{ overflowY: 'auto', flex: 1, padding: 0 }}>
             {isLoading ? (
               <div style={{ padding: 40, textAlign: 'center' }}><span className="spinner" /></div>
-            ) : jobs.length === 0 ? (
-              <div className="empty-state">
-                <div className="icon">✅</div>
-                <p>Không có job nào</p>
-              </div>
             ) : (
-              <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-                  <thead>
-                    <tr>
-                      {columns.map(c => <TH key={c.key}>{c.label}</TH>)}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {jobs.map(j => (
-                      <tr key={j.id}
-                        onClick={() => setDetailJobId(j.id)}
-                        style={{ borderBottom: '1px solid var(--border)', cursor: 'pointer' }}
-                        onMouseEnter={e => e.currentTarget.style.background = 'var(--bg)'}
-                        onMouseLeave={e => e.currentTarget.style.background = ''}>
-                        {columns.map(c => (
-                          <TD key={c.key}>{renderCell(c.key, j, filterType)}</TD>
+              <>
+                {/* Phase 5 Step 1 follow-up: booking-level 3-tab split.
+                    Renders only for filterType==='dd_kh_da_dat_chi_tiet'. */}
+                {isBookingTabView && jobs.length > 0 && (
+                  <div className="tabs" style={{ padding: '0 16px', marginBottom: 0 }}>
+                    <button className={`tab ${bookingTab === 'all' ? 'active' : ''}`}
+                      onClick={() => setBookingTab('all')}>
+                      Tất cả ({jobs.length})
+                    </button>
+                    <button className={`tab ${bookingTab === 'with_transport' ? 'active' : ''}`}
+                      onClick={() => setBookingTab('with_transport')}>
+                      Có vận tải ({withTransport.length})
+                    </button>
+                    <button className={`tab ${bookingTab === 'without_transport' ? 'active' : ''}`}
+                      onClick={() => setBookingTab('without_transport')}>
+                      Chưa có vận tải ({withoutTransport.length})
+                    </button>
+                  </div>
+                )}
+                {displayJobs.length === 0 ? (
+                  <div className="empty-state">
+                    <div className="icon">✅</div>
+                    <p>{isBookingTabView && bookingTab !== 'all' ? 'Không có booking nào trong tab này' : 'Không có job nào'}</p>
+                  </div>
+                ) : (
+                  <div style={{ overflowX: 'auto' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                      <thead>
+                        <tr>
+                          {columns.map(c => <TH key={c.key}>{c.label}</TH>)}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {displayJobs.map(j => (
+                          <tr key={j.booking_id ?? j.id}
+                            onClick={() => setDetailJobId(j.id)}
+                            style={{ borderBottom: '1px solid var(--border)', cursor: 'pointer' }}
+                            onMouseEnter={e => e.currentTarget.style.background = 'var(--bg)'}
+                            onMouseLeave={e => e.currentTarget.style.background = ''}>
+                            {columns.map(c => (
+                              <TD key={c.key}>{renderCell(c.key, j, filterType)}</TD>
+                            ))}
+                          </tr>
                         ))}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </>
             )}
           </div>
         </div>
