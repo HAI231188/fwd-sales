@@ -327,6 +327,30 @@ h1, h2, h3, h4 { font-family: var(--font-display); font-weight: 600; color: var(
 
 .navbar-desktop-items { display: flex; align-items: center; gap: 8px; }
 
+/* ─── Data table / Card view swap (Mobile Phase 2 — pilot) ──────────────────
+ * Desktop renders the full <table>; mobile renders the same filtered rows
+ * as a vertical card list. The swap is opt-in per table via the FilteredTable
+ * `renderMobileCard` prop. See LogDashboardDieuDo main grid for the pilot.
+ */
+.data-table-desktop-only { display: block; }
+.data-card-list-mobile-only {
+  display: none;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+}
+.data-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+  box-shadow: var(--shadow-card);
+  cursor: pointer;
+  transition: var(--transition);
+}
+.data-card:active { background: var(--bg-card-hover); }
+.data-card:hover { border-color: var(--primary); }
+
 /* Responsive */
 @media (max-width: 768px) {
   .grid-2, .grid-3, .grid-6 { grid-template-columns: 1fr; }
@@ -350,6 +374,10 @@ h1, h2, h3, h4 { font-family: var(--font-display); font-weight: 600; color: var(
   .navbar-mobile-right  { display: flex; align-items: center; gap: 4px; }
   .navbar-hamburger     { display: inline-flex; align-items: center; justify-content: center; }
   .navbar-mobile-menu   { display: flex; }
+
+  /* Phase 2 — table → card-list swap */
+  .data-table-desktop-only   { display: none; }
+  .data-card-list-mobile-only { display: flex; }
 }
 
 @media (max-width: 480px) {

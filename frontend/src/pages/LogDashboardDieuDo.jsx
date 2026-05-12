@@ -253,6 +253,85 @@ export default function LogDashboardDieuDo() {
                 data={jobs}
                 emptyText="Không có job nào"
                 tableStyle={{ fontSize: 13 }}
+                renderMobileCard={(j) => {
+                  // Phase 2 pilot — mobile card view. Same filteredData feeds desktop table.
+                  const total = Array.isArray(j.containers) ? j.containers.length : 0;
+                  const booked = j.truck_booked_containers_count || 0;
+                  const imp = j.import_export === 'import';
+                  const isOpsRelevant = j.destination === 'hai_phong' &&
+                    (j.service_type === 'truck' || j.service_type === 'both');
+                  const hl = j.han_lenh
+                    ? (imp
+                        ? fmtDate(j.han_lenh)
+                        : new Date(j.han_lenh).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }))
+                    : '—';
+                  return (
+                    <div key={j.id} className="data-card" onClick={() => setDetailJobId(j.id)}>
+                      {/* Header — job code + loại badge */}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, marginBottom: 4 }}>
+                        <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--info)', fontFamily: 'var(--font-display)' }}>
+                          {j.job_code || `#${j.id}`}
+                        </div>
+                        <span style={{
+                          background: imp ? 'rgba(217,119,6,0.12)' : 'rgba(34,197,94,0.12)',
+                          color: imp ? '#d97706' : '#16a34a',
+                          borderRadius: 6, padding: '2px 10px',
+                          fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap',
+                        }}>
+                          {imp ? 'Nhập' : 'Xuất'}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: 13, color: 'var(--text)', marginBottom: 8 }}>
+                        <span style={{ color: 'var(--text-2)', fontSize: 11 }}>Khách: </span>
+                        <strong>{j.customer_name || '—'}</strong>
+                      </div>
+                      <div style={{ height: 1, background: 'var(--border)', margin: '6px 0 8px' }} />
+
+                      {/* 2-col mini grid */}
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 12px', marginBottom: 8, fontSize: 12 }}>
+                        <div><span style={{ color: 'var(--text-2)' }}>Ngày:</span> {fmtDate(j.created_at)}</div>
+                        <div><span style={{ color: 'var(--text-2)' }}>Mã SI:</span> {j.si_number || '—'}</div>
+                        <div><span style={{ color: 'var(--text-2)' }}>ETD:</span> {fmtDate(j.etd)}</div>
+                        <div><span style={{ color: 'var(--text-2)' }}>ETA:</span> {fmtDate(j.eta)}</div>
+                      </div>
+
+                      <div style={{ fontSize: 12, marginBottom: 6 }}>
+                        <span style={{ color: 'var(--text-2)' }}>Hàng hóa:</span> {fmtCargo(j)}
+                        {j.tons && <span style={{ color: 'var(--text-3)', marginLeft: 6 }}>· {j.tons} tấn</span>}
+                      </div>
+
+                      <div style={{ fontSize: 12, marginBottom: 10 }}>
+                        <span style={{ color: 'var(--text-2)' }}>Hạn lệnh / Cutoff:</span>{' '}
+                        <span style={deadlineStyle(j.han_lenh)}>{hl}</span>
+                      </div>
+
+                      {/* Status pill + inline metrics */}
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
+                        <span style={{ ...truckBookingPillStyle(j.truck_booking_status), fontSize: 12, padding: '4px 10px' }}>
+                          {TRUCK_BOOKING_STATUS_LABELS[j.truck_booking_status] || j.truck_booking_status || '—'}
+                        </span>
+                        <div style={{ display: 'flex', gap: 14, fontSize: 12, color: 'var(--text-2)' }}>
+                          <span>Cont:{' '}
+                            <strong style={{ color: total === 0 ? 'var(--text-3)' : booked < total ? 'var(--warning)' : 'var(--primary)' }}>
+                              {booked}/{total}
+                            </strong>
+                          </span>
+                          <span>Booking: <strong style={{ color: 'var(--text)' }}>{j.truck_bookings_count || 0}</strong></span>
+                        </div>
+                      </div>
+
+                      {/* OPS done badge */}
+                      <div style={{ fontSize: 12, color: 'var(--text-2)' }}>
+                        OPS đổi lệnh:{' '}
+                        {isOpsRelevant ? (
+                          j.ops_done
+                            ? <span style={{ background: 'rgba(34,197,94,0.15)', color: '#16a34a', borderRadius: 6, padding: '2px 8px', fontSize: 11, fontWeight: 600 }}>✓ Đã đổi</span>
+                            : <span style={{ background: 'rgba(217,119,6,0.12)', color: '#b45309', borderRadius: 6, padding: '2px 8px', fontSize: 11, fontWeight: 600 }}>✗ Chưa đổi</span>
+                        ) : <span style={{ color: 'var(--text-3)' }}>—</span>}
+                      </div>
+                    </div>
+                  );
+                }}
                 renderRow={(j) => {
                   // Phase 4: read-only summary. Booking-level edits live in the
                   // Quản lý đặt xe section above. Click row → JobDetailModal.

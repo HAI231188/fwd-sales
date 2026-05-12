@@ -63,11 +63,16 @@ function SelectFilter({ options, value, onApply, onClose }) {
 // columns: [{ key, label, filterType?: 'text'|'select', options?: [{value,label}], accessor?: row=>string }]
 // data: array of row objects
 // renderRow: (row, index) => <tr>
+// renderMobileCard: optional (row, index) => <div> — opt-in mobile card view (Phase 2 pilot).
+//   When provided, the same `filteredData` feeds BOTH the desktop <table> and the mobile card
+//   list. At <=768px CSS hides the table and shows the cards. Filters/sort/empty state are
+//   shared automatically because they live in this component's state.
 // extraHeaderCells: optional <th> elements appended after columns (e.g. action column)
 export default function FilteredTable({
   columns,
   data,
   renderRow,
+  renderMobileCard,
   emptyText = 'Không có job nào',
   extraHeaderCells,
   tableStyle,
@@ -111,46 +116,59 @@ export default function FilteredTable({
           </button>
         </div>
       )}
-      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, ...tableStyle }}>
-        <thead>
-          <tr style={{ background: 'var(--bg)', borderBottom: '2px solid var(--border)' }}>
-            {columns.map(col => {
-              const active = !!filters[col.key];
-              const isOpen = openFilter === col.key;
-              return (
-                <th key={col.key} style={{ padding: '10px 8px', textAlign: 'left', fontWeight: 600, color: active ? 'var(--primary)' : 'var(--text-2)', fontSize: 11, whiteSpace: 'nowrap', position: 'relative' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
-                    <span>{col.label}</span>
-                    {col.filterType && (
-                      <button onClick={e => { e.stopPropagation(); setOpenFilter(isOpen ? null : col.key); }}
-                        style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '1px 3px', display: 'flex', alignItems: 'center' }}>
-                        <span style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', background: active ? 'var(--primary)' : '#d1d5db', flexShrink: 0 }} />
-                      </button>
+      <div className="data-table-desktop-only">
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, ...tableStyle }}>
+          <thead>
+            <tr style={{ background: 'var(--bg)', borderBottom: '2px solid var(--border)' }}>
+              {columns.map(col => {
+                const active = !!filters[col.key];
+                const isOpen = openFilter === col.key;
+                return (
+                  <th key={col.key} style={{ padding: '10px 8px', textAlign: 'left', fontWeight: 600, color: active ? 'var(--primary)' : 'var(--text-2)', fontSize: 11, whiteSpace: 'nowrap', position: 'relative' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+                      <span>{col.label}</span>
+                      {col.filterType && (
+                        <button onClick={e => { e.stopPropagation(); setOpenFilter(isOpen ? null : col.key); }}
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '1px 3px', display: 'flex', alignItems: 'center' }}>
+                          <span style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', background: active ? 'var(--primary)' : '#d1d5db', flexShrink: 0 }} />
+                        </button>
+                      )}
+                    </div>
+                    {isOpen && col.filterType === 'text' && (
+                      <TextFilter value={filters[col.key]} onApply={v => setFilter(col.key, v)} onClose={() => setOpenFilter(null)} />
                     )}
-                  </div>
-                  {isOpen && col.filterType === 'text' && (
-                    <TextFilter value={filters[col.key]} onApply={v => setFilter(col.key, v)} onClose={() => setOpenFilter(null)} />
-                  )}
-                  {isOpen && col.filterType === 'select' && (
-                    <SelectFilter options={col.options} value={filters[col.key]} onApply={v => setFilter(col.key, v)} onClose={() => setOpenFilter(null)} />
-                  )}
-                </th>
-              );
-            })}
-            {extraHeaderCells}
-          </tr>
-        </thead>
-        <tbody>
-          {filteredData.length === 0 && (
-            <tr>
-              <td colSpan={colCount} style={{ textAlign: 'center', padding: 40, color: 'var(--text-3)' }}>
-                {hasFilters ? 'Không có kết quả phù hợp với bộ lọc' : emptyText}
-              </td>
+                    {isOpen && col.filterType === 'select' && (
+                      <SelectFilter options={col.options} value={filters[col.key]} onApply={v => setFilter(col.key, v)} onClose={() => setOpenFilter(null)} />
+                    )}
+                  </th>
+                );
+              })}
+              {extraHeaderCells}
             </tr>
+          </thead>
+          <tbody>
+            {filteredData.length === 0 && (
+              <tr>
+                <td colSpan={colCount} style={{ textAlign: 'center', padding: 40, color: 'var(--text-3)' }}>
+                  {hasFilters ? 'Không có kết quả phù hợp với bộ lọc' : emptyText}
+                </td>
+              </tr>
+            )}
+            {filteredData.map((row, i) => renderRow(row, i))}
+          </tbody>
+        </table>
+      </div>
+      {renderMobileCard && (
+        <div className="data-card-list-mobile-only">
+          {filteredData.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: 30, color: 'var(--text-3)', fontSize: 13 }}>
+              {hasFilters ? 'Không có kết quả phù hợp với bộ lọc' : emptyText}
+            </div>
+          ) : (
+            filteredData.map((row, i) => renderMobileCard(row, i))
           )}
-          {filteredData.map((row, i) => renderRow(row, i))}
-        </tbody>
-      </table>
+        </div>
+      )}
     </>
   );
 }
