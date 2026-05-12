@@ -1,11 +1,18 @@
 import { useState, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-// Phase 4: updateJobTruck removed — JobDetailModal "Vận chuyển" section is now read-only.
-import { getJob, updateJobTk, updateJob, deleteJob, requestJobDelete, getLogStaff } from '../api';
+import toast from 'react-hot-toast';
+// Phase 4.1: bookings table + BBBG-per-booking restored after Phase 4 removed inline edit.
+import {
+  getJob, updateJobTk, updateJob, deleteJob, requestJobDelete, getLogStaff,
+  getTruckBookings, deleteTruckBooking,
+} from '../api';
 import TransportPicker from './TransportPicker';
+import BookingModal from './BookingModal';
+import BBBGModal from './BBBGModal';
 import { useModalZIndex } from '../hooks/useModalZIndex';
 import { useAuth } from '../App';
+import { TRUCK_BOOKING_STATUS_LABELS, truckBookingPillStyle } from '../utils/truckBookingStatus';
 
 const TK_FLOW_OPTIONS = [
   { value: 'xanh', label: 'Xanh', color: '#22c55e', bg: 'rgba(34,197,94,0.15)' },
@@ -88,6 +95,165 @@ function Section({ title, children, accent }) {
       <div className="section-title" style={{ marginBottom: 8 }}>{title}</div>
       <div style={{ background: accent || 'var(--bg)', borderRadius: 8, padding: '4px 0' }}>{children}</div>
     </div>
+  );
+}
+
+// Phase 4.1: BookingsSection — replaces the deprecated `job.truck` block. Lazily
+// fetches /api/truck-bookings?job_id=X when the modal opens. Per-booking actions
+// (Sửa / Xóa / BBBG) are gated on DD + TP. The "+ Tạo kế hoạch" button creates
+// a new booking via BookingModal. BBBG opens BBBGModal pre-filled with that
+// specific booking's transport + containers.
+function BookingsSection({ jobId, jobCode, customerName, truckBookingStatus, canWrite }) {
+  const qc = useQueryClient();
+  const [bookingModalState, setBookingModalState] = useState(null); // {mode, booking?}
+  const [bbbgBookingId, setBbbgBookingId] = useState(null);
+
+  const { data: bookings = [], isLoading } = useQuery({
+    queryKey: ['truckBookings', jobId],
+    queryFn: () => getTruckBookings(jobId),
+    enabled: !!jobId,
+  });
+
+  function refresh() {
+    qc.invalidateQueries({ queryKey: ['truckBookings', jobId] });
+    qc.invalidateQueries({ queryKey: ['job', String(jobId)] });
+    qc.invalidateQueries({ queryKey: ['jobs'] });
+    qc.invalidateQueries({ queryKey: ['availableContainers', jobId] });
+  }
+
+  async function handleDelete(b) {
+    if (!window.confirm(`Xóa kế hoạch ${b.transport_name}? Các cont sẽ trở lại trạng thái chưa đặt xe.`)) return;
+    try {
+      await deleteTruckBooking(b.id);
+      toast.success('Đã xóa kế hoạch');
+      refresh();
+    } catch (e) {
+      toast.error(e?.error || e?.message || 'Lỗi khi xóa');
+    }
+  }
+
+  const td = { padding: '8px 10px', verticalAlign: 'top', fontSize: 12 };
+  const th = { padding: '8px 10px', textAlign: 'left', fontWeight: 600, color: 'var(--text-2)',
+                fontSize: 11, whiteSpace: 'nowrap', textTransform: 'uppercase', letterSpacing: '0.04em' };
+
+  return (
+    <Section title="Vận chuyển">
+      {truckBookingStatus && bookings.length > 0 && (
+        <div style={{ padding: '6px 10px 10px' }}>
+          <span style={truckBookingPillStyle(truckBookingStatus)}>
+            {TRUCK_BOOKING_STATUS_LABELS[truckBookingStatus] || truckBookingStatus}
+          </span>
+        </div>
+      )}
+
+      {isLoading ? (
+        <div style={{ padding: 16, textAlign: 'center', color: 'var(--text-3)', fontSize: 12 }}>
+          Đang tải kế hoạch...
+        </div>
+      ) : bookings.length === 0 ? (
+        <div style={{ padding: '12px 10px', fontSize: 13 }}>
+          <div style={{ color: 'var(--text-2)', marginBottom: canWrite ? 10 : 0 }}>
+            Chưa có kế hoạch giao xe nào.
+          </div>
+          {canWrite && (
+            <button className="btn btn-primary btn-sm"
+              onClick={() => setBookingModalState({ mode: 'create' })}>
+              + Tạo kế hoạch
+            </button>
+          )}
+        </div>
+      ) : (
+        <div style={{ padding: '0 6px 10px' }}>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+              <thead>
+                <tr style={{ background: '#fff', borderBottom: '1px solid var(--border)' }}>
+                  <th style={th}>Vận tải</th>
+                  <th style={th}>Số xe</th>
+                  <th style={th}>KH ngày giờ</th>
+                  <th style={th}>Địa điểm giao</th>
+                  <th style={th}>Cước</th>
+                  <th style={th}>Ghi chú</th>
+                  {canWrite && <th style={{ ...th, textAlign: 'right' }}>Action</th>}
+                </tr>
+              </thead>
+              <tbody>
+                {bookings.map(b => {
+                  const transportLive = b.transport_current_name || b.transport_name;
+                  const conts = (b.containers || [])
+                    .map(c => c.cont_number || `(${c.cont_type} chưa nhập)`)
+                    .join(', ');
+                  return (
+                    <tr key={b.id} style={{ borderBottom: '1px solid var(--border)', background: '#fff' }}>
+                      <td style={td}>
+                        <div style={{ fontWeight: 600 }}>{transportLive}</div>
+                        {conts && (
+                          <div style={{ fontSize: 10, color: 'var(--text-3)', marginTop: 2 }}>
+                            Cont: {conts}
+                          </div>
+                        )}
+                      </td>
+                      <td style={td}>
+                        {b.vehicle_number
+                          ? <span style={{ fontWeight: 600, color: 'var(--primary)' }}>{b.vehicle_number}</span>
+                          : <span style={{ color: 'var(--warning)' }}>⏳ Chờ số xe</span>}
+                      </td>
+                      <td style={td}>{fmtDt(b.planned_datetime)}</td>
+                      <td style={td}>{b.delivery_location || '—'}</td>
+                      <td style={td}>{b.cost ? Number(b.cost).toLocaleString('vi-VN') + ' đ' : '—'}</td>
+                      <td style={{ ...td, maxWidth: 160 }}>{b.notes || '—'}</td>
+                      {canWrite && (
+                        <td style={{ ...td, textAlign: 'right', whiteSpace: 'nowrap' }}>
+                          <button className="btn btn-ghost btn-sm" style={{ fontSize: 11, marginRight: 4 }}
+                            onClick={() => setBookingModalState({ mode: 'edit', booking: b })}>
+                            ✏️ Sửa
+                          </button>
+                          <button className="btn btn-ghost btn-sm" style={{ fontSize: 11, color: 'var(--danger)', marginRight: 4 }}
+                            onClick={() => handleDelete(b)}>
+                            🗑 Xóa
+                          </button>
+                          <button className="btn btn-ghost btn-sm" style={{ fontSize: 11 }}
+                            onClick={() => setBbbgBookingId(b.id)}>
+                            📄 BBBG
+                          </button>
+                        </td>
+                      )}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          {canWrite && (
+            <div style={{ padding: '10px 6px 0' }}>
+              <button className="btn btn-ghost btn-sm"
+                onClick={() => setBookingModalState({ mode: 'create' })}>
+                + Tạo kế hoạch
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {bookingModalState && (
+        <BookingModal
+          mode={bookingModalState.mode}
+          jobId={jobId}
+          jobCode={jobCode}
+          booking={bookingModalState.booking}
+          onClose={() => setBookingModalState(null)}
+          onSaved={() => refresh()}
+        />
+      )}
+      {bbbgBookingId && (
+        <BBBGModal
+          jobId={jobId}
+          jobCode={jobCode}
+          bookingId={bbbgBookingId}
+          onClose={() => setBbbgBookingId(null)}
+        />
+      )}
+    </Section>
   );
 }
 
@@ -795,32 +961,15 @@ export default function JobDetailModal({ jobId, onClose }) {
                   );
                 })()}
 
-                {job.truck && (() => {
-                  const truck = job.truck;
-                  // Phase 4: legacy job_truck section is now READ-ONLY. New jobs
-                  // have no job_truck row at all; for legacy rows we just display
-                  // what's there. Booking edits live on the DD dashboard's
-                  // Quản lý đặt xe section via /api/truck-bookings.
-                  return (
-                    <Section title="Vận chuyển (legacy job_truck)">
-                      {false ? (
-                        <></>
-                      ) : (
-                        <>
-                          <Row label="Vận tải" value={truck.transport_name || '—'} />
-                          <Row label="Số xe" value={truck.vehicle_number || '—'} />
-                          <Row label="KH ngày giờ" value={fmtDt(truck.planned_datetime)} />
-                          <Row label="TH ngày giờ" value={fmtDt(truck.actual_datetime)} />
-                          <Row label="Lấy hàng" value={truck.pickup_location || '—'} />
-                          <Row label="Giao hàng" value={truck.delivery_location || '—'} />
-                          <Row label="Cước" value={truck.cost ? Number(truck.cost).toLocaleString('vi-VN') + ' đ' : '—'} />
-                          <Row label="Ghi chú vận tải" value={truck.notes || '—'} />
-                        </>
-                      )}
-                      <Row label="Hoàn thành lúc" value={fmtDt(truck.completed_at)} color="var(--primary)" />
-                    </Section>
-                  );
-                })()}
+                {(job.service_type === 'truck' || job.service_type === 'both') && (
+                  <BookingsSection
+                    jobId={job.id}
+                    jobCode={job.job_code}
+                    customerName={job.customer_name}
+                    truckBookingStatus={job.truck_booking_status}
+                    canWrite={user?.role === 'dieu_do' || user?.role === 'truong_phong_log'}
+                  />
+                )}
 
                 {job.ops_tasks?.length > 0 && (
                   <Section title="Công việc OPS">

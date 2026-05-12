@@ -919,7 +919,20 @@ router.get('/', requireAuth, async (req, res) => {
             FROM truck_booking_containers tbc
             JOIN truck_bookings tb ON tb.id = tbc.booking_id
            WHERE tb.job_id = j.id AND tb.deleted_at IS NULL
-        ), 0) AS truck_booked_containers_count
+        ), 0) AS truck_booked_containers_count,
+        -- Phase 4.1: earliest active booking exposed as first_booking_* so the
+        -- DD main grid can inline-edit it without a second fetch. Pattern matches
+        -- the bbbg-data LATERAL (earliest by planned_datetime, then id).
+        tb_first.id                  AS first_booking_id,
+        tb_first.transport_name      AS first_booking_transport,
+        tb_first.vehicle_number      AS first_booking_vehicle,
+        tb_first.planned_datetime    AS first_booking_planned,
+        tb_first.actual_datetime     AS first_booking_actual,
+        tb_first.pickup_location     AS first_booking_pickup,
+        tb_first.delivery_location   AS first_booking_delivery,
+        tb_first.cost                AS first_booking_cost,
+        tb_first.notes               AS first_booking_notes,
+        tb_first.transport_company_id AS first_booking_transport_company_id
       FROM jobs j
       LEFT JOIN LATERAL (
         SELECT * FROM job_assignments WHERE job_id = j.id ORDER BY id DESC LIMIT 1
@@ -932,6 +945,15 @@ router.get('/', requireAuth, async (req, res) => {
       LEFT JOIN job_tk jt ON jt.job_id = j.id
       LEFT JOIN job_truck jtr ON jtr.job_id = j.id
       LEFT JOIN transport_companies tc ON tc.id = jtr.transport_company_id
+      LEFT JOIN LATERAL (
+        SELECT id, transport_company_id, transport_name, vehicle_number,
+               planned_datetime, actual_datetime,
+               pickup_location, delivery_location, cost, notes
+          FROM truck_bookings
+         WHERE job_id = j.id AND deleted_at IS NULL
+         ORDER BY planned_datetime ASC NULLS LAST, id ASC
+         LIMIT 1
+      ) tb_first ON true
       ${WHERE}
       ORDER BY j.created_at DESC
     `, params);
@@ -2357,28 +2379,43 @@ function isBbbgRole(req) {
   return req.user.role === 'dieu_do' || req.user.role === 'truong_phong_log';
 }
 
-// GET /api/jobs/:id/bbbg-data — auto-fill payload for the BBBG modal
+// GET /api/jobs/:id/bbbg-data — auto-fill payload for the BBBG modal.
+// Optional ?booking_id=X — when supplied, prefill from THAT booking + restrict
+// the container list to that booking's containers. Validates ownership (booking
+// must belong to this job).  Otherwise: earliest active booking, all containers
+// of the job (legacy behavior).
 router.get('/:id/bbbg-data', requireAuth, async (req, res) => {
   if (!isBbbgRole(req)) return res.status(403).json({ error: 'Không có quyền' });
+  const bookingId = req.query.booking_id ? parseInt(req.query.booking_id, 10) : null;
+  if (req.query.booking_id && !Number.isFinite(bookingId)) {
+    return res.status(400).json({ error: 'booking_id không hợp lệ' });
+  }
   try {
-    // Phase 4: pull truck-delivery info from truck_bookings (earliest by
-    // planned_datetime; falls back to job_tk legacy if no booking exists yet).
+    // Phase 4.1: when booking_id is supplied, prefer that specific booking
+    // (validate it belongs to this job). Otherwise fall back to earliest.
+    const tbLateral = bookingId
+      ? `LEFT JOIN LATERAL (
+            SELECT delivery_location, transport_name, vehicle_number, planned_datetime, id
+              FROM truck_bookings
+             WHERE id = ${bookingId} AND job_id = j.id AND deleted_at IS NULL
+          ) tb ON true`
+      : `LEFT JOIN LATERAL (
+            SELECT delivery_location, transport_name, vehicle_number, planned_datetime, id
+              FROM truck_bookings
+             WHERE job_id = j.id AND deleted_at IS NULL
+             ORDER BY planned_datetime ASC NULLS LAST, id ASC
+             LIMIT 1
+          ) tb ON true`;
     const { rows: jobRows } = await db.query(`
       SELECT j.id, j.job_code, j.customer_id, j.customer_name, j.customer_address,
              j.customer_tax_code, j.cargo_type, j.tons, j.kg, j.so_kien, j.cbm,
              j.hbl_no, j.mbl_no, j.si_number,
              tb.delivery_location AS truck_delivery, tb.transport_name,
-             tb.vehicle_number, tb.planned_datetime,
+             tb.vehicle_number, tb.planned_datetime, tb.id AS booking_id,
              jt.delivery_location AS tk_delivery,
              cp.company_full_name, cp.tax_code AS pipeline_tax_code, cp.invoice_address
         FROM jobs j
-        LEFT JOIN LATERAL (
-          SELECT delivery_location, transport_name, vehicle_number, planned_datetime
-            FROM truck_bookings
-           WHERE job_id = j.id AND deleted_at IS NULL
-           ORDER BY planned_datetime ASC NULLS LAST, id ASC
-           LIMIT 1
-        ) tb ON true
+        ${tbLateral}
         LEFT JOIN job_tk    jt  ON jt.job_id  = j.id
         LEFT JOIN LATERAL (
           SELECT company_full_name, tax_code, invoice_address
@@ -2391,10 +2428,27 @@ router.get('/:id/bbbg-data', requireAuth, async (req, res) => {
     if (!jobRows[0]) return res.status(404).json({ error: 'Không tìm thấy job' });
     const job = jobRows[0];
 
-    const { rows: containers } = await db.query(
-      `SELECT id, cont_number, cont_type, seal_number FROM job_containers WHERE job_id = $1 ORDER BY id`,
-      [req.params.id]
-    );
+    // If caller requested a specific booking but it doesn't belong to this job,
+    // tb.id will be NULL — surface a 404 rather than silently fall back.
+    if (bookingId && !job.booking_id) {
+      return res.status(404).json({ error: 'Booking không thuộc job này hoặc đã bị xóa' });
+    }
+
+    // Container list: scoped to the specific booking when one is targeted,
+    // otherwise all containers of the job.
+    const { rows: containers } = bookingId
+      ? await db.query(
+          `SELECT jc.id, jc.cont_number, jc.cont_type, jc.seal_number
+             FROM job_containers jc
+             JOIN truck_booking_containers tbc ON tbc.container_id = jc.id
+            WHERE jc.job_id = $1 AND tbc.booking_id = $2
+            ORDER BY jc.id`,
+          [req.params.id, bookingId]
+        )
+      : await db.query(
+          `SELECT id, cont_number, cont_type, seal_number FROM job_containers WHERE job_id = $1 ORDER BY id`,
+          [req.params.id]
+        );
 
     // Past delivery locations for this customer (Phase 4: prefer truck_bookings;
     // legacy job_truck UNION'd for any data created before Phase 2). Same shape

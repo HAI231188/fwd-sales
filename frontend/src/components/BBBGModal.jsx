@@ -40,15 +40,17 @@ const Field = ({ label, en, children, span = 1 }) => (
   </div>
 );
 
-export default function BBBGModal({ jobId, jobCode, onClose }) {
+export default function BBBGModal({ jobId, jobCode, bookingId, onClose }) {
   const zIndex = useModalZIndex();
   const [submitting, setSubmitting] = useState(false);
   const [submitErr, setSubmitErr] = useState('');
   const [showSuggestions, setShowSuggestions] = useState(false);
 
+  // bookingId is part of the cache key so switching between per-booking BBBG views
+  // for the same job does not reuse stale container/transport data.
   const { data, isLoading, error } = useQuery({
-    queryKey: ['bbbgData', jobId],
-    queryFn: () => getBbbgData(jobId),
+    queryKey: ['bbbgData', jobId, bookingId || null],
+    queryFn: () => getBbbgData(jobId, bookingId),
     enabled: !!jobId,
   });
 

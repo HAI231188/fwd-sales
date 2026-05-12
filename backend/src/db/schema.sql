@@ -576,6 +576,9 @@ CREATE TABLE IF NOT EXISTS truck_bookings (
   completed_at          TIMESTAMP WITH TIME ZONE,                -- set when vehicle_number first filled
   deleted_at            TIMESTAMP WITH TIME ZONE                 -- soft delete (L17 pattern)
 );
+-- Phase 4.1 restore — fields the DD inline editor needs (idempotent per Golden Rule #3).
+ALTER TABLE truck_bookings ADD COLUMN IF NOT EXISTS actual_datetime TIMESTAMP WITH TIME ZONE;
+ALTER TABLE truck_bookings ADD COLUMN IF NOT EXISTS pickup_location TEXT;
 
 CREATE TABLE IF NOT EXISTS truck_booking_containers (
   id           SERIAL PRIMARY KEY,

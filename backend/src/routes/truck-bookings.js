@@ -29,7 +29,8 @@ async function loadBookingsByJob(client, jobId) {
   const { rows } = await client.query(`
     SELECT
       tb.id, tb.job_id, tb.transport_company_id, tb.transport_name,
-      tb.planned_datetime, tb.delivery_location, tb.cost, tb.vehicle_number,
+      tb.planned_datetime, tb.actual_datetime, tb.delivery_location,
+      tb.pickup_location, tb.cost, tb.vehicle_number,
       tb.notes, tb.completed_at, tb.created_at, tb.updated_at,
       tc.name AS transport_current_name,
       COALESCE((
@@ -55,7 +56,8 @@ async function loadBookingById(client, id) {
   const { rows } = await client.query(`
     SELECT
       tb.id, tb.job_id, tb.transport_company_id, tb.transport_name,
-      tb.planned_datetime, tb.delivery_location, tb.cost, tb.vehicle_number,
+      tb.planned_datetime, tb.actual_datetime, tb.delivery_location,
+      tb.pickup_location, tb.cost, tb.vehicle_number,
       tb.notes, tb.completed_at, tb.created_at, tb.updated_at,
       tc.name AS transport_current_name,
       COALESCE((
@@ -101,6 +103,7 @@ router.post('/', requireAuth, async (req, res) => {
   const {
     job_id, transport_company_id, planned_datetime, delivery_location,
     cost, container_ids, notes,
+    actual_datetime, pickup_location,
   } = req.body || {};
 
   if (!Number.isFinite(parseInt(job_id, 10))) {
@@ -170,14 +173,20 @@ router.post('/', requireAuth, async (req, res) => {
     }
 
     // Insert the booking. vehicle_number left NULL — DD fills when truck assigned.
+    // actual_datetime + pickup_location optional on create (filled later via PATCH).
     const { rows: bRows } = await client.query(
       `INSERT INTO truck_bookings
          (job_id, transport_company_id, transport_name,
-          planned_datetime, delivery_location, cost, notes, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+          planned_datetime, actual_datetime,
+          delivery_location, pickup_location,
+          cost, notes, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
        RETURNING id`,
       [job_id, transport_company_id, transport_name,
-       planned_datetime, delivery_location,
+       planned_datetime,
+       (actual_datetime === '' || actual_datetime == null) ? null : actual_datetime,
+       delivery_location,
+       (pickup_location === '' || pickup_location == null) ? null : pickup_location,
        (cost === '' || cost == null) ? null : cost,
        notes || null, req.user.id]
     );
@@ -210,7 +219,8 @@ router.post('/', requireAuth, async (req, res) => {
 //   value → NULL/'': completed_at = NULL (un-assign)
 //   value → value:   completed_at unchanged
 // container_ids NOT editable here — caller must DELETE + re-POST to re-shuffle.
-const PATCH_FIELDS = ['transport_company_id', 'planned_datetime', 'delivery_location',
+const PATCH_FIELDS = ['transport_company_id', 'planned_datetime', 'actual_datetime',
+                      'delivery_location', 'pickup_location',
                       'cost', 'vehicle_number', 'notes'];
 
 router.patch('/:id', requireAuth, async (req, res) => {
@@ -238,7 +248,7 @@ router.patch('/:id', requireAuth, async (req, res) => {
       if (req.body[f] === undefined) continue;
       let v = req.body[f];
       // Normalize empty strings to null for the nullable columns.
-      if (['cost', 'vehicle_number', 'notes'].includes(f)
+      if (['cost', 'vehicle_number', 'notes', 'actual_datetime', 'pickup_location'].includes(f)
           && (v === '' || v == null)) v = null;
       sets.push(`${f} = $${idx++}`); params.push(v);
     }

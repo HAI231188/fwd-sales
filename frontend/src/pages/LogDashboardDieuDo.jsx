@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import Navbar from '../components/Navbar';
 import JobDetailModal from '../components/JobDetailModal';
@@ -9,11 +9,13 @@ import DateRangeFilter from '../components/DateRangeFilter';
 import StaffSection, { DD_COLS as STAFF_DD_COLS } from '../components/StaffSection';
 import BBBGModal from '../components/BBBGModal';
 import BookingModal from '../components/BookingModal';
+import TransportPicker from '../components/TransportPicker';
 import toast from 'react-hot-toast';
-// Phase 4: TransportPicker no longer needed on DD main grid — bookings hold
-// carrier info via BookingModal. updateJobTruck + completeJobTruck removed.
+// Phase 4.1: TransportPicker + InlineInput RE-introduced on DD main grid —
+// inline edits target the FIRST booking via updateTruckBooking (vs Phase 4's
+// updateJobTruck which is gone for good).
 import { getJobStats, getJobs, requestJobDelete, createJob,
-         getTruckBookings, deleteTruckBooking } from '../api';
+         getTruckBookings, updateTruckBooking, deleteTruckBooking } from '../api';
 import {
   TRUCK_BOOKING_STATUS_LABELS, TRUCK_BOOKING_STATUS_SORT_RANK,
   TRUCK_BOOKING_ACTIVE_STATUSES, truckBookingPillStyle,
@@ -60,12 +62,66 @@ function StatCard({ label, value, color, onClick }) {
   );
 }
 
-// Phase 4: InlineInput removed — DD main grid is read-only; booking edits live
-// in the Quản lý đặt xe section via BookingModal.
+// Phase 4.1: InlineInput restored for the DD main grid. Single-click enters edit
+// mode; blur or Enter saves; Escape cancels. datetime-local auto-formats the
+// value on focus so users see the standard browser picker.
+function toDtLocal(val) {
+  if (!val) return '';
+  const d = new Date(val);
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+function InlineInput({ value, onSave, type = 'text', placeholder }) {
+  const [editing, setEditing] = useState(false);
+  const [val, setVal] = useState('');
+  const ref = useRef();
+  function start() {
+    setVal(type === 'datetime-local' ? toDtLocal(value) : (value == null ? '' : String(value)));
+    setEditing(true);
+    setTimeout(() => ref.current?.focus(), 0);
+  }
+  function save() {
+    setEditing(false);
+    const next = val === '' ? null : val;
+    const prev = value == null || value === '' ? null : (type === 'datetime-local' ? toDtLocal(value) : String(value));
+    if (next !== prev) onSave(next);
+  }
+  if (!editing) {
+    let display;
+    if (value == null || value === '') {
+      display = <span style={{ color: 'var(--text-3)' }}>—</span>;
+    } else if (type === 'datetime-local') {
+      display = new Date(value).toLocaleString('vi-VN', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' });
+    } else if (type === 'number') {
+      display = Number(value).toLocaleString('vi-VN');
+    } else {
+      display = value;
+    }
+    return (
+      <span onClick={start} title="Click để sửa"
+        style={{ cursor: 'pointer', borderBottom: '1px dashed var(--border)', fontSize: 12, display: 'inline-block', minWidth: 30, padding: '1px 0' }}>
+        {display}
+      </span>
+    );
+  }
+  return (
+    <input ref={ref} type={type === 'datetime-local' ? 'datetime-local' : type}
+      value={val} onChange={e => setVal(e.target.value)}
+      onBlur={save}
+      onKeyDown={e => {
+        if (e.key === 'Enter') { e.preventDefault(); save(); }
+        if (e.key === 'Escape') { setEditing(false); }
+      }}
+      placeholder={placeholder}
+      style={{ fontSize: 12, padding: '4px 6px', border: '1px solid var(--border)', borderRadius: 4, width: '100%', boxSizing: 'border-box' }}
+    />
+  );
+}
 
-// Phase 4: DD main grid is a read-only summary view. Booking edits happen in
-// the "Quản lý đặt xe" section above (one job → N bookings, can't fit inline).
-// Click a row → JobDetailModal opens for full audit.
+// Phase 4.1: DD main grid has inline edit on the FIRST booking again, plus
+// a per-row BBBG button. Bookings management (multi-booking) is still in the
+// Quản lý đặt xe section above and the bookings table in JobDetailModal.
+// Click a row → expand inline editing; double-click → open JobDetailModal.
 const DD_COLS = [
   { key: 'created_at',     label: 'Ngày' },
   { key: 'job_code',       label: 'Job',              filterType: 'text' },
@@ -75,10 +131,20 @@ const DD_COLS = [
   { key: 'cargo',          label: 'Cont / Tons' },
   { key: 'etd_eta',        label: 'ETD / ETA' },
   { key: 'han_lenh',       label: 'Hạn lệnh / Cutoff' },
-  { key: 'booking_status', label: 'Trạng thái đặt xe' },
+  { key: 'booking_status', label: 'Trạng thái' },
   { key: 'cont_coverage',  label: 'Cont' },
-  { key: 'booking_count',  label: 'Booking' },
+  { key: 'booking_count',  label: 'KH' },
+  // ─── Restored inline-edit columns (Phase 4.1 — first booking only) ───
+  { key: 'transport',      label: 'Tên vận tải',      filterType: 'text', accessor: j => j.first_booking_transport || '' },
+  { key: 'vehicle',        label: 'Số xe',            filterType: 'text', accessor: j => j.first_booking_vehicle || '' },
+  { key: 'planned_dt',     label: 'KH ngày giờ' },
+  { key: 'actual_dt',      label: 'TH ngày giờ' },
+  { key: 'pickup_loc',     label: 'Địa điểm lấy' },
+  { key: 'delivery_loc',   label: 'Địa điểm giao' },
+  { key: 'cost',           label: 'Cước' },
+  { key: 'notes',          label: 'Ghi chú' },
   { key: 'doi_lenh',       label: 'TT đổi lệnh' },
+  { key: 'bbbg',           label: 'BBBG' },
 ];
 
 export default function LogDashboardDieuDo() {
@@ -124,9 +190,19 @@ export default function LogDashboardDieuDo() {
     : pendingJobs;
   const isLoading = tab === 'completed' ? isLoadingCompleted : isLoadingPending;
 
-  // Phase 4: truckMut + completeMut removed. Booking edits go through BookingModal
-  // → updateTruckBooking / createTruckBooking. Job auto-completes when every
-  // booking has a vehicle_number (server-side trigger in PATCH /api/truck-bookings).
+  // Phase 4.1: truckMut restored — PATCHes the FIRST booking via
+  // updateTruckBooking(bookingId, data). The server still auto-completes the job
+  // when every booking has a vehicle_number (per checkAndCompleteJob in PATCH
+  // /api/truck-bookings). When a job has 2+ bookings the user must open
+  // JobDetailModal to edit the others; this row only edits booking #1.
+  const truckMut = useMutation({
+    mutationFn: ({ bookingId, data }) => updateTruckBooking(bookingId, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['jobs'] });
+      qc.invalidateQueries({ queryKey: ['jobStats'] });
+    },
+    onError: (err) => toast.error(err?.error || err?.message || 'Lỗi khi cập nhật'),
+  });
   const deleteReqMut = useMutation({
     mutationFn: ({ id, reason }) => requestJobDelete(id, reason),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['jobs'] }),
@@ -320,6 +396,34 @@ export default function LogDashboardDieuDo() {
                         </div>
                       </div>
 
+                      {/* Phase 4.1: first-booking transport summary on mobile (read-only;
+                          tap card → JobDetailModal → BookingsSection for edits) */}
+                      {j.first_booking_id && (
+                        <div style={{ background: 'var(--bg)', borderRadius: 8, padding: '8px 10px', marginBottom: 8, fontSize: 12 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 3 }}>
+                            <span style={{ color: 'var(--text-2)' }}>Vận tải:</span>
+                            <strong>{j.first_booking_transport || '—'}</strong>
+                            {j.truck_bookings_count > 1 && (
+                              <span style={{ background: 'rgba(124,58,237,0.12)', color: '#7c3aed', borderRadius: 6, padding: '1px 6px', fontSize: 10, fontWeight: 600 }}>
+                                +{j.truck_bookings_count - 1} KH khác
+                              </span>
+                            )}
+                          </div>
+                          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                            <span><span style={{ color: 'var(--text-2)' }}>Số xe:</span>{' '}
+                              {j.first_booking_vehicle
+                                ? <strong style={{ color: 'var(--primary)' }}>{j.first_booking_vehicle}</strong>
+                                : <span style={{ color: 'var(--warning)' }}>⏳ Chờ</span>}
+                            </span>
+                            <span><span style={{ color: 'var(--text-2)' }}>KH:</span>{' '}
+                              {j.first_booking_planned
+                                ? new Date(j.first_booking_planned).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+                                : '—'}
+                            </span>
+                          </div>
+                        </div>
+                      )}
+
                       {/* OPS done badge */}
                       <div style={{ fontSize: 12, color: 'var(--text-2)' }}>
                         OPS đổi lệnh:{' '}
@@ -333,15 +437,26 @@ export default function LogDashboardDieuDo() {
                   );
                 }}
                 renderRow={(j) => {
-                  // Phase 4: read-only summary. Booking-level edits live in the
-                  // Quản lý đặt xe section above. Click row → JobDetailModal.
+                  // Phase 4.1: inline-editable on the FIRST booking. Multi-booking
+                  // edits go via JobDetailModal → BookingsSection. Double-click
+                  // anywhere on the row opens JobDetailModal; single-click on an
+                  // input stays inside the cell (stopPropagation).
                   const cs = { padding: '8px 8px', verticalAlign: 'middle' };
                   const total = Array.isArray(j.containers) ? j.containers.length : 0;
                   const booked = j.truck_booked_containers_count || 0;
                   const imp = j.import_export === 'import';
+                  const isOpsRelevant = j.destination === 'hai_phong' &&
+                    (j.service_type === 'truck' || j.service_type === 'both');
+                  const isTruckJob = j.service_type === 'truck' || j.service_type === 'both';
+                  const hasBooking = !!j.first_booking_id;
+                  const stop = (e) => e.stopPropagation();
+                  const setField = (data) => {
+                    if (hasBooking) truckMut.mutate({ bookingId: j.first_booking_id, data });
+                  };
+                  const dash = <span style={{ color: 'var(--text-3)', fontSize: 12 }}>—</span>;
                   return (
                     <tr key={j.id} style={{ borderBottom: '1px solid var(--border)', cursor: 'pointer' }}
-                      onClick={() => setDetailJobId(j.id)}>
+                      onDoubleClick={() => setDetailJobId(j.id)}>
                       <td style={{ ...cs, whiteSpace: 'nowrap', fontSize: 12 }}>{fmtDate(j.created_at)}</td>
                       <td style={{ ...cs, whiteSpace: 'nowrap', fontWeight: 600, color: 'var(--info)' }}>{j.job_code || `#${j.id}`}</td>
                       <td style={{ ...cs, whiteSpace: 'nowrap', fontSize: 12, color: 'var(--text-2)' }}>{j.si_number || '—'}</td>
@@ -375,12 +490,90 @@ export default function LogDashboardDieuDo() {
                         {booked}/{total}
                       </td>
                       <td style={{ ...cs, fontWeight: 600 }}>{j.truck_bookings_count || 0}</td>
+
+                      {/* ─── Restored inline-edit columns (first booking only) ─── */}
+                      <td style={{ ...cs, minWidth: 150 }} onClick={stop}>
+                        {hasBooking ? (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
+                            <div style={{ flex: 1, minWidth: 110 }}>
+                              <TransportPicker
+                                value={{ transport_company_id: j.first_booking_transport_company_id, transport_name: j.first_booking_transport }}
+                                onChange={v => v.transport_company_id && setField({ transport_company_id: v.transport_company_id })}
+                                placeholder="Chọn vận tải..."
+                              />
+                            </div>
+                            {j.truck_bookings_count > 1 && (
+                              <span title={`Còn ${j.truck_bookings_count - 1} kế hoạch khác — mở chi tiết job để xem hết`}
+                                style={{ background: 'rgba(124,58,237,0.12)', color: '#7c3aed', borderRadius: 6, padding: '1px 6px', fontSize: 10, fontWeight: 600, whiteSpace: 'nowrap' }}>
+                                +{j.truck_bookings_count - 1} KH khác
+                              </span>
+                            )}
+                          </div>
+                        ) : dash}
+                      </td>
+                      <td style={{ ...cs, minWidth: 90 }} onClick={stop}>
+                        {hasBooking
+                          ? <InlineInput value={j.first_booking_vehicle} placeholder="VD: 29C-12345"
+                              onSave={v => setField({ vehicle_number: v })} />
+                          : dash}
+                      </td>
+                      <td style={{ ...cs, minWidth: 130 }} onClick={stop}>
+                        {hasBooking
+                          ? <InlineInput value={j.first_booking_planned} type="datetime-local"
+                              onSave={v => setField({ planned_datetime: v })} />
+                          : dash}
+                      </td>
+                      <td style={{ ...cs, minWidth: 130 }} onClick={stop}>
+                        {hasBooking
+                          ? <InlineInput value={j.first_booking_actual} type="datetime-local"
+                              onSave={v => setField({ actual_datetime: v })} />
+                          : dash}
+                      </td>
+                      <td style={{ ...cs, minWidth: 100 }} onClick={stop}>
+                        {hasBooking
+                          ? <InlineInput value={j.first_booking_pickup}
+                              onSave={v => setField({ pickup_location: v })} />
+                          : dash}
+                      </td>
+                      <td style={{ ...cs, minWidth: 110 }} onClick={stop}>
+                        {hasBooking
+                          ? <InlineInput value={j.first_booking_delivery}
+                              onSave={v => setField({ delivery_location: v })} />
+                          : dash}
+                      </td>
+                      <td style={{ ...cs, minWidth: 80 }} onClick={stop}>
+                        {hasBooking
+                          ? <InlineInput value={j.first_booking_cost} type="number"
+                              onSave={v => setField({ cost: v === null ? null : Number(v) })} />
+                          : dash}
+                      </td>
+                      <td style={{ ...cs, minWidth: 100 }} onClick={stop}>
+                        {hasBooking
+                          ? <InlineInput value={j.first_booking_notes}
+                              onSave={v => setField({ notes: v })} />
+                          : dash}
+                      </td>
+
                       <td style={{ ...cs, whiteSpace: 'nowrap' }}>
-                        {(j.destination === 'hai_phong' && (j.service_type === 'truck' || j.service_type === 'both'))
+                        {isOpsRelevant
                           ? j.ops_done
                             ? <span style={{ background: 'rgba(34,197,94,0.15)', color: '#16a34a', borderRadius: 6, padding: '2px 8px', fontSize: 11, fontWeight: 600 }}>Đã đổi</span>
                             : <span style={{ background: 'rgba(217,119,6,0.12)', color: '#b45309', borderRadius: 6, padding: '2px 8px', fontSize: 11, fontWeight: 600 }}>Chưa đổi</span>
                           : <span style={{ color: 'var(--text-3)' }}>—</span>}
+                      </td>
+
+                      <td style={{ ...cs, whiteSpace: 'nowrap' }} onClick={stop}>
+                        {hasBooking ? (
+                          <button className="btn btn-ghost btn-sm" style={{ fontSize: 11, padding: '3px 8px' }}
+                            onClick={() => setBbbgJob({ id: j.id, code: j.job_code, bookingId: j.first_booking_id })}>
+                            📄 BBBG
+                          </button>
+                        ) : isTruckJob ? (
+                          <button className="btn btn-primary btn-sm" style={{ fontSize: 11, padding: '3px 8px' }}
+                            onClick={() => setBookingModalState({ mode: 'create', jobId: j.id, jobCode: j.job_code })}>
+                            + Tạo kế hoạch
+                          </button>
+                        ) : dash}
                       </td>
                     </tr>
                   );
@@ -392,7 +585,7 @@ export default function LogDashboardDieuDo() {
       </div>
 
       {detailJobId && <JobDetailModal jobId={detailJobId} onClose={() => setDetailJobId(null)} />}
-      {bbbgJob && <BBBGModal jobId={bbbgJob.id} jobCode={bbbgJob.code} onClose={() => setBbbgJob(null)} />}
+      {bbbgJob && <BBBGModal jobId={bbbgJob.id} jobCode={bbbgJob.code} bookingId={bbbgJob.bookingId} onClose={() => setBbbgJob(null)} />}
       {showCreate && <CreateJobModal onClose={() => setShowCreate(false)} onCreated={data => createMut.mutateAsync(data)} />}
       {jobListFilter && (
         <JobListModal

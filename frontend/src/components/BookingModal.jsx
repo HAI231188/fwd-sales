@@ -37,6 +37,10 @@ export default function BookingModal({ mode, jobId, jobCode, booking, onClose, o
   const [plannedDt, setPlannedDt] = useState(
     isEdit ? toDatetimeLocal(booking?.planned_datetime) : ''
   );
+  const [actualDt, setActualDt] = useState(
+    isEdit ? toDatetimeLocal(booking?.actual_datetime) : ''
+  );
+  const [pickupLoc, setPickupLoc] = useState(isEdit ? (booking?.pickup_location || '') : '');
   const [deliveryLoc, setDeliveryLoc] = useState(isEdit ? (booking?.delivery_location || '') : '');
   const [cost, setCost] = useState(isEdit && booking?.cost != null ? String(booking.cost) : '');
   const [vehicleNumber, setVehicleNumber] = useState(isEdit ? (booking?.vehicle_number || '') : '');
@@ -83,6 +87,8 @@ export default function BookingModal({ mode, jobId, jobCode, booking, onClose, o
         const body = {
           transport_company_id: transport.transport_company_id,
           planned_datetime: plannedDt,
+          actual_datetime: actualDt === '' ? null : actualDt,
+          pickup_location: pickupLoc.trim() === '' ? null : pickupLoc.trim(),
           delivery_location: deliveryLoc.trim(),
           cost: cost === '' ? null : Number(cost),
           vehicle_number: vehicleNumber.trim() === '' ? null : vehicleNumber.trim(),
@@ -97,6 +103,8 @@ export default function BookingModal({ mode, jobId, jobCode, booking, onClose, o
           job_id: jobId,
           transport_company_id: transport.transport_company_id,
           planned_datetime: plannedDt,
+          actual_datetime: actualDt === '' ? null : actualDt,
+          pickup_location: pickupLoc.trim() === '' ? null : pickupLoc.trim(),
           delivery_location: deliveryLoc.trim(),
           cost: cost === '' ? null : Number(cost),
           container_ids: containerIds,
@@ -145,9 +153,24 @@ export default function BookingModal({ mode, jobId, jobCode, booking, onClose, o
 
           <div className="form-grid-2" style={{ marginBottom: 12 }}>
             <div>
-              <label style={lbl}>Ngày giờ giao *</label>
+              <label style={lbl}>KH ngày giờ giao *</label>
               <input type="datetime-local" style={inp}
                 value={plannedDt} onChange={e => setPlannedDt(e.target.value)} />
+            </div>
+            <div>
+              <label style={lbl}>TH ngày giờ giao (tuỳ chọn)</label>
+              <input type="datetime-local" style={inp}
+                value={actualDt} onChange={e => setActualDt(e.target.value)}
+                placeholder="Điền khi xe đã giao xong" />
+            </div>
+          </div>
+
+          <div className="form-grid-2" style={{ marginBottom: 12 }}>
+            <div>
+              <label style={lbl}>Địa điểm lấy (tuỳ chọn)</label>
+              <input style={inp} value={pickupLoc}
+                onChange={e => setPickupLoc(e.target.value)}
+                placeholder="VD: Cảng Cát Lái" />
             </div>
             <div>
               <label style={lbl}>Cước (tuỳ chọn)</label>
