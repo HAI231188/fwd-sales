@@ -438,6 +438,44 @@ Applies to: `jobs.han_lenh` (current). Future candidates: any field with semanti
 
 Applies to: `truck_bookings` + `truck_booking_containers` (current). Future candidates: any other 1:1-jobs-to-X relationship that grows multi-X semantics (e.g. multi-tờ-khai per job, multi-OPS-vendor per job).
 
+### L21 — Mobile-first responsive UI (Phase 1 baseline)
+
+**Every new UI feature MUST be responsive from day 1.** Apply the project's standard breakpoint scheme:
+
+| Tier | Range |
+|------|-------|
+| Desktop | ≥ 1024px |
+| Tablet  | 768–1023px |
+| Mobile  | < 768px |
+
+**Shared utilities live in `frontend/src/index.css`** — use them; do not redefine:
+- `.stat-grid` — dashboard stat-card grids (auto-fit minmax(180px, 1fr) on desktop, 1 col on mobile)
+- `.form-grid-2 / -3 / -4 / -5` — inner form grids in modals (N cols on desktop, 1 col on mobile)
+- `.navbar-desktop-items` / `.navbar-mobile-right` / `.navbar-hamburger` / `.navbar-mobile-menu` — hamburger swap at ≤768px (used only by `components/Navbar.jsx`)
+
+**Rules:**
+
+1. **New pages:** design mobile-first (375px), then enhance for desktop. Don't ship a desktop-only layout and "make it responsive later" — by L9 the audit catches the gap and forces a rewrite.
+2. **New modals:** use Pattern A — `<div className="modal-overlay"><div className="modal modal-lg">…`. Never inline `position: fixed; inset: 0; ...` — Pattern B bypasses the `@media (max-width: 768px)` bottom-sheet rule and loses mobile UX.
+3. **New stat grids:** use `.stat-grid` (not inline `gridTemplateColumns: repeat(N, 1fr)`).
+4. **New form grids inside modals:** use `.form-grid-N`. If you need a non-N proportional layout (e.g. `'90px 1fr 1fr'` for a label + 2 inputs), keep it inline but verify mobile readability — the `90px` chip + 2 narrow inputs is the only currently-accepted exception (`CreateJobModal.jsx:539`).
+5. **Touch targets:** keep tappable elements ≥ 36×36 px. The shared `.btn` class is fine; bare icon-only buttons need `padding: 8px` minimum.
+6. **Inputs in mobile contexts:** `width: 100%; max-width: <desktop-cap>; min-width: 0; box-sizing: border-box`. Never hard-pin `width: <px>` on inputs that may sit inside the mobile-menu dropdown.
+7. **Pop-out dropdowns** positioned via `getBoundingClientRect()` (e.g. GlobalSearch, NotificationBell): always cap with `maxWidth: 'min(<desktop-max>px, calc(100vw - 32px))'` so they never overflow the viewport.
+
+**What Phase 1 (2026-05-12) shipped — for context when reading older code:**
+- Navbar hamburger collapse at ≤768px (`components/Navbar.jsx`)
+- `.stat-grid` swap on all 5 dashboards
+- 4 modal converts: CustomerDetailModal, AddCustomerModal (success + main), CustomerJobsModal — Pattern B → Pattern A
+- `.form-grid-N` swaps in `CreateJobModal` (5/3/3), `BookingModal` (2), `BBBGModal` (5 grids)
+
+**Deferred to Phase 2 / 3** (do not retrofit unless explicitly scoped):
+- `JobDetailModal` split-pane (left info / right tabs) — load-bearing edit UX, stacks need a tab redesign
+- Big data tables (TP/Cus/Ops/DieuDo main grids) — keep horizontal scroll; introduce Card view per table on Phase 2
+- `CreateJobModal:539` 3-col cont detail row — accepted tight layout on mobile
+- `QuoteForm` 4-col PA option rows
+- Touch-friendly replacement for `title="..."` tooltips on `CustomerDataPage`
+
 ### Note — `jobs.import_export` (Loại lô)
 
 Two-value enum on `jobs`: `'export'` (Hàng xuất, default) or `'import'` (Hàng nhập). Selected at create time in `CreateJobModal` — pill segment in the TOP-ROW grid alongside Mã Job / Mã SI / Loại dịch vụ / Điểm đến (the earlier placement below the FCL/LCL toggle was easy to miss; do not move it back). CHECK constraint enforces values; column is `NOT NULL DEFAULT 'export'` so legacy rows auto-fill on `ADD COLUMN`. **Not editable post-create** — `PUT /api/jobs/:id` does not list it in `FIELDS`. Frontend displays a tiny badge (Xuất green / Nhập amber) in all 4 LOG dashboards' job lists, and a readonly Row in `JobDetailModal` "Thông tin chung" section.

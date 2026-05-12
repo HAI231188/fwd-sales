@@ -280,6 +280,53 @@ h1, h2, h3, h4 { font-family: var(--font-display); font-weight: 600; color: var(
   50% { box-shadow: 0 0 12px 2px rgba(217, 119, 6, 0.15); }
 }
 
+/* ─── Responsive utilities (Mobile Phase 1) ──────────────────────────────────
+ * Breakpoints: Desktop ≥1024px / Tablet 768-1023 / Mobile <768.
+ * All mobile rules use @media (max-width: 768px) to match existing convention.
+ */
+
+/* Stat-card grid — auto-fit on desktop, 1 col on mobile */
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 16px;
+}
+
+/* Form inner grids — N cols on desktop, 1 col on mobile */
+.form-grid-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+.form-grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.form-grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+.form-grid-5 { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; }
+
+/* Navbar hamburger menu (mobile only) */
+.navbar-hamburger {
+  display: none;
+  background: none; border: none; cursor: pointer;
+  font-size: 24px; line-height: 1; padding: 8px 10px;
+  color: var(--text);
+  border-radius: var(--radius-sm);
+}
+.navbar-hamburger:hover { background: var(--bg); }
+
+.navbar-mobile-right { display: none; }
+
+.navbar-mobile-menu {
+  display: none;
+  position: absolute; top: 100%; left: 0; right: 0;
+  background: #fff; border-top: 1px solid var(--border);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+  padding: 16px 20px;
+  z-index: 49;
+  flex-direction: column; gap: 12px;
+  animation: navMenuSlideIn 0.18s ease-out;
+}
+@keyframes navMenuSlideIn {
+  from { transform: translateY(-6px); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+
+.navbar-desktop-items { display: flex; align-items: center; gap: 8px; }
+
 /* Responsive */
 @media (max-width: 768px) {
   .grid-2, .grid-3, .grid-6 { grid-template-columns: 1fr; }
@@ -290,6 +337,19 @@ h1, h2, h3, h4 { font-family: var(--font-display); font-weight: 600; color: var(
   .container { padding: 0 16px; }
   .tabs { overflow-x: auto; }
   .tab { white-space: nowrap; }
+
+  /* Phase 1 utility collapses */
+  .stat-grid     { grid-template-columns: 1fr; }
+  .form-grid-2,
+  .form-grid-3,
+  .form-grid-4,
+  .form-grid-5   { grid-template-columns: 1fr; }
+
+  /* Navbar swap: hide desktop items, show hamburger + mobile menu */
+  .navbar-desktop-items { display: none; }
+  .navbar-mobile-right  { display: flex; align-items: center; gap: 4px; }
+  .navbar-hamburger     { display: inline-flex; align-items: center; justify-content: center; }
+  .navbar-mobile-menu   { display: flex; }
 }
 
 @media (max-width: 480px) {

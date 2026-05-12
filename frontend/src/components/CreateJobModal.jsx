@@ -255,7 +255,7 @@ export default function CreateJobModal({ onClose, onCreated }) {
 
           {/* Service + Loại lô + Destination — Loại lô sits inline so users
               cannot miss it (was buried below the FCL/LCL toggle previously). */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1.1fr 1.3fr 1fr', gap: 12 }}>
+          <div className="form-grid-5">
             <div className="form-group">
               <label className="form-label">Mã Job</label>
               <input className="form-input" value={form.job_code} onChange={e => set('job_code', e.target.value)} placeholder="VD: SLB-2024-001" />
@@ -504,7 +504,7 @@ export default function CreateJobModal({ onClose, onCreated }) {
                 <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)', marginBottom: 8 }}>
                   Số lượng cont theo loại
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+                <div className="form-grid-3" style={{ gap: 8 }}>
                   {CONT_TYPES.map(t => (
                     <div key={t} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <span style={{ minWidth: 48, fontWeight: 600, fontSize: 13, color: 'var(--text)' }}>{t}:</span>
@@ -573,7 +573,7 @@ export default function CreateJobModal({ onClose, onCreated }) {
           {cargoType === 'lcl' && (
             <div style={{ marginTop: 12 }}>
               <div style={{ marginBottom: 6, fontSize: 12, fontWeight: 600, color: 'var(--text-2)' }}>Thông tin hàng lẻ (LCL)</div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
+              <div className="form-grid-3" style={{ gap: 10 }}>
                 <div className="form-group">
                   <label className="form-label">Số kiện *</label>
                   <input type="number" className="form-input" value={form.so_kien}

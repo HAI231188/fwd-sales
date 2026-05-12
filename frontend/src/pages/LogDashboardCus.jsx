@@ -377,7 +377,7 @@ export default function LogDashboardCus() {
         </div>
 
         {/* Stat cards */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 24 }}>
+        <div className="stat-grid" style={{ marginBottom: 24 }}>
           <StatCard label="Tổng job đang làm" value={stats?.total_active} color="var(--info)" onClick={() => setJobListFilter('cus_active')} />
           <StatCard label="Chờ xác nhận" value={stats?.cho_xac_nhan} color="var(--warning)" onClick={() => setJobListFilter('cus_waiting_confirm')} />
           <StatCard label="Sắp hạn (24h)" value={stats?.sap_han} color="var(--warning)" onClick={() => setJobListFilter('cus_near_deadline')} />

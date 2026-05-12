@@ -143,7 +143,7 @@ export default function BookingModal({ mode, jobId, jobCode, booking, onClose, o
             />
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
+          <div className="form-grid-2" style={{ marginBottom: 12 }}>
             <div>
               <label style={lbl}>Ngày giờ giao *</label>
               <input type="datetime-local" style={inp}

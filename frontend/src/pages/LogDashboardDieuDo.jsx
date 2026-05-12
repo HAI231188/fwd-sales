@@ -152,7 +152,7 @@ export default function LogDashboardDieuDo() {
           <button className="btn btn-primary btn-sm" onClick={() => setShowCreate(true)}>+ Tạo Job Mới</button>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 24 }}>
+        <div className="stat-grid" style={{ marginBottom: 24 }}>
           {/* Card 1: Tổng job — 3 rows with per-row click */}
           <div className="card" style={{ padding: '14px 16px' }}>
             <div style={{ fontSize: 11, color: 'var(--text-2)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 10 }}>Tổng job truck đang xử lý</div>

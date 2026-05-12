@@ -326,7 +326,7 @@ export default function LeadDashboard() {
               <DateFilter {...pipelineDateFilter} />
 
               {/* Stage cards */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 24 }}>
+              <div className="stat-grid" style={{ marginBottom: 24 }}>
                 {STAGES.map(s => (
                   <div
                     key={s.key}

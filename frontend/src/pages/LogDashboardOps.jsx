@@ -284,7 +284,7 @@ export default function LogDashboardOps() {
           <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 20, margin: 0 }}>Dashboard OPS</h2>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12, marginBottom: 24 }}>
+        <div className="stat-grid" style={{ marginBottom: 24 }}>
           <StatCard label="Tổng job đang quản lý" value={stats?.total_managing} color="var(--info)" onClick={() => setJobListFilter('ops_total')} />
           <StatCard label="Chờ TQ đổi lệnh" value={stats?.cho_tq_doi_lenh} color="var(--purple)" onClick={() => setJobListFilter('ops_waiting_tq_doilenh')} />
           <StatCard label="Chờ đổi lệnh" value={stats?.cho_doi_lenh} color="var(--warning)" onClick={() => setJobListFilter('ops_waiting_doilenh')} />

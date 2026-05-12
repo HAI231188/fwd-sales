@@ -1,5 +1,6 @@
+import { useState, useRef, useEffect } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../App';
-import { useNavigate } from 'react-router-dom';
 import NotificationBell from './NotificationBell';
 import GlobalSearch from './GlobalSearch';
 
@@ -20,11 +21,45 @@ const ROLE_LABEL = {
 export default function Navbar() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+
+  const [menuOpen, setMenuOpen] = useState(false);
+  const mobileMenuRef = useRef(null);
+  const hamburgerRef = useRef(null);
 
   const handleLogout = () => {
+    setMenuOpen(false);
     logout();
     navigate('/login');
   };
+
+  // Close mobile menu on route change
+  useEffect(() => { setMenuOpen(false); }, [location.pathname]);
+
+  // Close mobile menu on click outside
+  useEffect(() => {
+    if (!menuOpen) return;
+    const handler = (e) => {
+      if (mobileMenuRef.current?.contains(e.target)) return;
+      if (hamburgerRef.current?.contains(e.target)) return;
+      setMenuOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [menuOpen]);
+
+  const goLogoHome = () => {
+    setMenuOpen(false);
+    if (user?.role === 'lead') navigate('/dashboard');
+    else if (LOG_ROLES.includes(user?.role)) navigate('/log-dashboard');
+    else navigate('/my-dashboard');
+  };
+
+  const showVansaiPill = user && (user.role === 'truong_phong_log' || user.role === 'dieu_do');
+  const showCustomersPill = user && (user.role === 'truong_phong_log' || user.role === 'lead');
+  const showAnyPill = showVansaiPill || showCustomersPill;
+  const showGlobalSearch = user && LOG_ROLES.includes(user.role);
+  const role = user && (ROLE_LABEL[user.role] || null);
 
   return (
     <nav style={{
@@ -33,14 +68,10 @@ export default function Navbar() {
       position: 'sticky', top: 0, zIndex: 50,
       boxShadow: '0 1px 4px rgba(0,0,0,0.06)',
     }}>
-      <div className="container" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: 60 }}>
-        {/* Logo */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}
-             onClick={() => {
-            if (user?.role === 'lead') navigate('/dashboard');
-            else if (LOG_ROLES.includes(user?.role)) navigate('/log-dashboard');
-            else navigate('/my-dashboard');
-          }}>
+      <div className="container" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: 60, gap: 12 }}>
+        {/* Logo — always visible */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', flexShrink: 0 }}
+             onClick={goLogoHome}>
           <div style={{
             width: 36, height: 36,
             background: 'linear-gradient(135deg, #22c55e, #16a34a)',
@@ -57,70 +88,154 @@ export default function Navbar() {
           </div>
         </div>
 
-        {/* Menu — TP/DD see vận tải; TP/Lead see Data khách hàng */}
-        {user && (user.role === 'truong_phong_log' || user.role === 'dieu_do' || user.role === 'lead') && (
-          <div style={{ display: 'flex', gap: 4 }}>
-            {(user.role === 'truong_phong_log' || user.role === 'dieu_do') && (
+        {/* Desktop items — hidden on mobile via .navbar-desktop-items */}
+        {user && (
+          <div className="navbar-desktop-items" style={{ flex: 1, justifyContent: 'flex-end' }}>
+            {/* Menu pills */}
+            {showAnyPill && (
+              <div style={{ display: 'flex', gap: 4 }}>
+                {showVansaiPill && (
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => navigate('/transport-companies')}
+                    style={{ fontSize: 12, padding: '5px 10px', color: '#6b7280' }}
+                    title="Quản lý vận tải"
+                  >
+                    🚚 Tên vận tải
+                  </button>
+                )}
+                {showCustomersPill && (
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => navigate('/customers')}
+                    style={{ fontSize: 12, padding: '5px 10px', color: '#6b7280' }}
+                    title="Data khách hàng"
+                  >
+                    👥 Data khách hàng
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* Global search — LOG team only */}
+            {showGlobalSearch && <GlobalSearch />}
+
+            {/* User info + actions */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <NotificationBell />
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div className="avatar" style={{ background: user.avatar_color }}>
+                  {user.code}
+                </div>
+                <div style={{ lineHeight: 1.3, display: 'flex', flexDirection: 'column' }}>
+                  <span style={{ fontSize: 14, fontWeight: 600, color: '#1f2937' }}>{user.name}</span>
+                  <span style={{ fontSize: 11, color: role?.color || '#22c55e', fontWeight: 500 }}>
+                    {role ? `${role.icon} ${role.text}` : user.role}
+                  </span>
+                </div>
+              </div>
+
               <button
                 className="btn btn-ghost btn-sm"
-                onClick={() => navigate('/transport-companies')}
-                style={{ fontSize: 12, padding: '5px 10px', color: '#6b7280' }}
-                title="Quản lý vận tải"
+                onClick={() => navigate('/change-password')}
+                title="Đổi mật khẩu"
+                style={{ marginLeft: 4, color: '#6b7280' }}
               >
-                🚚 Tên vận tải
+                🔑
               </button>
-            )}
-            {(user.role === 'truong_phong_log' || user.role === 'lead') && (
+
               <button
                 className="btn btn-ghost btn-sm"
-                onClick={() => navigate('/customers')}
-                style={{ fontSize: 12, padding: '5px 10px', color: '#6b7280' }}
-                title="Data khách hàng"
+                onClick={handleLogout}
+                style={{ color: '#6b7280' }}
               >
-                👥 Data khách hàng
+                Đăng xuất
               </button>
-            )}
+            </div>
           </div>
         )}
 
-        {/* Global search — LOG team only */}
-        {user && LOG_ROLES.includes(user.role) && <GlobalSearch />}
-
-        {/* User info + actions */}
+        {/* Mobile right — Bell + Hamburger (only visible on mobile via CSS) */}
         {user && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div className="navbar-mobile-right">
             <NotificationBell />
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <div className="avatar" style={{ background: user.avatar_color }}>
-                {user.code}
-              </div>
-              <div style={{ lineHeight: 1.3, display: 'flex', flexDirection: 'column' }}>
-                <span style={{ fontSize: 14, fontWeight: 600, color: '#1f2937' }}>{user.name}</span>
-                <span style={{ fontSize: 11, color: ROLE_LABEL[user.role]?.color || '#22c55e', fontWeight: 500 }}>
-                  {ROLE_LABEL[user.role] ? `${ROLE_LABEL[user.role].icon} ${ROLE_LABEL[user.role].text}` : user.role}
-                </span>
-              </div>
-            </div>
-
             <button
-              className="btn btn-ghost btn-sm"
-              onClick={() => navigate('/change-password')}
-              title="Đổi mật khẩu"
-              style={{ marginLeft: 4, color: '#6b7280' }}
+              ref={hamburgerRef}
+              className="navbar-hamburger"
+              onClick={() => setMenuOpen(v => !v)}
+              aria-label={menuOpen ? 'Đóng menu' : 'Mở menu'}
+              aria-expanded={menuOpen}
             >
-              🔑
-            </button>
-
-            <button
-              className="btn btn-ghost btn-sm"
-              onClick={handleLogout}
-              style={{ color: '#6b7280' }}
-            >
-              Đăng xuất
+              {menuOpen ? '✕' : '☰'}
             </button>
           </div>
         )}
       </div>
+
+      {/* Mobile dropdown menu — only on mobile, only when open */}
+      {user && menuOpen && (
+        <div ref={mobileMenuRef} className="navbar-mobile-menu">
+          {/* User identity */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, paddingBottom: 12, borderBottom: '1px solid var(--border)' }}>
+            <div className="avatar" style={{ background: user.avatar_color }}>{user.code}</div>
+            <div style={{ lineHeight: 1.3 }}>
+              <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)' }}>{user.name}</div>
+              <div style={{ fontSize: 11, color: role?.color || 'var(--primary)', fontWeight: 500 }}>
+                {role ? `${role.icon} ${role.text}` : user.role}
+              </div>
+            </div>
+          </div>
+
+          {/* GlobalSearch — LOG roles */}
+          {showGlobalSearch && (
+            <div style={{ width: '100%' }}>
+              <GlobalSearch />
+            </div>
+          )}
+
+          {/* Menu pills — stacked */}
+          {showAnyPill && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {showVansaiPill && (
+                <button
+                  className="btn btn-ghost"
+                  onClick={() => { setMenuOpen(false); navigate('/transport-companies'); }}
+                  style={{ fontSize: 13, justifyContent: 'flex-start', width: '100%' }}
+                >
+                  🚚 Tên vận tải
+                </button>
+              )}
+              {showCustomersPill && (
+                <button
+                  className="btn btn-ghost"
+                  onClick={() => { setMenuOpen(false); navigate('/customers'); }}
+                  style={{ fontSize: 13, justifyContent: 'flex-start', width: '100%' }}
+                >
+                  👥 Data khách hàng
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Actions */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, paddingTop: 4, borderTop: '1px solid var(--border)' }}>
+            <button
+              className="btn btn-ghost"
+              onClick={() => { setMenuOpen(false); navigate('/change-password'); }}
+              style={{ fontSize: 13, justifyContent: 'flex-start', width: '100%' }}
+            >
+              🔑 Đổi mật khẩu
+            </button>
+            <button
+              className="btn btn-ghost"
+              onClick={handleLogout}
+              style={{ fontSize: 13, justifyContent: 'flex-start', width: '100%', color: 'var(--danger)' }}
+            >
+              ↪ Đăng xuất
+            </button>
+          </div>
+        </div>
+      )}
     </nav>
   );
 }

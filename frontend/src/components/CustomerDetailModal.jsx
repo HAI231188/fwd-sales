@@ -747,19 +747,13 @@ export default function CustomerDetailModal({ pipelineId, onClose }) {
 
   return createPortal((
     <div
-      style={{
-        position: 'fixed', inset: 0, zIndex,
-        background: 'rgba(0,0,0,0.5)',
-        display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
-        padding: '32px 16px', overflowY: 'auto',
-      }}
+      className="modal-overlay"
+      style={{ zIndex, alignItems: 'flex-start', padding: '32px 16px', overflowY: 'auto' }}
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <div style={{
-        background: 'var(--bg-card)', borderRadius: 16,
-        width: '100%', maxWidth: 900,
+      <div className="modal" style={{
+        maxWidth: 900,
         boxShadow: '0 12px 48px rgba(0,0,0,0.22)',
-        display: 'flex', flexDirection: 'column',
         maxHeight: 'calc(100vh - 64px)',
       }}>
 

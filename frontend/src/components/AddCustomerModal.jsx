@@ -77,17 +77,12 @@ export default function AddCustomerModal({ onClose }) {
   if (savedCode) {
     return createPortal((
       <div
-        style={{
-          position: 'fixed', inset: 0, zIndex,
-          background: 'rgba(0,0,0,0.55)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          padding: '32px 16px',
-        }}
+        className="modal-overlay"
+        style={{ zIndex }}
         onClick={e => { if (e.target === e.currentTarget) onClose(); }}
       >
-        <div style={{
-          background: 'var(--bg-card)', borderRadius: 16,
-          width: '100%', maxWidth: 400,
+        <div className="modal" style={{
+          maxWidth: 400,
           boxShadow: '0 12px 48px rgba(0,0,0,0.22)',
           padding: '40px 32px', textAlign: 'center',
         }}>
@@ -117,17 +112,12 @@ export default function AddCustomerModal({ onClose }) {
 
   return createPortal((
     <div
-      style={{
-        position: 'fixed', inset: 0, zIndex,
-        background: 'rgba(0,0,0,0.55)',
-        display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
-        padding: '32px 16px', overflowY: 'auto',
-      }}
+      className="modal-overlay"
+      style={{ zIndex, alignItems: 'flex-start', padding: '32px 16px', overflowY: 'auto' }}
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <div style={{
-        background: 'var(--bg-card)', borderRadius: 16,
-        width: '100%', maxWidth: 580,
+      <div className="modal" style={{
+        maxWidth: 580,
         boxShadow: '0 12px 48px rgba(0,0,0,0.22)',
       }}>
         {/* Header */}

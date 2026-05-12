@@ -142,7 +142,7 @@ export default function BBBGModal({ jobId, jobCode, onClose }) {
           {form && (
             <>
               <Section title="Thông tin chung">
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                <div className="form-grid-2">
                   <Field label="Số lô hàng" en="Job ID">
                     <input className="form-input" value={form.job_code} onChange={e => set('job_code', e.target.value)} />
                   </Field>
@@ -181,7 +181,7 @@ export default function BBBGModal({ jobId, jobCode, onClose }) {
                   <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 6 }}>Chưa có container.</div>
                 )}
                 {form.containers.map((c, i) => (
-                  <div key={i} style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 2fr auto', gap: 6, marginBottom: 6 }}>
+                  <div key={i} className="form-grid-4" style={{ gap: 6, marginBottom: 6 }}>
                     <input className="form-input" placeholder="Số container" value={c.cont_number} onChange={e => updateContainer(i, 'cont_number', e.target.value)} />
                     <input className="form-input" placeholder="Loại"          value={c.cont_type}   onChange={e => updateContainer(i, 'cont_type',   e.target.value)} />
                     <input className="form-input" placeholder="Seal"          value={c.seal_number} onChange={e => updateContainer(i, 'seal_number', e.target.value)} />
@@ -192,7 +192,7 @@ export default function BBBGModal({ jobId, jobCode, onClose }) {
               </Section>
 
               <Section title="Hàng hóa">
-                <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 2fr', gap: 10 }}>
+                <div className="form-grid-4">
                   <Field label="Tên hàng hóa" en="Description">
                     <input className="form-input" value={form.description} onChange={e => set('description', e.target.value)} />
                   </Field>
@@ -212,7 +212,7 @@ export default function BBBGModal({ jobId, jobCode, onClose }) {
               </Section>
 
               <Section title="Thông tin xuất hóa đơn">
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                <div className="form-grid-2">
                   <Field label="Tên công ty (xuất HĐ)" en="Company name" span={2}>
                     <input className="form-input" value={form.invoice_company_name}
                       placeholder="VD: CÔNG TY CỔ PHẦN ABC VIỆT NAM"
@@ -241,7 +241,7 @@ export default function BBBGModal({ jobId, jobCode, onClose }) {
               </Section>
 
               <Section title="Giao hàng">
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                <div className="form-grid-2">
                   <Field label="Công ty nhận" en="Company" span={2}>
                     <input className="form-input" value={form.delivery_company} onChange={e => set('delivery_company', e.target.value)} />
                   </Field>

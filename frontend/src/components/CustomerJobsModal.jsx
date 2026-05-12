@@ -75,23 +75,15 @@ export default function CustomerJobsModal({ pipelineId, from, to, onClose }) {
 
   return createPortal(
     <div
+      className="modal-overlay"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
-      style={{
-        position: 'fixed', inset: 0,
-        background: 'rgba(0,0,0,0.5)',
-        display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
-        padding: 24, zIndex,
-      }}
+      style={{ zIndex, alignItems: 'flex-start', padding: 24 }}
     >
-      <div style={{
-        background: '#fff',
-        borderRadius: 12,
-        width: '100%',
+      <div className="modal" style={{
         maxWidth: 900,
         maxHeight: 'calc(100vh - 48px)',
         overflowY: 'auto',
         boxShadow: '0 12px 36px rgba(0,0,0,0.2)',
-        display: 'flex', flexDirection: 'column',
       }}>
         {/* Title bar */}
         <div style={{

@@ -186,7 +186,9 @@ export default function GlobalSearch() {
             onFocus={() => { if (debouncedQuery) setShowDropdown(true); }}
             placeholder={dateRangeSet ? 'Tìm kiếm...' : 'Vui lòng chọn khoảng thời gian'}
             style={{
-              width: 300,
+              width: '100%',
+              maxWidth: 300,
+              minWidth: 0,
               padding: '7px 10px 7px 30px',
               border: '1px solid var(--border)',
               borderRadius: 8,
@@ -194,6 +196,7 @@ export default function GlobalSearch() {
               background: dateRangeSet ? '#fff' : 'var(--bg)',
               color: dateRangeSet ? 'var(--text)' : 'var(--text-3)',
               outline: 'none',
+              boxSizing: 'border-box',
             }}
           />
         </div>
@@ -208,7 +211,7 @@ export default function GlobalSearch() {
             top:  rect.bottom + 4,
             left: rect.left,
             width: Math.max(rect.width, 480),
-            maxWidth: 600,
+            maxWidth: 'min(600px, calc(100vw - 32px))',
             maxHeight: 500,
             overflowY: 'auto',
             background: '#fff',

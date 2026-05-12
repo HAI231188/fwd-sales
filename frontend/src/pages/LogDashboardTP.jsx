@@ -530,7 +530,7 @@ export default function LogDashboardTP() {
         </div>
 
         {/* Stat cards */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 12, marginBottom: 24 }}>
+        <div className="stat-grid" style={{ marginBottom: 24 }}>
           <StatCard label="Tổng job pending" color="var(--info)"
             rows={[
               { label: 'Tổng pending',   value: stats?.total_pending, color: 'var(--info)',    onClick: () => setJobListFilter('pending') },
