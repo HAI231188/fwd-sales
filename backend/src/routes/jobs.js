@@ -722,6 +722,7 @@ router.get('/filtered', requireAuth, async (req, res) => {
     try {
       const { rows } = await db.query(`
         SELECT j.id, j.job_code, j.created_at, j.customer_name, j.deadline, j.han_lenh,
+               j.import_export,
                j.pol, j.pod, j.cont_number, j.service_type, j.si_number,
                ja.cus_id, cus.name AS cus_name,
                ja.ops_id, ops.name AS ops_name,
