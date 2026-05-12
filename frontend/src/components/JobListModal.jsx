@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { getFilteredJobs } from '../api';
 import JobDetailModal from './JobDetailModal';
 import { useModalZIndex } from '../hooks/useModalZIndex';
+import { TRUCK_BOOKING_STATUS_LABELS, truckBookingPillStyle } from '../utils/truckBookingStatus';
 
 const FILTER_TITLES = {
   // TP
@@ -26,6 +27,10 @@ const FILTER_TITLES = {
   truck_pending: 'Chưa hoàn thành',
   dd_co_kh_xe: 'Đã có KH xe',
   dd_chua_kh_xe: 'Chưa có KH xe',
+  // Phase 5 Step 1 — new DD card filters
+  dd_ke_hoach_da_dat:      'Kế hoạch đã đặt (job)',
+  dd_ke_hoach_chua_dat:    'Kế hoạch chưa đặt',
+  dd_kh_da_dat_chi_tiet:   'Kế hoạch đã đặt',
   dd_canh_bao_chua_van_tai: 'Cảnh báo: chưa có vận tải',
   dd_canh_bao_chua_doi_lenh: 'Cảnh báo: chưa đổi lệnh',
   dd_canh_bao_chua_hoan_thanh: 'Cảnh báo: chưa hoàn thành',
@@ -87,6 +92,19 @@ function deadlineStyle(dl, filterType) {
 }
 
 function getColumns(filterType) {
+  // Phase 5 Step 1: flat booking-level layout — one row per truck_booking.
+  if (filterType === 'dd_kh_da_dat_chi_tiet') {
+    return [
+      { key: 'job_code',                label: 'Số job' },
+      { key: 'customer_name',           label: 'Khách hàng' },
+      { key: 'cont_info',               label: 'Container' },
+      { key: 'planned_datetime',        label: 'KH ngày giờ' },
+      { key: 'truck_delivery_location', label: 'Địa điểm giao' },
+      { key: 'transport_name',          label: 'Vận tải' },
+      { key: 'vehicle_number',          label: 'Số xe' },
+      { key: 'booking_status',          label: 'Trạng thái' },
+    ];
+  }
   if (filterType?.startsWith('truck_') || filterType?.startsWith('dd_') || filterType?.startsWith('staff_dd_')) {
     return [
       { key: 'job_code',               label: 'Số job' },
@@ -174,9 +192,21 @@ function renderCell(key, j, filterType) {
     case 'tq_datetime':
       return <span style={{ fontSize: 12, color: 'var(--text-2)', whiteSpace: 'nowrap' }}>{fmtDt(j.tq_datetime)}</span>;
     case 'transport_name':
-      return <span style={{ fontSize: 12 }}>{j.transport_name || '—'}</span>;
+      return j.transport_name
+        ? <span style={{ fontSize: 12 }}>{j.transport_name}</span>
+        : <span style={{ fontSize: 11, color: 'var(--warning)', fontWeight: 600 }}>Chưa chốt</span>;
     case 'vehicle_number':
-      return <span style={{ fontSize: 12 }}>{j.vehicle_number || '—'}</span>;
+      return j.vehicle_number
+        ? <span style={{ fontSize: 12, color: 'var(--primary)', fontWeight: 600 }}>{j.vehicle_number}</span>
+        : <span style={{ color: 'var(--text-3)', fontSize: 12 }}>—</span>;
+    case 'cont_info':
+      return <span style={{ fontSize: 12, color: 'var(--text)' }}>{j.cont_info || '—'}</span>;
+    case 'booking_status':
+      return j.booking_status
+        ? <span style={truckBookingPillStyle(j.booking_status)}>
+            {TRUCK_BOOKING_STATUS_LABELS[j.booking_status] || j.booking_status}
+          </span>
+        : <span style={{ color: 'var(--text-3)', fontSize: 12 }}>—</span>;
     case 'planned_datetime':
       return <span style={{ fontSize: 12, color: 'var(--text-2)', whiteSpace: 'nowrap' }}>{fmtDt(j.planned_datetime)}</span>;
     case 'cost':

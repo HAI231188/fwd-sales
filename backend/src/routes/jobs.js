@@ -187,7 +187,24 @@ router.get('/stats', requireAuth, async (req, res) => {
       // get_truck_booking_status(j.id) so a single source of truth governs
       // staff stats + dashboard tabs + drilldowns.
       const BASE = `FROM jobs j JOIN job_assignments ja ON ja.job_id = j.id WHERE ja.dieu_do_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL`;
-      const [tongJob, coKhXe, chuaKhXe, datXe, canhBaoVanTai, canhBaoDoiLenh, canhBaoHoanThanh, sapHan, dieuDoStats] = await Promise.all([
+      // Phase 5 Step 1: container-level booked / unbooked counts. The pair is
+      // symmetric (EXISTS vs NOT EXISTS) and L5-locked to the drilldowns
+      // 'dd_ke_hoach_da_dat' / 'dd_ke_hoach_chua_dat' in /filtered below.
+      const CONT_BASE = `
+        FROM job_containers jc
+        JOIN jobs j ON j.id = jc.job_id
+        JOIN job_assignments ja ON ja.job_id = j.id
+        WHERE ja.dieu_do_id = $1
+          AND j.status = 'pending'
+          AND j.deleted_at IS NULL`;
+      const BOOKED_EXISTS = `
+        EXISTS (
+          SELECT 1 FROM truck_booking_containers tbc
+            JOIN truck_bookings tb ON tb.id = tbc.booking_id
+           WHERE tbc.container_id = jc.id AND tb.deleted_at IS NULL
+        )`;
+      const [tongJob, coKhXe, chuaKhXe, datXe, canhBaoVanTai, canhBaoDoiLenh, canhBaoHoanThanh, sapHan, dieuDoStats,
+             jobChuaHt, keHoachDaDat, keHoachChuaDat] = await Promise.all([
         db.query(`SELECT COUNT(*) AS v ${BASE}`, [userId]),
         db.query(`SELECT COUNT(*) AS v ${BASE} AND get_truck_booking_status(j.id) IN ('dat_xe_1_phan','da_dat_xe_du_cho_so_xe')`, [userId]),
         db.query(`SELECT COUNT(*) AS v ${BASE} AND get_truck_booking_status(j.id) = 'chua_dat_xe'`, [userId]),
@@ -197,6 +214,10 @@ router.get('/stats', requireAuth, async (req, res) => {
         db.query(`SELECT COUNT(*) AS v ${BASE} AND get_truck_booking_status(j.id) = 'da_dat_xe_du_cho_so_xe'`, [userId]),
         db.query(`SELECT COUNT(*) AS v ${BASE} AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '48 hours'`, [userId]),
         queryDieuDoStaffStats({ userId }),
+        // Phase 5 Step 1 — new counts driving Card 1.
+        db.query(`SELECT COUNT(DISTINCT j.id) AS v ${BASE}`, [userId]),
+        db.query(`SELECT COUNT(DISTINCT jc.id) AS v ${CONT_BASE} AND ${BOOKED_EXISTS}`, [userId]),
+        db.query(`SELECT COUNT(DISTINCT jc.id) AS v ${CONT_BASE} AND NOT ${BOOKED_EXISTS}`, [userId]),
       ]);
       const cv = r => parseInt(r.rows[0].v);
       res.json({
@@ -210,6 +231,10 @@ router.get('/stats', requireAuth, async (req, res) => {
         canh_bao_chua_hoan_thanh: cv(canhBaoHoanThanh),
         sap_han:                  cv(sapHan),
         dieu_do_stats:            dieuDoStats.rows,
+        // Phase 5 Step 1 — Card 1 redesign (job + container-level breakdown).
+        job_chua_hoan_thanh:      cv(jobChuaHt),
+        ke_hoach_da_dat:          cv(keHoachDaDat),
+        ke_hoach_chua_dat:        cv(keHoachChuaDat),
       });
     } else if (CUS_ROLES.includes(role)) {
       const [total, choXacNhan, sapHan, quaHan, cusStats] = await Promise.all([
@@ -748,6 +773,62 @@ router.get('/filtered', requireAuth, async (req, res) => {
     return res.status(403).json({ error: 'Không có quyền' });
   }
 
+  // ─── Phase 5 Step 1: booking-level drilldown (FLAT — one row per booking) ──
+  // Special-cased before the standard switch because the SELECT shape is
+  // different (truck_bookings as the row source rather than jobs). Aliases
+  // tb.job_id AS id so JobListModal's row click still opens JobDetailModal.
+  if (type === 'dd_kh_da_dat_chi_tiet') {
+    if (role !== 'dieu_do' && role !== 'truong_phong_log') {
+      return res.status(403).json({ error: 'Không có quyền' });
+    }
+    const bParams = [];
+    let bIdx = 1;
+    let bScope = '';
+    if (role === 'dieu_do') {
+      bScope = `AND ja.dieu_do_id = $${bIdx++}`;
+      bParams.push(userId);
+    }
+    try {
+      const { rows } = await db.query(`
+        SELECT
+          tb.id AS booking_id,
+          tb.job_id AS id,
+          j.job_code,
+          j.customer_name,
+          j.import_export,
+          j.han_lenh,
+          tb.transport_name,
+          tb.vehicle_number,
+          tb.planned_datetime,
+          tb.delivery_location AS truck_delivery_location,
+          tb.cost,
+          get_truck_booking_status(j.id) AS booking_status,
+          COALESCE((
+            SELECT string_agg(
+              COALESCE(jc.cont_number, '?') || ' (' || jc.cont_type || ')',
+              ', ' ORDER BY jc.id
+            )
+            FROM truck_booking_containers tbc
+            JOIN job_containers jc ON jc.id = tbc.container_id
+            WHERE tbc.booking_id = tb.id
+          ), '') AS cont_info
+        FROM truck_bookings tb
+        JOIN jobs j ON j.id = tb.job_id
+        LEFT JOIN LATERAL (
+          SELECT * FROM job_assignments WHERE job_id = j.id ORDER BY id DESC LIMIT 1
+        ) ja ON true
+        WHERE tb.deleted_at IS NULL
+          AND j.deleted_at IS NULL
+          AND j.status = 'pending'
+          ${bScope}
+        ORDER BY tb.planned_datetime ASC NULLS LAST, tb.id ASC
+      `, bParams);
+      return res.json(rows);
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
   switch (type) {
     // TP filters
     case 'warning':   extraWhere = `AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '48 hours'`; break;
@@ -767,6 +848,27 @@ router.get('/filtered', requireAuth, async (req, res) => {
     case 'truck_warning':    extraWhere = `AND get_truck_booking_status(j.id) <> 'da_giao_xong' AND j.han_lenh BETWEEN NOW() AND NOW() + INTERVAL '24 hours'`; break;
     case 'dd_co_kh_xe':      extraWhere = `AND get_truck_booking_status(j.id) IN ('dat_xe_1_phan','da_dat_xe_du_cho_so_xe')`; break;
     case 'dd_chua_kh_xe':    extraWhere = `AND get_truck_booking_status(j.id) = 'chua_dat_xe'`; break;
+    // Phase 5 Step 1: container-level coverage drilldowns. L5-locked to the
+    // ke_hoach_da_dat / ke_hoach_chua_dat stat counts above.
+    case 'dd_ke_hoach_da_dat':
+      extraWhere = `AND EXISTS (
+        SELECT 1 FROM job_containers jc
+          JOIN truck_booking_containers tbc ON tbc.container_id = jc.id
+          JOIN truck_bookings tb ON tb.id = tbc.booking_id
+         WHERE jc.job_id = j.id AND tb.deleted_at IS NULL
+      )`;
+      break;
+    case 'dd_ke_hoach_chua_dat':
+      extraWhere = `AND EXISTS (
+        SELECT 1 FROM job_containers jc
+         WHERE jc.job_id = j.id
+           AND NOT EXISTS (
+             SELECT 1 FROM truck_booking_containers tbc
+               JOIN truck_bookings tb ON tb.id = tbc.booking_id
+              WHERE tbc.container_id = jc.id AND tb.deleted_at IS NULL
+           )
+      )`;
+      break;
     case 'dd_canh_bao_chua_van_tai':   extraWhere = `AND get_truck_booking_status(j.id) = 'chua_dat_xe' AND j.han_lenh BETWEEN NOW() AND NOW() + INTERVAL '24 hours'`; break;
     case 'dd_canh_bao_chua_doi_lenh':  extraWhere = `AND get_truck_booking_status(j.id) IN ('dat_xe_1_phan','da_dat_xe_du_cho_so_xe') AND j.destination = 'hai_phong' AND COALESCE(ja.ops_done, FALSE) = FALSE`; break;
     case 'dd_canh_bao_chua_hoan_thanh':extraWhere = `AND get_truck_booking_status(j.id) = 'da_dat_xe_du_cho_so_xe'`; break;

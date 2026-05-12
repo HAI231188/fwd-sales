@@ -229,14 +229,15 @@ export default function LogDashboardDieuDo() {
         </div>
 
         <div className="stat-grid" style={{ marginBottom: 24 }}>
-          {/* Card 1: Tổng job — 3 rows with per-row click */}
+          {/* Card 1: Tổng job đang xử lý — Phase 5 Step 1 redesign.
+              Mixes job-level (top row) and container-level (rows 2 + 3) counts. */}
           <div className="card" style={{ padding: '14px 16px' }}>
-            <div style={{ fontSize: 11, color: 'var(--text-2)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 10 }}>Tổng job truck đang xử lý</div>
+            <div style={{ fontSize: 11, color: 'var(--text-2)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 10 }}>Tổng job đang xử lý</div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {[
-                { label: 'Tổng', value: stats?.tong_job, color: 'var(--info)', filter: 'truck_total' },
-                { label: 'Đã có KH xe', value: stats?.tong_co_kh_xe, color: 'var(--primary)', filter: 'dd_co_kh_xe' },
-                { label: 'Chưa có KH xe', value: stats?.tong_chua_kh_xe, color: 'var(--warning)', filter: 'dd_chua_kh_xe' },
+                { label: 'Job chưa hoàn thành', value: stats?.job_chua_hoan_thanh, color: 'var(--info)',    filter: 'truck_pending' },
+                { label: 'Kế hoạch đã đặt',     value: stats?.ke_hoach_da_dat,     color: 'var(--primary)', filter: 'dd_kh_da_dat_chi_tiet' },
+                { label: 'Kế hoạch chưa đặt',   value: stats?.ke_hoach_chua_dat,   color: 'var(--warning)', filter: 'dd_ke_hoach_chua_dat' },
               ].map(r => (
                 <div key={r.label} onClick={() => setJobListFilter(r.filter)}
                   style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '5px 8px', borderRadius: 8, background: `${r.color}12`, border: `1px solid ${r.color}30`, cursor: 'pointer' }}>
@@ -247,22 +248,7 @@ export default function LogDashboardDieuDo() {
             </div>
           </div>
 
-          {/* Card 2: Đã đặt xe — 2 rows */}
-          <div className="card" style={{ padding: '14px 16px' }}>
-            <div style={{ fontSize: 11, color: 'var(--text-2)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 10 }}>Đã đặt xe</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {[
-                { label: 'Có KH xe', value: stats?.da_dat_xe_co_kh, color: 'var(--primary)', filter: 'dd_co_kh_xe' },
-                { label: 'Có vận tải', value: stats?.da_dat_xe_da_dat, color: 'var(--info)', filter: 'truck_booked' },
-              ].map(r => (
-                <div key={r.label} onClick={() => setJobListFilter(r.filter)}
-                  style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '5px 8px', borderRadius: 8, background: `${r.color}12`, border: `1px solid ${r.color}30`, cursor: 'pointer' }}>
-                  <span style={{ fontSize: 11, color: r.color, fontWeight: 600 }}>{r.label}</span>
-                  <span style={{ fontSize: 20, fontWeight: 700, color: r.color, fontFamily: 'var(--font-display)' }}>{r.value ?? '—'}</span>
-                </div>
-              ))}
-            </div>
-          </div>
+          {/* Card 2 "Đã đặt xe" REMOVED (Phase 5 Step 1) — was duplicating Card 1 data. */}
 
           {/* Card 3: Cảnh báo — 3 rows */}
           <div className="card" style={{ padding: '14px 16px' }}>
