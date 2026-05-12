@@ -50,6 +50,18 @@ function deadlineStyle(dl) {
   return {};
 }
 
+// Phase 5 Step 1 add-on: per-day delivery bucket label for the
+// "Kế hoạch trả hàng" card. Reads BROWSER local time (= Vietnam tz in
+// practice). Format: "T3 13/05".
+function formatDayLabel(offset) {
+  const d = new Date();
+  d.setDate(d.getDate() + offset);
+  const weekday = ['CN','T2','T3','T4','T5','T6','T7'][d.getDay()];
+  const dd = String(d.getDate()).padStart(2, '0');
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  return `${weekday} ${dd}/${mm}`;
+}
+
 function StatCard({ label, value, color, onClick }) {
   return (
     <div className="card" onClick={onClick}
@@ -249,6 +261,28 @@ export default function LogDashboardDieuDo() {
           </div>
 
           {/* Card 2 "Đã đặt xe" REMOVED (Phase 5 Step 1) — was duplicating Card 1 data. */}
+
+          {/* Card 2 (new): Kế hoạch trả hàng — 7 rows, per-day bucket. */}
+          <div className="card" style={{ padding: '14px 16px' }}>
+            <div style={{ fontSize: 11, color: 'var(--text-2)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 10 }}>Kế hoạch trả hàng</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {[
+                { label: 'Quá hạn',                                  value: stats?.ke_hoach_qua_han, color: 'var(--danger)',  filter: 'dd_kh_qua_han' },
+                { label: `Hôm nay (${formatDayLabel(0)})`,           value: stats?.ke_hoach_hom_nay, color: 'var(--info)',    filter: 'dd_kh_today' },
+                { label: `Ngày mai (${formatDayLabel(1)})`,          value: stats?.ke_hoach_d1,      color: 'var(--text)',    filter: 'dd_kh_d1' },
+                { label: formatDayLabel(2),                          value: stats?.ke_hoach_d2,      color: 'var(--text)',    filter: 'dd_kh_d2' },
+                { label: formatDayLabel(3),                          value: stats?.ke_hoach_d3,      color: 'var(--text)',    filter: 'dd_kh_d3' },
+                { label: formatDayLabel(4),                          value: stats?.ke_hoach_d4,      color: 'var(--text)',    filter: 'dd_kh_d4' },
+                { label: formatDayLabel(5),                          value: stats?.ke_hoach_d5,      color: 'var(--text)',    filter: 'dd_kh_d5' },
+              ].map(r => (
+                <div key={r.label} onClick={() => setJobListFilter(r.filter)}
+                  style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '5px 8px', borderRadius: 8, background: `${r.color}12`, border: `1px solid ${r.color}30`, cursor: 'pointer' }}>
+                  <span style={{ fontSize: 11, color: r.color, fontWeight: 600 }}>{r.label}</span>
+                  <span style={{ fontSize: 18, fontWeight: 700, color: r.color, fontFamily: 'var(--font-display)' }}>{r.value ?? '—'}</span>
+                </div>
+              ))}
+            </div>
+          </div>
 
           {/* Card 3: Cảnh báo — 3 rows */}
           <div className="card" style={{ padding: '14px 16px' }}>

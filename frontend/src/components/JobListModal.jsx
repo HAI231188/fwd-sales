@@ -6,6 +6,34 @@ import JobDetailModal from './JobDetailModal';
 import { useModalZIndex } from '../hooks/useModalZIndex';
 import { TRUCK_BOOKING_STATUS_LABELS, truckBookingPillStyle } from '../utils/truckBookingStatus';
 
+// Phase 5 Step 1 add-on: 8 booking-level filterTypes share the same column set
+// + the same 3 tabs (Tất cả / Có vận tải / Chưa có vận tải). Date-bucket ones
+// also get a dynamic title.
+const BOOKING_LEVEL_FILTERS = [
+  'dd_kh_da_dat_chi_tiet',
+  'dd_kh_qua_han', 'dd_kh_today',
+  'dd_kh_d1', 'dd_kh_d2', 'dd_kh_d3', 'dd_kh_d4', 'dd_kh_d5',
+];
+
+function formatDayLabel(offset) {
+  const d = new Date();
+  d.setDate(d.getDate() + offset);
+  const weekday = ['CN','T2','T3','T4','T5','T6','T7'][d.getDay()];
+  const dd = String(d.getDate()).padStart(2, '0');
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  return `${weekday} ${dd}/${mm}`;
+}
+
+function resolveTitle(filterType) {
+  // Static fallback covers most filterTypes; date-bucket filters d2..d5 get
+  // a runtime title with the actual weekday + dd/mm.
+  if (filterType === 'dd_kh_d2') return `Kế hoạch ngày ${formatDayLabel(2)}`;
+  if (filterType === 'dd_kh_d3') return `Kế hoạch ngày ${formatDayLabel(3)}`;
+  if (filterType === 'dd_kh_d4') return `Kế hoạch ngày ${formatDayLabel(4)}`;
+  if (filterType === 'dd_kh_d5') return `Kế hoạch ngày ${formatDayLabel(5)}`;
+  return null;
+}
+
 const FILTER_TITLES = {
   // TP
   pending:          'Tổng job pending',
@@ -31,6 +59,11 @@ const FILTER_TITLES = {
   dd_ke_hoach_da_dat:      'Kế hoạch đã đặt (job)',
   dd_ke_hoach_chua_dat:    'Kế hoạch chưa đặt',
   dd_kh_da_dat_chi_tiet:   'Kế hoạch đã chốt',
+  // Phase 5 Step 1 add-on — Kế hoạch trả hàng per-day drilldowns.
+  dd_kh_qua_han:           'Kế hoạch quá hạn',
+  dd_kh_today:             'Kế hoạch hôm nay',
+  dd_kh_d1:                'Kế hoạch ngày mai',
+  // dd_kh_d2..d5 titles are resolved at render time via resolveTitle().
   dd_canh_bao_chua_van_tai: 'Cảnh báo: chưa có vận tải',
   dd_canh_bao_chua_doi_lenh: 'Cảnh báo: chưa đổi lệnh',
   dd_canh_bao_chua_hoan_thanh: 'Cảnh báo: chưa hoàn thành',
@@ -92,8 +125,9 @@ function deadlineStyle(dl, filterType) {
 }
 
 function getColumns(filterType) {
-  // Phase 5 Step 1: flat booking-level layout — one row per truck_booking.
-  if (filterType === 'dd_kh_da_dat_chi_tiet') {
+  // Phase 5 Step 1 + add-on: flat booking-level layout — one row per
+  // truck_booking. Same column set used by all 8 booking-level filterTypes.
+  if (BOOKING_LEVEL_FILTERS.includes(filterType)) {
     return [
       { key: 'job_code',                label: 'Số job' },
       { key: 'customer_name',           label: 'Khách hàng' },
@@ -252,12 +286,12 @@ export default function JobListModal({ filterType, staffId, staffName, onClose }
     queryFn: () => getFilteredJobs(filterType, staffId),
   });
 
-  const baseTitle = FILTER_TITLES[filterType] || filterType;
+  const baseTitle = resolveTitle(filterType) || FILTER_TITLES[filterType] || filterType;
   const title = staffName ? `${baseTitle} — ${staffName}` : baseTitle;
   const columns = getColumns(filterType);
 
   // Booking-tab client-side split (only meaningful for the booking-level view).
-  const isBookingTabView = filterType === 'dd_kh_da_dat_chi_tiet';
+  const isBookingTabView = BOOKING_LEVEL_FILTERS.includes(filterType);
   const withTransport    = isBookingTabView ? jobs.filter(j => j.transport_company_id != null) : [];
   const withoutTransport = isBookingTabView ? jobs.filter(j => j.transport_company_id == null) : [];
   const displayJobs = !isBookingTabView

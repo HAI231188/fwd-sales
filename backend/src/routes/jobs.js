@@ -203,8 +203,24 @@ router.get('/stats', requireAuth, async (req, res) => {
             JOIN truck_bookings tb ON tb.id = tbc.booking_id
            WHERE tbc.container_id = jc.id AND tb.deleted_at IS NULL
         )`;
+      // Phase 5 Step 1 add-on: per-day delivery buckets. Joins all the way
+      // through the booking link so each container's "planned delivery day"
+      // is read from its (single) active booking. Dates in Vietnam tz.
+      const BOOKED_CONT_BASE = `
+        FROM job_containers jc
+        JOIN jobs j ON j.id = jc.job_id
+        JOIN job_assignments ja ON ja.job_id = j.id
+        JOIN truck_booking_containers tbc ON tbc.container_id = jc.id
+        JOIN truck_bookings tb ON tb.id = tbc.booking_id
+        WHERE ja.dieu_do_id = $1
+          AND j.status = 'pending'
+          AND j.deleted_at IS NULL
+          AND tb.deleted_at IS NULL`;
+      const VN_BOOK_DATE = `(tb.planned_datetime AT TIME ZONE 'Asia/Ho_Chi_Minh')::date`;
+      const VN_TODAY     = `(NOW() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date`;
       const [tongJob, coKhXe, chuaKhXe, datXe, canhBaoVanTai, canhBaoDoiLenh, canhBaoHoanThanh, sapHan, dieuDoStats,
-             jobChuaHt, keHoachDaDat, keHoachChuaDat] = await Promise.all([
+             jobChuaHt, keHoachDaDat, keHoachChuaDat,
+             khQuaHan, khHomNay, khD1, khD2, khD3, khD4, khD5] = await Promise.all([
         db.query(`SELECT COUNT(*) AS v ${BASE}`, [userId]),
         db.query(`SELECT COUNT(*) AS v ${BASE} AND get_truck_booking_status(j.id) IN ('dat_xe_1_phan','da_dat_xe_du_cho_so_xe')`, [userId]),
         db.query(`SELECT COUNT(*) AS v ${BASE} AND get_truck_booking_status(j.id) = 'chua_dat_xe'`, [userId]),
@@ -218,6 +234,14 @@ router.get('/stats', requireAuth, async (req, res) => {
         db.query(`SELECT COUNT(DISTINCT j.id) AS v ${BASE}`, [userId]),
         db.query(`SELECT COUNT(DISTINCT jc.id) AS v ${CONT_BASE} AND ${BOOKED_EXISTS}`, [userId]),
         db.query(`SELECT COUNT(DISTINCT jc.id) AS v ${CONT_BASE} AND NOT ${BOOKED_EXISTS}`, [userId]),
+        // Phase 5 Step 1 add-on — Kế hoạch trả hàng (per-day delivery buckets).
+        db.query(`SELECT COUNT(DISTINCT jc.id) AS v ${BOOKED_CONT_BASE} AND ${VN_BOOK_DATE} <  ${VN_TODAY}`,        [userId]),
+        db.query(`SELECT COUNT(DISTINCT jc.id) AS v ${BOOKED_CONT_BASE} AND ${VN_BOOK_DATE} =  ${VN_TODAY}`,        [userId]),
+        db.query(`SELECT COUNT(DISTINCT jc.id) AS v ${BOOKED_CONT_BASE} AND ${VN_BOOK_DATE} = (${VN_TODAY} + 1)`,   [userId]),
+        db.query(`SELECT COUNT(DISTINCT jc.id) AS v ${BOOKED_CONT_BASE} AND ${VN_BOOK_DATE} = (${VN_TODAY} + 2)`,   [userId]),
+        db.query(`SELECT COUNT(DISTINCT jc.id) AS v ${BOOKED_CONT_BASE} AND ${VN_BOOK_DATE} = (${VN_TODAY} + 3)`,   [userId]),
+        db.query(`SELECT COUNT(DISTINCT jc.id) AS v ${BOOKED_CONT_BASE} AND ${VN_BOOK_DATE} = (${VN_TODAY} + 4)`,   [userId]),
+        db.query(`SELECT COUNT(DISTINCT jc.id) AS v ${BOOKED_CONT_BASE} AND ${VN_BOOK_DATE} = (${VN_TODAY} + 5)`,   [userId]),
       ]);
       const cv = r => parseInt(r.rows[0].v);
       res.json({
@@ -235,6 +259,14 @@ router.get('/stats', requireAuth, async (req, res) => {
         job_chua_hoan_thanh:      cv(jobChuaHt),
         ke_hoach_da_dat:          cv(keHoachDaDat),
         ke_hoach_chua_dat:        cv(keHoachChuaDat),
+        // Phase 5 Step 1 add-on — Kế hoạch trả hàng (per-day, Vietnam tz).
+        ke_hoach_qua_han:         cv(khQuaHan),
+        ke_hoach_hom_nay:         cv(khHomNay),
+        ke_hoach_d1:              cv(khD1),
+        ke_hoach_d2:              cv(khD2),
+        ke_hoach_d3:              cv(khD3),
+        ke_hoach_d4:              cv(khD4),
+        ke_hoach_d5:              cv(khD5),
       });
     } else if (CUS_ROLES.includes(role)) {
       const [total, choXacNhan, sapHan, quaHan, cusStats] = await Promise.all([
@@ -774,11 +806,16 @@ router.get('/filtered', requireAuth, async (req, res) => {
     return res.status(403).json({ error: 'Không có quyền' });
   }
 
-  // ─── Phase 5 Step 1: booking-level drilldown (FLAT — one row per booking) ──
-  // Special-cased before the standard switch because the SELECT shape is
-  // different (truck_bookings as the row source rather than jobs). Aliases
-  // tb.job_id AS id so JobListModal's row click still opens JobDetailModal.
-  if (type === 'dd_kh_da_dat_chi_tiet') {
+  // ─── Phase 5 Step 1 + add-on: booking-level drilldowns (FLAT — one row per
+  // booking). Shared SELECT shape; only the WHERE date predicate differs across
+  // the 8 booking-level filterTypes. Aliases tb.job_id AS id so JobListModal's
+  // row click still opens JobDetailModal for the parent job.
+  const BOOKING_LEVEL_TYPES = [
+    'dd_kh_da_dat_chi_tiet',
+    'dd_kh_qua_han', 'dd_kh_today',
+    'dd_kh_d1', 'dd_kh_d2', 'dd_kh_d3', 'dd_kh_d4', 'dd_kh_d5',
+  ];
+  if (BOOKING_LEVEL_TYPES.includes(type)) {
     if (role !== 'dieu_do' && role !== 'truong_phong_log') {
       return res.status(403).json({ error: 'Không có quyền' });
     }
@@ -788,6 +825,19 @@ router.get('/filtered', requireAuth, async (req, res) => {
     if (role === 'dieu_do') {
       bScope = `AND ja.dieu_do_id = $${bIdx++}`;
       bParams.push(userId);
+    }
+    const VN_BOOK_DATE = `(tb.planned_datetime AT TIME ZONE 'Asia/Ho_Chi_Minh')::date`;
+    const VN_TODAY     = `(NOW() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date`;
+    let dateWhere = '';
+    switch (type) {
+      case 'dd_kh_qua_han':  dateWhere = `AND ${VN_BOOK_DATE} <  ${VN_TODAY}`; break;
+      case 'dd_kh_today':    dateWhere = `AND ${VN_BOOK_DATE} =  ${VN_TODAY}`; break;
+      case 'dd_kh_d1':       dateWhere = `AND ${VN_BOOK_DATE} = (${VN_TODAY} + 1)`; break;
+      case 'dd_kh_d2':       dateWhere = `AND ${VN_BOOK_DATE} = (${VN_TODAY} + 2)`; break;
+      case 'dd_kh_d3':       dateWhere = `AND ${VN_BOOK_DATE} = (${VN_TODAY} + 3)`; break;
+      case 'dd_kh_d4':       dateWhere = `AND ${VN_BOOK_DATE} = (${VN_TODAY} + 4)`; break;
+      case 'dd_kh_d5':       dateWhere = `AND ${VN_BOOK_DATE} = (${VN_TODAY} + 5)`; break;
+      // 'dd_kh_da_dat_chi_tiet' — no date filter (all booked plans)
     }
     try {
       const { rows } = await db.query(`
@@ -823,6 +873,7 @@ router.get('/filtered', requireAuth, async (req, res) => {
           AND j.deleted_at IS NULL
           AND j.status = 'pending'
           ${bScope}
+          ${dateWhere}
         ORDER BY tb.planned_datetime ASC NULLS LAST, tb.id ASC
       `, bParams);
       return res.json(rows);
