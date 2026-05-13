@@ -169,6 +169,7 @@ function BookingsSection({ jobId, jobCode, customerName, truckBookingStatus, can
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
               <thead>
                 <tr style={{ background: '#fff', borderBottom: '1px solid var(--border)' }}>
+                  <th style={th}>Mã KH</th>
                   <th style={th}>Vận tải</th>
                   <th style={th}>Số xe</th>
                   <th style={th}>KH ngày giờ</th>
@@ -186,8 +187,17 @@ function BookingsSection({ jobId, jobCode, customerName, truckBookingStatus, can
                     .join(', ');
                   return (
                     <tr key={b.id} style={{ borderBottom: '1px solid var(--border)', background: '#fff' }}>
+                      <td style={{ ...td, whiteSpace: 'nowrap' }}>
+                        {b.booking_code ? (
+                          <span style={{ background: 'var(--primary-dim)', color: 'var(--primary)',
+                            borderRadius: 4, padding: '2px 6px', fontSize: 10, fontWeight: 600,
+                            fontFamily: 'var(--font-display)' }}>
+                            {b.booking_code}
+                          </span>
+                        ) : <span style={{ color: 'var(--text-3)' }}>—</span>}
+                      </td>
                       <td style={td}>
-                        <div style={{ fontWeight: 600 }}>{transportLive}</div>
+                        <div style={{ fontWeight: 600 }}>{transportLive || <span style={{ color: 'var(--text-3)', fontStyle: 'italic' }}>Chưa có vận tải</span>}</div>
                         {conts && (
                           <div style={{ fontSize: 10, color: 'var(--text-3)', marginTop: 2 }}>
                             Cont: {conts}

@@ -843,6 +843,7 @@ router.get('/filtered', requireAuth, async (req, res) => {
       const { rows } = await db.query(`
         SELECT
           tb.id AS booking_id,
+          tb.booking_code,
           tb.job_id AS id,
           j.job_code,
           j.customer_name,
@@ -1079,6 +1080,7 @@ router.get('/', requireAuth, async (req, res) => {
         -- DD main grid can inline-edit it without a second fetch. Pattern matches
         -- the bbbg-data LATERAL (earliest by planned_datetime, then id).
         tb_first.id                  AS first_booking_id,
+        tb_first.booking_code        AS first_booking_code,
         tb_first.transport_name      AS first_booking_transport,
         tb_first.vehicle_number      AS first_booking_vehicle,
         tb_first.planned_datetime    AS first_booking_planned,
@@ -1101,7 +1103,7 @@ router.get('/', requireAuth, async (req, res) => {
       LEFT JOIN job_truck jtr ON jtr.job_id = j.id
       LEFT JOIN transport_companies tc ON tc.id = jtr.transport_company_id
       LEFT JOIN LATERAL (
-        SELECT id, transport_company_id, transport_name, vehicle_number,
+        SELECT id, booking_code, transport_company_id, transport_name, vehicle_number,
                planned_datetime, actual_datetime,
                pickup_location, delivery_location, cost, notes
           FROM truck_bookings

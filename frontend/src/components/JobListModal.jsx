@@ -129,6 +129,7 @@ function getColumns(filterType) {
   // truck_booking. Same column set used by all 8 booking-level filterTypes.
   if (BOOKING_LEVEL_FILTERS.includes(filterType)) {
     return [
+      { key: 'booking_code',            label: 'Mã KH' },
       { key: 'job_code',                label: 'Số job' },
       { key: 'customer_name',           label: 'Khách hàng' },
       { key: 'cont_info',               label: 'Container' },
@@ -237,6 +238,14 @@ function renderCell(key, j, filterType) {
         : <span style={{ color: 'var(--text-3)', fontSize: 12 }}>—</span>;
     case 'cont_info':
       return <span style={{ fontSize: 12, color: 'var(--text)' }}>{j.cont_info || '—'}</span>;
+    case 'booking_code':
+      return j.booking_code
+        ? <span style={{ background: 'var(--primary-dim)', color: 'var(--primary)',
+            borderRadius: 4, padding: '2px 6px', fontSize: 10, fontWeight: 600,
+            fontFamily: 'var(--font-display)', whiteSpace: 'nowrap' }}>
+            {j.booking_code}
+          </span>
+        : <span style={{ color: 'var(--text-3)', fontSize: 12 }}>—</span>;
     case 'booking_status':
       return j.booking_status
         ? <span style={truckBookingPillStyle(j.booking_status)}>

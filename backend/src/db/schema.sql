@@ -592,6 +592,59 @@ ALTER TABLE truck_bookings ADD COLUMN IF NOT EXISTS pickup_location TEXT;
 ALTER TABLE truck_bookings ALTER COLUMN transport_name DROP NOT NULL;
 ALTER TABLE truck_bookings ADD COLUMN IF NOT EXISTS note TEXT;
 
+-- Phase 5 Step 3 — booking_code (Mã kế hoạch).
+-- Format "KH-{job_code}-{NN}", NN = 2-digit (or longer) sequential per job.
+-- The number space is permanent: soft-deleted bookings still occupy their
+-- number, so re-creating a booking after delete gets the next number, not
+-- a recycled one. Routes generate the next code at INSERT time by reading
+-- MAX(trailing digits) for the job, including soft-deleted rows.
+ALTER TABLE truck_bookings ADD COLUMN IF NOT EXISTS booking_code VARCHAR(50);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes
+     WHERE schemaname = 'public' AND indexname = 'idx_truck_bookings_booking_code_uniq'
+  ) THEN
+    CREATE UNIQUE INDEX idx_truck_bookings_booking_code_uniq
+      ON truck_bookings(booking_code) WHERE booking_code IS NOT NULL;
+  END IF;
+END $$;
+
+-- Backfill existing rows that still lack a code. Walk each job, start the
+-- sequence from MAX(existing numbered code) so any pre-coded rows aren't
+-- shadowed. Order uncoded rows by id so chronological creation order maps
+-- to NN=01, 02, ... within a job. Idempotent — re-runs are no-ops once
+-- every row has a code.
+DO $$
+DECLARE
+  job_rec RECORD;
+  bk_rec  RECORD;
+  seq     INT;
+BEGIN
+  FOR job_rec IN
+    SELECT DISTINCT j.id AS job_id, j.job_code
+      FROM jobs j
+      JOIN truck_bookings tb ON tb.job_id = j.id
+     WHERE tb.booking_code IS NULL
+       AND j.job_code IS NOT NULL
+       AND j.job_code <> ''
+  LOOP
+    SELECT COALESCE(MAX(substring(booking_code from '\d+$')::int), 0)
+      INTO seq
+      FROM truck_bookings
+     WHERE job_id = job_rec.job_id AND booking_code IS NOT NULL;
+    FOR bk_rec IN
+      SELECT id FROM truck_bookings
+       WHERE job_id = job_rec.job_id AND booking_code IS NULL
+       ORDER BY id
+    LOOP
+      seq := seq + 1;
+      UPDATE truck_bookings
+         SET booking_code = 'KH-' || job_rec.job_code || '-' || LPAD(seq::text, 2, '0')
+       WHERE id = bk_rec.id;
+    END LOOP;
+  END LOOP;
+END $$;
+
 CREATE TABLE IF NOT EXISTS truck_booking_containers (
   id           SERIAL PRIMARY KEY,
   booking_id   INTEGER NOT NULL REFERENCES truck_bookings(id) ON DELETE CASCADE,

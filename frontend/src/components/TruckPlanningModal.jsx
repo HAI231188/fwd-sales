@@ -1,0 +1,389 @@
+import { useState, useMemo, useEffect } from 'react';
+import { createPortal } from 'react-dom';
+import { useQuery } from '@tanstack/react-query';
+import toast from 'react-hot-toast';
+import {
+  getJob, getTruckBookings, updateTruckBooking, getTransportCompany,
+} from '../api';
+import TransportPicker from './TransportPicker';
+import { useModalZIndex } from '../hooks/useModalZIndex';
+import { useAuth } from '../App';
+
+// Phase 5 Step 3 — Quản lý đặt xe workspace.
+//
+// Vùng 1 (table): one row per container in the job. For containers WITH an
+// existing booking, DD can edit transport_company_id, cost, vehicle_number.
+// Other fields (booking_code, cont, delivery_location, planned_datetime,
+// han_lenh) are read-only. For containers WITHOUT a booking, the editable
+// inputs are disabled with a hint pointing users to PlanDeliveryModal first.
+//
+// Vùng 2 (cards): rows grouped by transport_company_id, live-derived from
+// Vùng 1's edit state via useMemo. Each card lists Mã KH + cont info and
+// has [Gửi mail kế hoạch] + [Xem preview] buttons. Email sending is a
+// mock for this part — toast says feature is under development. The
+// preview modal renders the mock email template (Phase 5 Step 3 spec).
+//
+// Save: per-row PATCH /api/truck-bookings/:id for each dirty row. The
+// backend re-snapshots transport_name on transport_company_id change (L13).
+
+function fmtPlanned(val) {
+  if (!val) return '—';
+  return new Date(val).toLocaleString('vi-VN', {
+    day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
+  });
+}
+function fmtHanLenh(val, impExp) {
+  if (!val) return '—';
+  if (impExp === 'import') {
+    return new Date(val).toLocaleDateString('vi-VN');
+  }
+  return new Date(val).toLocaleString('vi-VN', {
+    day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
+  });
+}
+
+export default function TruckPlanningModal({ jobId, jobCode, onClose }) {
+  const zIndex = useModalZIndex();
+  const { user } = useAuth() || {};
+  const [saving, setSaving] = useState(false);
+  const [previewGroup, setPreviewGroup] = useState(null);
+
+  const { data: job, isLoading: jobL } = useQuery({
+    queryKey: ['job', jobId],
+    queryFn: () => getJob(jobId),
+    enabled: !!jobId,
+  });
+  const { data: bookings = [], isLoading: bookingL, refetch: refetchBookings } = useQuery({
+    queryKey: ['truck-bookings', jobId],
+    queryFn: () => getTruckBookings(jobId),
+    enabled: !!jobId,
+  });
+
+  // Per-container rows. Match each container to its booking (if any).
+  const containers = job?.containers || [];
+  const initialRows = useMemo(() => {
+    return containers.map(c => {
+      const b = bookings.find(b => (b.containers || []).some(bc => bc.id === c.id));
+      return {
+        container_id: c.id,
+        cont_number: c.cont_number,
+        cont_type: c.cont_type,
+        booking_id: b?.id || null,
+        booking_code: b?.booking_code || null,
+        delivery_location: b?.delivery_location || '',
+        planned_datetime: b?.planned_datetime || '',
+        transport_company_id: b?.transport_company_id ?? null,
+        transport_name: b?.transport_current_name || b?.transport_name || '',
+        cost: b?.cost != null ? String(b.cost) : '',
+        vehicle_number: b?.vehicle_number || '',
+        dirty: false,
+      };
+    });
+  }, [containers, bookings]);
+
+  const [rows, setRows] = useState([]);
+  useEffect(() => { setRows(initialRows); }, [initialRows]);
+
+  function updateRow(idx, patch) {
+    setRows(rs => rs.map((r, i) => i === idx ? { ...r, ...patch, dirty: true } : r));
+  }
+
+  async function save() {
+    const dirty = rows.filter(r => r.dirty && r.booking_id);
+    if (dirty.length === 0) {
+      toast('Không có thay đổi để lưu', { icon: 'ℹ️' });
+      return;
+    }
+    setSaving(true);
+    try {
+      for (const r of dirty) {
+        await updateTruckBooking(r.booking_id, {
+          transport_company_id: r.transport_company_id,
+          cost: r.cost === '' ? null : Number(r.cost),
+          vehicle_number: r.vehicle_number,
+        });
+      }
+      toast.success(`Đã lưu ${dirty.length} kế hoạch`);
+      refetchBookings();
+    } catch (e) {
+      toast.error(e?.error || e?.message || 'Lỗi khi lưu');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // Vùng 2 grouping: live-derived from current rows. Only rows with a
+  // booking AND a chosen transport_company_id appear.
+  const groups = useMemo(() => {
+    const map = new Map();
+    for (const r of rows) {
+      if (!r.booking_id || !r.transport_company_id) continue;
+      const key = r.transport_company_id;
+      if (!map.has(key)) {
+        map.set(key, {
+          transport_company_id: key,
+          transport_name: r.transport_name || '(chưa snapshot)',
+          rows: [],
+        });
+      }
+      map.get(key).rows.push(r);
+    }
+    return Array.from(map.values());
+  }, [rows]);
+
+  const loading = jobL || bookingL;
+
+  return createPortal((
+    <div className="modal-overlay" style={{ zIndex }}
+      onClick={e => { if (e.target === e.currentTarget) onClose?.(); }}>
+      <div className="modal modal-xl" style={{ maxHeight: '94vh', display: 'flex', flexDirection: 'column' }}>
+        <div className="modal-header">
+          <h3 style={{ margin: 0, fontSize: 16 }}>
+            Quản lý đặt xe — Job {jobCode || `#${jobId}`}
+          </h3>
+          <button className="btn btn-ghost btn-sm btn-icon" onClick={onClose}>✕</button>
+        </div>
+
+        <div className="modal-body" style={{ padding: 16, overflowY: 'auto', flex: 1 }}>
+          {loading ? (
+            <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-3)' }}>
+              Đang tải...
+            </div>
+          ) : (
+            <>
+              <SectionTitle>Vùng 1: Bảng kế hoạch theo container</SectionTitle>
+              <Vung1Table rows={rows} job={job} onUpdateRow={updateRow} />
+
+              <div style={{ height: 16 }} />
+              <SectionTitle>Vùng 2: Mail gửi vận tải (theo nhóm)</SectionTitle>
+              {groups.length === 0 ? (
+                <div style={{ padding: 16, textAlign: 'center', color: 'var(--text-3)',
+                  fontSize: 13, background: 'var(--bg)', borderRadius: 8 }}>
+                  Chưa có vận tải nào được chốt. Vui lòng chọn vận tải ở bảng trên.
+                </div>
+              ) : (
+                <div style={{ display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 12 }}>
+                  {groups.map(g => (
+                    <TransportCard key={g.transport_company_id} group={g}
+                      onPreview={() => setPreviewGroup(g)}
+                      onMockSend={() => toast('Chức năng gửi mail đang được phát triển — sẽ làm trong phase tiếp', { icon: '🚧' })} />
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        <div className="modal-footer">
+          <button className="btn btn-ghost btn-sm" onClick={onClose} disabled={saving}>Đóng</button>
+          <button className="btn btn-primary btn-sm" onClick={save}
+            disabled={saving || loading || rows.every(r => !r.dirty)}>
+            {saving ? 'Đang lưu...' : 'Lưu thay đổi'}
+          </button>
+        </div>
+      </div>
+
+      {previewGroup && (
+        <EmailPreviewModal group={previewGroup} job={job} user={user}
+          onClose={() => setPreviewGroup(null)} />
+      )}
+    </div>
+  ), document.body);
+}
+
+function SectionTitle({ children }) {
+  return (
+    <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-2)',
+      textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>
+      {children}
+    </div>
+  );
+}
+
+function Vung1Table({ rows, job, onUpdateRow }) {
+  const impExp = job?.import_export;
+  const inp = { padding: '4px 6px', border: '1px solid var(--border)', borderRadius: 4,
+    fontSize: 12, width: '100%', minWidth: 0, boxSizing: 'border-box' };
+  const td = { padding: '8px 8px', verticalAlign: 'middle', fontSize: 12, borderBottom: '1px solid var(--border)' };
+  const th = { padding: '10px 8px', textAlign: 'left', fontWeight: 600,
+    color: 'var(--text-2)', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em',
+    background: 'var(--bg)', borderBottom: '2px solid var(--border)', whiteSpace: 'nowrap' };
+
+  return (
+    <div style={{ overflowX: 'auto', border: '1px solid var(--border)', borderRadius: 8 }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <thead>
+          <tr>
+            <th style={th}>Mã KH</th>
+            <th style={th}>Cont</th>
+            <th style={th}>Loại</th>
+            <th style={th}>Địa điểm giao</th>
+            <th style={th}>Ngày giờ giao</th>
+            <th style={th}>Hạn lệnh</th>
+            <th style={{ ...th, minWidth: 180 }}>Vận tải</th>
+            <th style={th}>Cước</th>
+            <th style={th}>Số xe</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r, idx) => {
+            const noBooking = !r.booking_id;
+            const hint = noBooking
+              ? 'Cần đặt kế hoạch trước (nút Đặt kế hoạch xe)'
+              : '';
+            return (
+              <tr key={r.container_id} style={{ background: noBooking ? 'rgba(156,163,175,0.04)' : '#fff' }}>
+                <td style={{ ...td, color: 'var(--text-2)', fontFamily: 'var(--font-display)',
+                  fontWeight: 600, whiteSpace: 'nowrap' }}>
+                  {r.booking_code || '—'}
+                </td>
+                <td style={{ ...td, fontWeight: 600 }}>{r.cont_number || '—'}</td>
+                <td style={td}>{r.cont_type}</td>
+                <td style={td}>{noBooking ? '—' : (r.delivery_location || '—')}</td>
+                <td style={{ ...td, whiteSpace: 'nowrap' }}>
+                  {noBooking ? '—' : fmtPlanned(r.planned_datetime)}
+                </td>
+                <td style={{ ...td, whiteSpace: 'nowrap' }}>
+                  {fmtHanLenh(job?.han_lenh, impExp)}
+                </td>
+                <td style={td} title={hint}>
+                  {noBooking ? (
+                    <span style={{ color: 'var(--text-3)', fontSize: 11, fontStyle: 'italic' }}>
+                      Cần đặt kế hoạch trước
+                    </span>
+                  ) : (
+                    <TransportPicker
+                      value={{
+                        transport_company_id: r.transport_company_id,
+                        transport_name: r.transport_name,
+                      }}
+                      onChange={v => onUpdateRow(idx, {
+                        transport_company_id: v.transport_company_id ?? null,
+                        transport_name: v.transport_name ?? '',
+                      })} />
+                  )}
+                </td>
+                <td style={td}>
+                  <input type="number" style={inp} disabled={noBooking}
+                    title={hint}
+                    value={r.cost}
+                    onChange={e => onUpdateRow(idx, { cost: e.target.value })} />
+                </td>
+                <td style={td}>
+                  <input type="text" style={inp} disabled={noBooking}
+                    title={hint}
+                    placeholder="VD: 29C-12345"
+                    value={r.vehicle_number}
+                    onChange={e => onUpdateRow(idx, { vehicle_number: e.target.value })} />
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function TransportCard({ group, onPreview, onMockSend }) {
+  // Mock status — Phase 5 Step 3 spec says always "Chưa gửi" until next part.
+  return (
+    <div className="card" style={{ padding: 14 }}>
+      <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 8,
+        display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+        <span>{group.transport_name}</span>
+        <span style={{ fontSize: 11, color: 'var(--text-2)', fontWeight: 500 }}>
+          {group.rows.length} cont
+        </span>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 10 }}>
+        {group.rows.map(r => (
+          <div key={r.container_id} style={{ fontSize: 12, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            <span style={{ padding: '1px 6px', background: 'var(--primary-dim)',
+              color: 'var(--primary)', borderRadius: 4, fontWeight: 600,
+              fontFamily: 'var(--font-display)', fontSize: 11 }}>
+              {r.booking_code || '—'}
+            </span>
+            <span style={{ color: 'var(--text)' }}>
+              {r.cont_number || '(chưa số)'} ({r.cont_type})
+              {r.planned_datetime ? ` — ${fmtPlanned(r.planned_datetime)}` : ''}
+              {r.delivery_location ? `, ${r.delivery_location}` : ''}
+              {r.cost ? `, ${Number(r.cost).toLocaleString('vi-VN')}đ` : ''}
+            </span>
+          </div>
+        ))}
+      </div>
+      <div style={{ fontSize: 11, color: 'var(--text-2)', marginBottom: 10 }}>
+        Trạng thái: <span style={{ color: 'var(--warning)', fontWeight: 600 }}>Chưa gửi</span>
+      </div>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+        <button className="btn btn-primary btn-sm" onClick={onMockSend}>
+          📧 Gửi mail kế hoạch
+        </button>
+        <button className="btn btn-ghost btn-sm" onClick={onPreview}>
+          👁 Xem preview
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function EmailPreviewModal({ group, job, user, onClose }) {
+  const zIndex = useModalZIndex();
+  const { data: tc } = useQuery({
+    queryKey: ['transport-company', group.transport_company_id],
+    queryFn: () => getTransportCompany(group.transport_company_id),
+    enabled: !!group.transport_company_id,
+  });
+  const ccList = useMemo(() => {
+    if (!tc?.email_cc) return [];
+    try {
+      const parsed = typeof tc.email_cc === 'string' ? JSON.parse(tc.email_cc) : tc.email_cc;
+      return Array.isArray(parsed) ? parsed : [];
+    } catch { return []; }
+  }, [tc?.email_cc]);
+
+  const subject = `[Kế hoạch giao xe] Job ${job?.job_code || `#${job?.id}`} - ${group.rows.length} kế hoạch`;
+
+  return createPortal((
+    <div className="modal-overlay" style={{ zIndex }}
+      onClick={e => { if (e.target === e.currentTarget) onClose?.(); }}>
+      <div className="modal modal-lg" style={{ maxHeight: '90vh' }}>
+        <div className="modal-header">
+          <h3 style={{ margin: 0, fontSize: 15 }}>👁 Preview mail — {group.transport_name}</h3>
+          <button className="btn btn-ghost btn-sm btn-icon" onClick={onClose}>✕</button>
+        </div>
+        <div className="modal-body" style={{ padding: 16, overflowY: 'auto' }}>
+          <div style={{ fontFamily: 'monospace', fontSize: 12, lineHeight: 1.7,
+            padding: 14, background: 'var(--bg)', borderRadius: 8, whiteSpace: 'pre-wrap' }}>
+{`To: ${tc?.email || '(chưa có)'}
+CC: ${ccList.length ? ccList.join(', ') : '(không có)'}
+Subject: ${subject}
+
+Kính gửi Quý nhà xe ${group.transport_name},
+
+Vui lòng sắp xếp xe cho các kế hoạch sau:
+
+${group.rows.map((r, i) =>
+`${i + 1}. [${r.booking_code || '—'}] Cont ${r.cont_number || '(chưa số)'} (${r.cont_type})
+   - Ngày giờ: ${fmtPlanned(r.planned_datetime)}
+   - Địa điểm giao: ${r.delivery_location || '—'}
+   - Cước chốt: ${r.cost ? Number(r.cost).toLocaleString('vi-VN') + 'đ' : '(chưa có)'}`
+).join('\n\n')}
+
+Vui lòng xác nhận và báo SỐ XE sớm.
+
+Đính kèm: BBBG (sẽ tự động generate khi gửi thật)
+
+Trân trọng,
+${user?.name || user?.code || 'Điều độ'}`}
+          </div>
+        </div>
+        <div className="modal-footer">
+          <button className="btn btn-ghost btn-sm" onClick={onClose}>Đóng</button>
+        </div>
+      </div>
+    </div>
+  ), document.body);
+}

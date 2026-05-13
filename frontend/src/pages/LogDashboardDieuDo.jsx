@@ -10,6 +10,7 @@ import StaffSection, { DD_COLS as STAFF_DD_COLS } from '../components/StaffSecti
 import BBBGModal from '../components/BBBGModal';
 import BookingModal from '../components/BookingModal';
 import PlanDeliveryModal from '../components/PlanDeliveryModal';
+import TruckPlanningModal from '../components/TruckPlanningModal';
 import TransportPicker from '../components/TransportPicker';
 import DateTimeInput24h from '../components/DateTimeInput24h';
 import toast from 'react-hot-toast';
@@ -172,9 +173,10 @@ export default function LogDashboardDieuDo() {
   // Quản lý đặt xe (Phase 3) state
   const [expandedBookingJobId, setExpandedBookingJobId] = useState(null);
   const [bookingModalState, setBookingModalState] = useState(null); // {mode, jobId, jobCode, booking?}
-  // Phase 5 Step 2 — "Đặt kế hoạch xe" target. Replaces the row-level
-  // "+ Tạo kế hoạch" trigger (BookingManagementSection still uses BookingModal).
+  // Phase 5 Step 2 — "Đặt kế hoạch xe" target (main grid + CUS/TP rows).
   const [planModalJob, setPlanModalJob] = useState(null); // {jobId, jobCode}
+  // Phase 5 Step 3 — "Quản lý đặt xe" target (BookingManagementSection row button).
+  const [planningJob, setPlanningJob] = useState(null); // {jobId, jobCode}
   const [deletingBooking, setDeletingBooking] = useState(null);     // {id, transport_name}
 
   useEffect(() => {
@@ -323,7 +325,7 @@ export default function LogDashboardDieuDo() {
         <BookingManagementSection
           jobs={pendingJobs}
           onOpenJob={(id) => setDetailJobId(id)}
-          onCreate={(j) => setBookingModalState({ mode: 'create', jobId: j.id, jobCode: j.job_code })}
+          onOpenPlanning={(j) => setPlanningJob({ jobId: j.id, jobCode: j.job_code })}
           onEdit={(j, b) => setBookingModalState({ mode: 'edit', jobId: j.id, jobCode: j.job_code, booking: b })}
           onDelete={(b) => setDeletingBooking({ id: b.id, transport_name: b.transport_name })}
           expanded={expandedBookingJobId}
@@ -517,9 +519,16 @@ export default function LogDashboardDieuDo() {
                       <td style={{ ...cs, fontWeight: 600 }}>{j.truck_bookings_count || 0}</td>
 
                       {/* ─── Restored inline-edit columns (first booking only) ─── */}
-                      <td style={{ ...cs, minWidth: 150 }} onClick={stop}>
+                      <td style={{ ...cs, minWidth: 180 }} onClick={stop}>
                         {hasBooking ? (
                           <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
+                            {j.first_booking_code && (
+                              <span style={{ background: 'var(--primary-dim)', color: 'var(--primary)',
+                                borderRadius: 4, padding: '1px 5px', fontSize: 10, fontWeight: 600,
+                                fontFamily: 'var(--font-display)', whiteSpace: 'nowrap' }}>
+                                {j.first_booking_code}
+                              </span>
+                            )}
                             <div style={{ flex: 1, minWidth: 110 }}>
                               <TransportPicker
                                 value={{ transport_company_id: j.first_booking_transport_company_id, transport_name: j.first_booking_transport }}
@@ -617,6 +626,11 @@ export default function LogDashboardDieuDo() {
           jobId={planModalJob.jobId} jobCode={planModalJob.jobCode}
           onClose={() => setPlanModalJob(null)} />
       )}
+      {planningJob && (
+        <TruckPlanningModal
+          jobId={planningJob.jobId} jobCode={planningJob.jobCode}
+          onClose={() => setPlanningJob(null)} />
+      )}
       {jobListFilter && (
         <JobListModal
           filterType={typeof jobListFilter === 'string' ? jobListFilter : jobListFilter.filterType}
@@ -659,7 +673,7 @@ export default function LogDashboardDieuDo() {
 // truck_booking_status needs DD action (chua_dat_xe / dat_xe_1_phan /
 // da_dat_xe_du_cho_so_xe). Status comes from backend get_truck_booking_status()
 // per L19/L20 — never recomputed client-side.
-function BookingManagementSection({ jobs, onOpenJob, onCreate, onEdit, onDelete, expanded, onToggleExpand }) {
+function BookingManagementSection({ jobs, onOpenJob, onOpenPlanning, onEdit, onDelete, expanded, onToggleExpand }) {
   const visible = (jobs || [])
     .filter(j => TRUCK_BOOKING_ACTIVE_STATUSES.includes(j.truck_booking_status))
     .sort((a, b) => {
@@ -711,7 +725,7 @@ function BookingManagementSection({ jobs, onOpenJob, onCreate, onEdit, onDelete,
                 return (
                   <BookingRow key={j.id} j={j} isOpen={isOpen} total={total} booked={booked}
                     ieBg={ieBg} ieFg={ieFg} imp={imp}
-                    onOpenJob={onOpenJob} onCreate={onCreate} onEdit={onEdit} onDelete={onDelete}
+                    onOpenJob={onOpenJob} onOpenPlanning={onOpenPlanning} onEdit={onEdit} onDelete={onDelete}
                     onToggleExpand={onToggleExpand} />
                 );
               })}
@@ -724,7 +738,7 @@ function BookingManagementSection({ jobs, onOpenJob, onCreate, onEdit, onDelete,
 }
 
 function BookingRow({ j, isOpen, total, booked, ieBg, ieFg, imp,
-                     onOpenJob, onCreate, onEdit, onDelete, onToggleExpand }) {
+                     onOpenJob, onOpenPlanning, onEdit, onDelete, onToggleExpand }) {
   const { data: bookings = [], isLoading } = useQuery({
     queryKey: ['truckBookings', j.id],
     queryFn: () => getTruckBookings(j.id),
@@ -769,8 +783,8 @@ function BookingRow({ j, isOpen, total, booked, ieBg, ieFg, imp,
         <td style={{ ...td, whiteSpace: 'nowrap', fontSize: 12 }}>{hl}</td>
         <td style={{ ...td, textAlign: 'right', whiteSpace: 'nowrap' }}>
           <button className="btn btn-primary btn-sm" style={{ fontSize: 11, padding: '3px 10px' }}
-            onClick={e => { e.stopPropagation(); onCreate(j); }}>
-            + Tạo kế hoạch
+            onClick={e => { e.stopPropagation(); onOpenPlanning(j); }}>
+            Quản lý đặt xe
           </button>
         </td>
       </tr>
@@ -781,7 +795,8 @@ function BookingRow({ j, isOpen, total, booked, ieBg, ieFg, imp,
               <div style={{ padding: 12, color: 'var(--text-3)', fontSize: 12 }}>Đang tải bookings...</div>
             ) : bookings.length === 0 ? (
               <div style={{ padding: 12, color: 'var(--text-3)', fontSize: 12, fontStyle: 'italic' }}>
-                Job này chưa có kế hoạch giao xe nào. Bấm "+ Tạo kế hoạch" để bắt đầu.
+                Job này chưa có kế hoạch giao xe nào. Bấm "Quản lý đặt xe" để mở workspace,
+                hoặc dùng "📅 Đặt kế hoạch xe" ở dashboard chính để tạo plan cho từng cont.
               </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -791,7 +806,14 @@ function BookingRow({ j, isOpen, total, booked, ieBg, ieFg, imp,
                     gap: 8, padding: '8px 10px', background: '#fff',
                     border: '1px solid var(--border)', borderRadius: 6, fontSize: 12, alignItems: 'center' }}>
                     <div>
-                      <div style={{ fontWeight: 600 }}>{b.transport_current_name || b.transport_name}</div>
+                      {b.booking_code && (
+                        <span style={{ padding: '1px 6px', background: 'var(--primary-dim)',
+                          color: 'var(--primary)', borderRadius: 4, fontWeight: 600,
+                          fontFamily: 'var(--font-display)', fontSize: 10, marginRight: 6 }}>
+                          {b.booking_code}
+                        </span>
+                      )}
+                      <div style={{ fontWeight: 600 }}>{b.transport_current_name || b.transport_name || <span style={{ color: 'var(--text-3)', fontStyle: 'italic' }}>Chưa có vận tải</span>}</div>
                       {b.transport_current_name && b.transport_current_name !== b.transport_name && (
                         <div style={{ fontSize: 10, color: 'var(--text-3)' }}>
                           snapshot: {b.transport_name}
