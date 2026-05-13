@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import {
   getTruckBookings, getAvailableContainers, getPastDeliveryLocations,
-  createTruckBookingsBatch, updateTruckBooking,
+  createTruckBookingsBatch, updateTruckBooking, deleteTruckBooking,
 } from '../api';
 import { useModalZIndex } from '../hooks/useModalZIndex';
 
@@ -54,6 +54,11 @@ export default function PlanDeliveryModal({ jobId, jobCode, onClose, onSaved }) 
 
   // Build rows: one per container. Booked containers pre-filled from existing
   // booking; available containers start empty.
+  //
+  // `enabled` defaults to TRUE for every row. User toggles off to skip that
+  // container — letting them plan partially and come back later. For existing
+  // bookings, toggling off and saving DELETES the booking (soft-delete on the
+  // server). For new rows, toggling off just excludes them from the batch.
   const initialRows = useMemo(() => {
     const rows = [];
     for (const b of bookings) {
@@ -67,6 +72,7 @@ export default function PlanDeliveryModal({ jobId, jobCode, onClose, onSaved }) 
           delivery_location: b.delivery_location || '',
           note: b.note || '',
           existing: true,
+          enabled: true,
           dirty: false,
         });
       }
@@ -81,6 +87,7 @@ export default function PlanDeliveryModal({ jobId, jobCode, onClose, onSaved }) 
         delivery_location: '',
         note: '',
         existing: false,
+        enabled: true,
         dirty: false,
       });
     }
@@ -97,20 +104,40 @@ export default function PlanDeliveryModal({ jobId, jobCode, onClose, onSaved }) 
     setRows(rs => rs.map((r, i) => i === idx ? { ...r, [field]: value, dirty: true } : r));
   }
 
+  function toggleRow(idx) {
+    setRows(rs => rs.map((r, i) => i === idx ? { ...r, enabled: !r.enabled } : r));
+  }
+
+  const enabledCount = rows.filter(r => r.enabled).length;
+
   async function submit() {
     setErr('');
+
+    // Validate ONLY enabled rows. Unchecked rows are skipped — that's the
+    // whole point of the checkbox: plan one container today, others later.
     for (let i = 0; i < rows.length; i++) {
       const r = rows[i];
+      if (!r.enabled) continue;
       if (!r.planned_datetime) { setErr(`Dòng ${i + 1}: vui lòng nhập ngày giờ giao`); return; }
       if (!String(r.delivery_location || '').trim()) {
         setErr(`Dòng ${i + 1}: vui lòng nhập địa điểm giao`); return;
       }
     }
 
+    if (enabledCount === 0) {
+      setErr('Vui lòng chọn ít nhất 1 container để đặt kế hoạch'); return;
+    }
+
     setSaving(true);
     try {
-      const newOnes = rows.filter(r => !r.existing);
-      const dirtyExisting = rows.filter(r => r.existing && r.dirty);
+      // Three groups derived from (existing × enabled):
+      //   enabled=T existing=F → batch CREATE (new planning row)
+      //   enabled=T existing=T dirty=T → PATCH (user edited an existing plan)
+      //   enabled=F existing=T → DELETE booking (user unchecked an existing plan)
+      // (enabled=F existing=F → no-op, never had a booking)
+      const newOnes = rows.filter(r => r.enabled && !r.existing);
+      const dirtyExisting = rows.filter(r => r.enabled && r.existing && r.dirty);
+      const toDelete = rows.filter(r => !r.enabled && r.existing && r.booking_id);
 
       if (newOnes.length > 0) {
         await createTruckBookingsBatch(newOnes.map(r => ({
@@ -128,6 +155,10 @@ export default function PlanDeliveryModal({ jobId, jobCode, onClose, onSaved }) 
           delivery_location: r.delivery_location.trim(),
           note: r.note?.trim() || null,
         });
+      }
+
+      for (const r of toDelete) {
+        await deleteTruckBooking(r.booking_id);
       }
 
       toast.success('Đã lưu kế hoạch');
@@ -171,7 +202,8 @@ export default function PlanDeliveryModal({ jobId, jobCode, onClose, onSaved }) 
               {rows.map((r, idx) => (
                 <PlanRow key={`${r.container_id}-${idx}`}
                   row={r} pastLocs={pastLocs}
-                  onChange={(f, v) => updateRow(idx, f, v)} />
+                  onChange={(f, v) => updateRow(idx, f, v)}
+                  onToggle={() => toggleRow(idx)} />
               ))}
             </div>
           )}
@@ -186,8 +218,8 @@ export default function PlanDeliveryModal({ jobId, jobCode, onClose, onSaved }) 
         <div className="modal-footer">
           <button className="btn btn-ghost btn-sm" onClick={onClose} disabled={saving}>Hủy</button>
           <button className="btn btn-primary btn-sm" onClick={submit}
-            disabled={saving || loading || rows.length === 0}>
-            {saving ? 'Đang lưu...' : 'Lưu kế hoạch'}
+            disabled={saving || loading || rows.length === 0 || enabledCount === 0}>
+            {saving ? 'Đang lưu...' : `Lưu kế hoạch${enabledCount > 0 && enabledCount < rows.length ? ` (${enabledCount}/${rows.length})` : ''}`}
           </button>
         </div>
       </div>
@@ -195,7 +227,7 @@ export default function PlanDeliveryModal({ jobId, jobCode, onClose, onSaved }) 
   ), document.body);
 }
 
-function PlanRow({ row, pastLocs, onChange }) {
+function PlanRow({ row, pastLocs, onChange, onToggle }) {
   const [showLocList, setShowLocList] = useState(false);
   const filteredLocs = useMemo(() => {
     const q = (row.delivery_location || '').trim().toLowerCase();
@@ -203,38 +235,59 @@ function PlanRow({ row, pastLocs, onChange }) {
     return pastLocs.filter(s => s.toLowerCase().includes(q));
   }, [pastLocs, row.delivery_location]);
 
-  const inp = { padding: '6px 8px', border: '1px solid var(--border)', borderRadius: 6, fontSize: 13, width: '100%', minWidth: 0, boxSizing: 'border-box' };
+  const off = !row.enabled;
+  const inp = {
+    padding: '6px 8px', border: '1px solid var(--border)', borderRadius: 6,
+    fontSize: 13, width: '100%', minWidth: 0, boxSizing: 'border-box',
+    background: off ? 'var(--bg)' : '#fff', color: off ? 'var(--text-3)' : 'var(--text)',
+  };
   const lbl = { fontSize: 12, color: 'var(--text-2)', marginBottom: 4, display: 'block', fontWeight: 600 };
 
   return (
-    <div style={{ padding: 12, border: '1px solid var(--border)', borderRadius: 8,
-      background: row.existing ? 'rgba(34,197,94,0.04)' : 'var(--bg)' }}>
+    <div style={{
+      padding: 12, border: '1px solid var(--border)', borderRadius: 8,
+      background: off ? 'rgba(156,163,175,0.06)' : (row.existing ? 'rgba(34,197,94,0.04)' : 'var(--bg)'),
+      opacity: off ? 0.72 : 1,
+    }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+        <label style={{
+          display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer',
+          fontSize: 12, color: 'var(--text-2)', fontWeight: 600,
+        }}>
+          <input type="checkbox" checked={row.enabled} onChange={onToggle}
+            style={{ width: 16, height: 16, cursor: 'pointer' }} />
+          Đặt cont này
+        </label>
+        <span style={{ width: 1, height: 16, background: 'var(--border)' }} />
         <strong style={{ fontSize: 13 }}>
           {row.cont_number || `(${row.cont_type} chưa nhập số)`}
         </strong>
         <span style={{ fontSize: 12, color: 'var(--text-2)' }}>({row.cont_type})</span>
-        {row.existing && (
+        {row.existing && row.enabled && (
           <span style={{ fontSize: 11, padding: '2px 6px', background: 'var(--primary-dim)',
             color: 'var(--primary)', borderRadius: 4 }}>Đã có kế hoạch</span>
+        )}
+        {row.existing && !row.enabled && (
+          <span style={{ fontSize: 11, padding: '2px 6px', background: 'rgba(239,68,68,0.10)',
+            color: 'var(--danger)', borderRadius: 4 }}>Bỏ chọn → sẽ xóa</span>
         )}
       </div>
       <div className="form-grid-3">
         <div>
           <label style={lbl}>Ngày giờ giao *</label>
-          <input type="datetime-local" style={inp}
+          <input type="datetime-local" style={inp} disabled={off}
             value={row.planned_datetime}
             onChange={e => onChange('planned_datetime', e.target.value)} />
         </div>
         <div style={{ position: 'relative' }}>
           <label style={lbl}>Địa điểm giao *</label>
-          <input style={inp}
+          <input style={inp} disabled={off}
             value={row.delivery_location}
             onChange={e => { onChange('delivery_location', e.target.value); setShowLocList(true); }}
             onFocus={() => setShowLocList(true)}
             onBlur={() => setTimeout(() => setShowLocList(false), 200)}
             placeholder="VD: Kho ABC, Hà Nội" />
-          {showLocList && filteredLocs.length > 0 && (
+          {!off && showLocList && filteredLocs.length > 0 && (
             <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 10,
               background: '#fff', border: '1px solid var(--border)', borderRadius: 6,
               boxShadow: '0 4px 16px rgba(0,0,0,0.12)', maxHeight: 200, overflowY: 'auto' }}>
@@ -250,7 +303,7 @@ function PlanRow({ row, pastLocs, onChange }) {
         </div>
         <div>
           <label style={lbl}>Ghi chú</label>
-          <input style={inp}
+          <input style={inp} disabled={off}
             value={row.note || ''}
             onChange={e => onChange('note', e.target.value)}
             placeholder="(tuỳ chọn)" />
