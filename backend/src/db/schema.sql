@@ -580,6 +580,18 @@ CREATE TABLE IF NOT EXISTS truck_bookings (
 ALTER TABLE truck_bookings ADD COLUMN IF NOT EXISTS actual_datetime TIMESTAMP WITH TIME ZONE;
 ALTER TABLE truck_bookings ADD COLUMN IF NOT EXISTS pickup_location TEXT;
 
+-- Phase 5 Step 2 — "Đặt kế hoạch xe": CUS/Sales/TPL/DD can plan a delivery
+-- (datetime + location + note) BEFORE a transport company is chosen. DD picks
+-- the carrier in a later step ("Quản lý đặt xe" workspace, Step 3).
+--   • transport_name: drop NOT NULL so planning rows can be created without a carrier.
+--     The snapshot is still written when DD assigns a carrier (PATCH path in L13).
+--     ALTER COLUMN ... DROP NOT NULL is itself idempotent in Postgres — no-op
+--     if already nullable, so safe to re-run on every deploy.
+--   • note: per-booking note from the PlanDeliveryModal form. Distinct from the
+--     existing `notes` column which carries DD's transport/carrier-side note.
+ALTER TABLE truck_bookings ALTER COLUMN transport_name DROP NOT NULL;
+ALTER TABLE truck_bookings ADD COLUMN IF NOT EXISTS note TEXT;
+
 CREATE TABLE IF NOT EXISTS truck_booking_containers (
   id           SERIAL PRIMARY KEY,
   booking_id   INTEGER NOT NULL REFERENCES truck_bookings(id) ON DELETE CASCADE,
