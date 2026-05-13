@@ -5,6 +5,7 @@ import Navbar from '../components/Navbar';
 import JobDetailModal from '../components/JobDetailModal';
 import CreateJobModal from '../components/CreateJobModal';
 import JobListModal from '../components/JobListModal';
+import PlanDeliveryModal from '../components/PlanDeliveryModal';
 import FilteredTable from '../components/FilteredTable';
 import DateRangeFilter from '../components/DateRangeFilter';
 import StaffSection, { CUS_COLS } from '../components/StaffSection';
@@ -270,6 +271,8 @@ export default function LogDashboardCus() {
   const [tab, setTab] = useState('pending');
   const [detailJobId, setDetailJobId] = useState(null);
   const [deadlineReqJob, setDeadlineReqJob] = useState(null);
+  // Phase 5 Step 2 — "Đặt kế hoạch xe" target. Button lives next to 🔍 on each row.
+  const [planModalJob, setPlanModalJob] = useState(null); // {jobId, jobCode}
   const [showCreate, setShowCreate] = useState(false);
   const [jobListFilter, setJobListFilter] = useState(null);
   const [completedRange, setCompletedRange] = useState({});
@@ -567,6 +570,8 @@ export default function LogDashboardCus() {
                                 }
                               }}>🗑</button>
                           )}
+                          <button className="btn btn-ghost btn-sm btn-icon" title="Đặt kế hoạch xe"
+                            onClick={() => setPlanModalJob({ jobId: j.id, jobCode: j.job_code })}>📅</button>
                           <button className="btn btn-ghost btn-sm btn-icon" title="Chi tiết"
                             onClick={() => setDetailJobId(j.id)}>🔍</button>
                         </td>
@@ -580,6 +585,11 @@ export default function LogDashboardCus() {
       </div>
 
       {detailJobId && <JobDetailModal jobId={detailJobId} onClose={() => setDetailJobId(null)} />}
+      {planModalJob && (
+        <PlanDeliveryModal
+          jobId={planModalJob.jobId} jobCode={planModalJob.jobCode}
+          onClose={() => setPlanModalJob(null)} />
+      )}
       {showCreate && <CreateJobModal onClose={() => setShowCreate(false)} onCreated={data => createMut.mutateAsync(data)} />}
       {jobListFilter && (
         <JobListModal

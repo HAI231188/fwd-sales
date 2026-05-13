@@ -9,6 +9,7 @@ import DateRangeFilter from '../components/DateRangeFilter';
 import StaffSection, { DD_COLS as STAFF_DD_COLS } from '../components/StaffSection';
 import BBBGModal from '../components/BBBGModal';
 import BookingModal from '../components/BookingModal';
+import PlanDeliveryModal from '../components/PlanDeliveryModal';
 import TransportPicker from '../components/TransportPicker';
 import toast from 'react-hot-toast';
 // Phase 4.1: TransportPicker + InlineInput RE-introduced on DD main grid —
@@ -170,6 +171,9 @@ export default function LogDashboardDieuDo() {
   // Quản lý đặt xe (Phase 3) state
   const [expandedBookingJobId, setExpandedBookingJobId] = useState(null);
   const [bookingModalState, setBookingModalState] = useState(null); // {mode, jobId, jobCode, booking?}
+  // Phase 5 Step 2 — "Đặt kế hoạch xe" target. Replaces the row-level
+  // "+ Tạo kế hoạch" trigger (BookingManagementSection still uses BookingModal).
+  const [planModalJob, setPlanModalJob] = useState(null); // {jobId, jobCode}
   const [deletingBooking, setDeletingBooking] = useState(null);     // {id, transport_name}
 
   useEffect(() => {
@@ -590,8 +594,8 @@ export default function LogDashboardDieuDo() {
                           </button>
                         ) : isTruckJob ? (
                           <button className="btn btn-primary btn-sm" style={{ fontSize: 11, padding: '3px 8px' }}
-                            onClick={() => setBookingModalState({ mode: 'create', jobId: j.id, jobCode: j.job_code })}>
-                            + Tạo kế hoạch
+                            onClick={() => setPlanModalJob({ jobId: j.id, jobCode: j.job_code })}>
+                            📅 Đặt kế hoạch xe
                           </button>
                         ) : dash}
                       </td>
@@ -607,6 +611,11 @@ export default function LogDashboardDieuDo() {
       {detailJobId && <JobDetailModal jobId={detailJobId} onClose={() => setDetailJobId(null)} />}
       {bbbgJob && <BBBGModal jobId={bbbgJob.id} jobCode={bbbgJob.code} bookingId={bbbgJob.bookingId} onClose={() => setBbbgJob(null)} />}
       {showCreate && <CreateJobModal onClose={() => setShowCreate(false)} onCreated={data => createMut.mutateAsync(data)} />}
+      {planModalJob && (
+        <PlanDeliveryModal
+          jobId={planModalJob.jobId} jobCode={planModalJob.jobCode}
+          onClose={() => setPlanModalJob(null)} />
+      )}
       {jobListFilter && (
         <JobListModal
           filterType={typeof jobListFilter === 'string' ? jobListFilter : jobListFilter.filterType}
