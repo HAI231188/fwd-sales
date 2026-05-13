@@ -86,7 +86,6 @@ function InlineInput({ value, onSave, type = 'text' }) {
   );
   return (
     <input ref={ref} type={type} value={val}
-      {...(type === 'datetime-local' ? { step: 1800 } : {})}
       onChange={e => setVal(e.target.value)}
       onBlur={save}
       onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') setEditing(false); }}
@@ -250,7 +249,7 @@ function DeadlineRequestModal({ job, onClose, onSubmit }) {
           </div>
           <div className="form-group" style={{ marginBottom: 12 }}>
             <label className="form-label">Deadline đề xuất</label>
-            <input type="datetime-local" step={1800} className="form-input" value={proposed} onChange={e => setProposed(e.target.value)} />
+            <input type="datetime-local" className="form-input" value={proposed} onChange={e => setProposed(e.target.value)} />
           </div>
           <div className="form-group">
             <label className="form-label">Lý do</label>

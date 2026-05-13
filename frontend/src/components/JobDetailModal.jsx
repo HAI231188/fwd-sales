@@ -10,6 +10,7 @@ import {
 import TransportPicker from './TransportPicker';
 import BookingModal from './BookingModal';
 import BBBGModal from './BBBGModal';
+import DateTimeInput24h from './DateTimeInput24h';
 import { useModalZIndex } from '../hooks/useModalZIndex';
 import { useAuth } from '../App';
 import { TRUCK_BOOKING_STATUS_LABELS, truckBookingPillStyle } from '../utils/truckBookingStatus';
@@ -292,7 +293,6 @@ function InlineInput({ value, onSave, type = 'text' }) {
   );
   return (
     <input ref={ref} type={type} value={val}
-      {...(type === 'datetime-local' ? { step: 1800 } : {})}
       onChange={e => setVal(e.target.value)}
       onBlur={save}
       onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') setEditing(false); }}
@@ -642,9 +642,9 @@ export default function JobDetailModal({ jobId, onClose }) {
                               value={(draft.han_lenh || '').slice(0, 10)}
                               onChange={e => setD('han_lenh', e.target.value)} />
                           ) : (
-                            <input style={INP} type="datetime-local" step={1800}
+                            <DateTimeInput24h
                               value={draft.han_lenh}
-                              onChange={e => setD('han_lenh', e.target.value)} />
+                              onChange={v => setD('han_lenh', v)} />
                           )}
                         </FRow>
                         <FRow label="Điểm đến">
@@ -682,7 +682,7 @@ export default function JobDetailModal({ jobId, onClose }) {
                         )}
                         {isTP && (
                           <FRow label="Deadline">
-                            <input style={INP} type="datetime-local" step={1800} value={draft.deadline} onChange={e => setD('deadline', e.target.value)} />
+                            <input style={INP} type="datetime-local" value={draft.deadline} onChange={e => setD('deadline', e.target.value)} />
                           </FRow>
                         )}
                         <FRow label="Trạng thái">

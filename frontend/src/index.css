@@ -141,13 +141,6 @@ h1, h2, h3, h4 { font-family: var(--font-display); font-weight: 600; color: var(
 .form-select option { background: #fff; color: var(--text); }
 .form-textarea { resize: vertical; min-height: 80px; }
 
-/* Datetime-local picker: hide AM/PM field (rely on 24h display).
-   Step is enforced separately via step="1800" (30 min) on the HTML attribute —
-   step alone hides seconds on most browsers; the CSS rule below ensures the
-   AM/PM column never renders even when system locale would default to 12h. */
-input[type="datetime-local"]::-webkit-datetime-edit-ampm-field { display: none; }
-input[type="datetime-local"]::-webkit-datetime-edit-hour-field { /* keep visible */ }
-
 /* Grid */
 .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }

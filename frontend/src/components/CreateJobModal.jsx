@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { useQuery } from '@tanstack/react-query';
 import { getLogStaff, searchJobCustomers } from '../api';
 import { useModalZIndex } from '../hooks/useModalZIndex';
+import DateTimeInput24h from './DateTimeInput24h';
 
 const CONT_TYPES = ['20DC','40DC','40HC','45HC','20RF','40RF'];
 const OTHER_SVC_KEYS = ['ktcl','kiem_dich','hun_trung','co','khac'];
@@ -608,7 +609,7 @@ export default function CreateJobModal({ onClose, onCreated }) {
           <div className="grid-2" style={{ gap: 12, marginTop: 12 }}>
             <div className="form-group">
               <label className="form-label">Deadline</label>
-              <input type="datetime-local" step={1800} className="form-input" value={form.deadline} onChange={e => set('deadline', e.target.value)} />
+              <input type="datetime-local" className="form-input" value={form.deadline} onChange={e => set('deadline', e.target.value)} />
             </div>
             <div className="form-group">
               {form.import_export === 'import' ? (
@@ -621,9 +622,9 @@ export default function CreateJobModal({ onClose, onCreated }) {
               ) : (
                 <>
                   <label className="form-label">Cutoff time *</label>
-                  <input type="datetime-local" step={1800} className="form-input"
+                  <DateTimeInput24h required
                     value={form.han_lenh}
-                    onChange={e => set('han_lenh', e.target.value)} />
+                    onChange={v => set('han_lenh', v)} />
                 </>
               )}
             </div>

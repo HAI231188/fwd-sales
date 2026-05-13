@@ -7,6 +7,7 @@ import {
   createTruckBookingsBatch, updateTruckBooking, deleteTruckBooking,
 } from '../api';
 import { useModalZIndex } from '../hooks/useModalZIndex';
+import DateTimeInput24h from './DateTimeInput24h';
 
 // Phase 5 Step 2 — "Đặt kế hoạch xe"
 //
@@ -275,9 +276,9 @@ function PlanRow({ row, pastLocs, onChange, onToggle }) {
       <div className="form-grid-3">
         <div>
           <label style={lbl}>Ngày giờ giao *</label>
-          <input type="datetime-local" step={1800} style={inp} disabled={off}
+          <DateTimeInput24h disabled={off}
             value={row.planned_datetime}
-            onChange={e => onChange('planned_datetime', e.target.value)} />
+            onChange={v => onChange('planned_datetime', v)} />
         </div>
         <div style={{ position: 'relative' }}>
           <label style={lbl}>Địa điểm giao *</label>

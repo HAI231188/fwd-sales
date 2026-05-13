@@ -11,6 +11,7 @@ import BBBGModal from '../components/BBBGModal';
 import BookingModal from '../components/BookingModal';
 import PlanDeliveryModal from '../components/PlanDeliveryModal';
 import TransportPicker from '../components/TransportPicker';
+import DateTimeInput24h from '../components/DateTimeInput24h';
 import toast from 'react-hot-toast';
 // Phase 4.1: TransportPicker + InlineInput RE-introduced on DD main grid —
 // inline edits target the FIRST booking via updateTruckBooking (vs Phase 4's
@@ -119,7 +120,6 @@ function InlineInput({ value, onSave, type = 'text', placeholder }) {
   }
   return (
     <input ref={ref} type={type === 'datetime-local' ? 'datetime-local' : type}
-      {...(type === 'datetime-local' ? { step: 1800 } : {})}
       value={val} onChange={e => setVal(e.target.value)}
       onBlur={save}
       onKeyDown={e => {
@@ -542,16 +542,16 @@ export default function LogDashboardDieuDo() {
                               onSave={v => setField({ vehicle_number: v })} />
                           : dash}
                       </td>
-                      <td style={{ ...cs, minWidth: 130 }} onClick={stop}>
+                      <td style={{ ...cs, minWidth: 180 }} onClick={stop}>
                         {hasBooking
-                          ? <InlineInput value={j.first_booking_planned} type="datetime-local"
-                              onSave={v => setField({ planned_datetime: v })} />
+                          ? <DateTimeInput24h value={j.first_booking_planned}
+                              onChange={v => { if (v) setField({ planned_datetime: v }); }} />
                           : dash}
                       </td>
-                      <td style={{ ...cs, minWidth: 130 }} onClick={stop}>
+                      <td style={{ ...cs, minWidth: 180 }} onClick={stop}>
                         {hasBooking
-                          ? <InlineInput value={j.first_booking_actual} type="datetime-local"
-                              onSave={v => setField({ actual_datetime: v })} />
+                          ? <DateTimeInput24h value={j.first_booking_actual}
+                              onChange={v => setField({ actual_datetime: v || null })} />
                           : dash}
                       </td>
                       <td style={{ ...cs, minWidth: 100 }} onClick={stop}>

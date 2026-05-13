@@ -7,6 +7,7 @@ import {
   getAvailableContainers, getPastDeliveryLocations,
 } from '../api';
 import TransportPicker from './TransportPicker';
+import DateTimeInput24h from './DateTimeInput24h';
 import { useModalZIndex } from '../hooks/useModalZIndex';
 
 // Create / edit one truck_booking.
@@ -154,14 +155,11 @@ export default function BookingModal({ mode, jobId, jobCode, booking, onClose, o
           <div className="form-grid-2" style={{ marginBottom: 12 }}>
             <div>
               <label style={lbl}>KH ngày giờ giao *</label>
-              <input type="datetime-local" step={1800} style={inp}
-                value={plannedDt} onChange={e => setPlannedDt(e.target.value)} />
+              <DateTimeInput24h value={plannedDt} onChange={setPlannedDt} required />
             </div>
             <div>
               <label style={lbl}>TH ngày giờ giao (tuỳ chọn)</label>
-              <input type="datetime-local" step={1800} style={inp}
-                value={actualDt} onChange={e => setActualDt(e.target.value)}
-                placeholder="Điền khi xe đã giao xong" />
+              <DateTimeInput24h value={actualDt} onChange={setActualDt} />
             </div>
           </div>
 
