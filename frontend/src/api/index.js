@@ -120,6 +120,11 @@ export const getTruckBookings = (jobId) =>
   api.get('/truck-bookings', { params: { job_id: jobId } });
 export const createTruckBooking = (body) =>
   api.post('/truck-bookings', body);
+// Phase 5 Step 2 — bulk create carrier-less bookings. Accepts array of
+// {job_id, container_id, planned_datetime, delivery_location, note}.
+// Server accepts {items: [...]} OR a bare array; we send {items: [...]}.
+export const createTruckBookingsBatch = (items) =>
+  api.post('/truck-bookings/batch', { items });
 export const updateTruckBooking = (id, body) =>
   api.patch(`/truck-bookings/${id}`, body);
 export const deleteTruckBooking = (id) =>
