@@ -181,7 +181,7 @@ function InlineDeadline({ value, onSave }) {
   );
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-      <input ref={ref} type="datetime-local" value={val} onChange={e => setVal(e.target.value)}
+      <input ref={ref} type="datetime-local" step={1800} value={val} onChange={e => setVal(e.target.value)}
         onBlur={save} onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') setEditing(false); }}
         style={{ padding: '2px 6px', border: '1px solid var(--primary)', borderRadius: 4, fontSize: 12 }} />
     </div>
@@ -328,7 +328,7 @@ function DeadlineModal({ data, onClose, onReview, onSetDeadline, onReviewDelete 
                       <div style={{ fontSize: 13, marginBottom: 10, color: 'var(--text-2)' }}>Lý do: {r.reason}</div>
                       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}
                         onClick={e => e.stopPropagation()}>
-                        <input type="datetime-local"
+                        <input type="datetime-local" step={1800}
                           value={overrides[r.id] !== undefined ? overrides[r.id] : toDatetimeLocal(r.proposed_deadline)}
                           onChange={e => setOverrides(p => ({ ...p, [r.id]: e.target.value }))}
                           style={{ padding: '4px 8px', border: '1px solid var(--border)', borderRadius: 6, fontSize: 13 }} />
@@ -379,7 +379,7 @@ function DeadlineModal({ data, onClose, onReview, onSetDeadline, onReviewDelete 
                       <span style={{ color: 'var(--text-3)', fontSize: 11, marginLeft: 8 }}>{fmtDate(j.created_at)}</span>
                     </div>
                     <div style={{ display: 'flex', gap: 8, alignItems: 'center' }} onClick={e => e.stopPropagation()}>
-                      <input type="datetime-local"
+                      <input type="datetime-local" step={1800}
                         value={overrides[`n_${j.job_id}`] || ''}
                         onChange={e => setOverrides(p => ({ ...p, [`n_${j.job_id}`]: e.target.value }))}
                         style={{ padding: '4px 8px', border: '1px solid var(--border)', borderRadius: 6, fontSize: 13 }} />

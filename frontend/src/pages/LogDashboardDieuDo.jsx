@@ -119,6 +119,7 @@ function InlineInput({ value, onSave, type = 'text', placeholder }) {
   }
   return (
     <input ref={ref} type={type === 'datetime-local' ? 'datetime-local' : type}
+      {...(type === 'datetime-local' ? { step: 1800 } : {})}
       value={val} onChange={e => setVal(e.target.value)}
       onBlur={save}
       onKeyDown={e => {

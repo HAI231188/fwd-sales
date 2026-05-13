@@ -608,7 +608,7 @@ export default function CreateJobModal({ onClose, onCreated }) {
           <div className="grid-2" style={{ gap: 12, marginTop: 12 }}>
             <div className="form-group">
               <label className="form-label">Deadline</label>
-              <input type="datetime-local" className="form-input" value={form.deadline} onChange={e => set('deadline', e.target.value)} />
+              <input type="datetime-local" step={1800} className="form-input" value={form.deadline} onChange={e => set('deadline', e.target.value)} />
             </div>
             <div className="form-group">
               {form.import_export === 'import' ? (
@@ -621,7 +621,7 @@ export default function CreateJobModal({ onClose, onCreated }) {
               ) : (
                 <>
                   <label className="form-label">Cutoff time *</label>
-                  <input type="datetime-local" className="form-input"
+                  <input type="datetime-local" step={1800} className="form-input"
                     value={form.han_lenh}
                     onChange={e => set('han_lenh', e.target.value)} />
                 </>

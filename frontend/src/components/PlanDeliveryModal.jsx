@@ -275,7 +275,7 @@ function PlanRow({ row, pastLocs, onChange, onToggle }) {
       <div className="form-grid-3">
         <div>
           <label style={lbl}>Ngày giờ giao *</label>
-          <input type="datetime-local" style={inp} disabled={off}
+          <input type="datetime-local" step={1800} style={inp} disabled={off}
             value={row.planned_datetime}
             onChange={e => onChange('planned_datetime', e.target.value)} />
         </div>

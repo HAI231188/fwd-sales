@@ -154,12 +154,12 @@ export default function BookingModal({ mode, jobId, jobCode, booking, onClose, o
           <div className="form-grid-2" style={{ marginBottom: 12 }}>
             <div>
               <label style={lbl}>KH ngày giờ giao *</label>
-              <input type="datetime-local" style={inp}
+              <input type="datetime-local" step={1800} style={inp}
                 value={plannedDt} onChange={e => setPlannedDt(e.target.value)} />
             </div>
             <div>
               <label style={lbl}>TH ngày giờ giao (tuỳ chọn)</label>
-              <input type="datetime-local" style={inp}
+              <input type="datetime-local" step={1800} style={inp}
                 value={actualDt} onChange={e => setActualDt(e.target.value)}
                 placeholder="Điền khi xe đã giao xong" />
             </div>

@@ -292,6 +292,7 @@ function InlineInput({ value, onSave, type = 'text' }) {
   );
   return (
     <input ref={ref} type={type} value={val}
+      {...(type === 'datetime-local' ? { step: 1800 } : {})}
       onChange={e => setVal(e.target.value)}
       onBlur={save}
       onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') setEditing(false); }}
@@ -641,7 +642,7 @@ export default function JobDetailModal({ jobId, onClose }) {
                               value={(draft.han_lenh || '').slice(0, 10)}
                               onChange={e => setD('han_lenh', e.target.value)} />
                           ) : (
-                            <input style={INP} type="datetime-local"
+                            <input style={INP} type="datetime-local" step={1800}
                               value={draft.han_lenh}
                               onChange={e => setD('han_lenh', e.target.value)} />
                           )}
@@ -681,7 +682,7 @@ export default function JobDetailModal({ jobId, onClose }) {
                         )}
                         {isTP && (
                           <FRow label="Deadline">
-                            <input style={INP} type="datetime-local" value={draft.deadline} onChange={e => setD('deadline', e.target.value)} />
+                            <input style={INP} type="datetime-local" step={1800} value={draft.deadline} onChange={e => setD('deadline', e.target.value)} />
                           </FRow>
                         )}
                         <FRow label="Trạng thái">
