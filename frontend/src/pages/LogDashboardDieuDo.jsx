@@ -326,6 +326,7 @@ export default function LogDashboardDieuDo() {
           jobs={pendingJobs}
           onOpenJob={(id) => setDetailJobId(id)}
           onOpenPlanning={(j) => setPlanningJob({ jobId: j.id, jobCode: j.job_code })}
+          onOpenPlan={(j) => setPlanModalJob({ jobId: j.id, jobCode: j.job_code })}
           onEdit={(j, b) => setBookingModalState({ mode: 'edit', jobId: j.id, jobCode: j.job_code, booking: b })}
           onDelete={(b) => setDeletingBooking({ id: b.id, transport_name: b.transport_name })}
           expanded={expandedBookingJobId}
@@ -597,16 +598,20 @@ export default function LogDashboardDieuDo() {
                       </td>
 
                       <td style={{ ...cs, whiteSpace: 'nowrap' }} onClick={stop}>
-                        {hasBooking ? (
-                          <button className="btn btn-ghost btn-sm" style={{ fontSize: 11, padding: '3px 8px' }}
-                            onClick={() => setBbbgJob({ id: j.id, code: j.job_code, bookingId: j.first_booking_id })}>
-                            📄 BBBG
-                          </button>
-                        ) : isTruckJob ? (
-                          <button className="btn btn-primary btn-sm" style={{ fontSize: 11, padding: '3px 8px' }}
-                            onClick={() => setPlanModalJob({ jobId: j.id, jobCode: j.job_code })}>
-                            📅 Đặt kế hoạch xe
-                          </button>
+                        {isTruckJob ? (
+                          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                            <button className="btn btn-primary btn-sm" style={{ fontSize: 11, padding: '3px 8px' }}
+                              onClick={() => setPlanModalJob({ jobId: j.id, jobCode: j.job_code })}
+                              title="Đặt kế hoạch xe (chọn ngày giờ + địa điểm + ghi chú cho từng cont)">
+                              📅 Đặt KH
+                            </button>
+                            {hasBooking && (
+                              <button className="btn btn-ghost btn-sm" style={{ fontSize: 11, padding: '3px 8px' }}
+                                onClick={() => setBbbgJob({ id: j.id, code: j.job_code, bookingId: j.first_booking_id })}>
+                                📄 BBBG
+                              </button>
+                            )}
+                          </div>
                         ) : dash}
                       </td>
                     </tr>
@@ -673,7 +678,7 @@ export default function LogDashboardDieuDo() {
 // truck_booking_status needs DD action (chua_dat_xe / dat_xe_1_phan /
 // da_dat_xe_du_cho_so_xe). Status comes from backend get_truck_booking_status()
 // per L19/L20 — never recomputed client-side.
-function BookingManagementSection({ jobs, onOpenJob, onOpenPlanning, onEdit, onDelete, expanded, onToggleExpand }) {
+function BookingManagementSection({ jobs, onOpenJob, onOpenPlanning, onOpenPlan, onEdit, onDelete, expanded, onToggleExpand }) {
   const visible = (jobs || [])
     .filter(j => TRUCK_BOOKING_ACTIVE_STATUSES.includes(j.truck_booking_status))
     .sort((a, b) => {
@@ -725,7 +730,8 @@ function BookingManagementSection({ jobs, onOpenJob, onOpenPlanning, onEdit, onD
                 return (
                   <BookingRow key={j.id} j={j} isOpen={isOpen} total={total} booked={booked}
                     ieBg={ieBg} ieFg={ieFg} imp={imp}
-                    onOpenJob={onOpenJob} onOpenPlanning={onOpenPlanning} onEdit={onEdit} onDelete={onDelete}
+                    onOpenJob={onOpenJob} onOpenPlanning={onOpenPlanning} onOpenPlan={onOpenPlan}
+                    onEdit={onEdit} onDelete={onDelete}
                     onToggleExpand={onToggleExpand} />
                 );
               })}
@@ -738,7 +744,7 @@ function BookingManagementSection({ jobs, onOpenJob, onOpenPlanning, onEdit, onD
 }
 
 function BookingRow({ j, isOpen, total, booked, ieBg, ieFg, imp,
-                     onOpenJob, onOpenPlanning, onEdit, onDelete, onToggleExpand }) {
+                     onOpenJob, onOpenPlanning, onOpenPlan, onEdit, onDelete, onToggleExpand }) {
   const { data: bookings = [], isLoading } = useQuery({
     queryKey: ['truckBookings', j.id],
     queryFn: () => getTruckBookings(j.id),
@@ -782,10 +788,17 @@ function BookingRow({ j, isOpen, total, booked, ieBg, ieFg, imp,
         <td style={{ ...td, fontWeight: 600 }}>{j.truck_bookings_count || 0}</td>
         <td style={{ ...td, whiteSpace: 'nowrap', fontSize: 12 }}>{hl}</td>
         <td style={{ ...td, textAlign: 'right', whiteSpace: 'nowrap' }}>
-          <button className="btn btn-primary btn-sm" style={{ fontSize: 11, padding: '3px 10px' }}
-            onClick={e => { e.stopPropagation(); onOpenPlanning(j); }}>
-            Quản lý đặt xe
-          </button>
+          <div style={{ display: 'inline-flex', gap: 4, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            <button className="btn btn-ghost btn-sm" style={{ fontSize: 11, padding: '3px 8px' }}
+              onClick={e => { e.stopPropagation(); onOpenPlan(j); }}
+              title="Đặt kế hoạch xe (chọn ngày giờ + địa điểm + ghi chú cho từng cont)">
+              📅 Đặt KH
+            </button>
+            <button className="btn btn-primary btn-sm" style={{ fontSize: 11, padding: '3px 10px' }}
+              onClick={e => { e.stopPropagation(); onOpenPlanning(j); }}>
+              Quản lý đặt xe
+            </button>
+          </div>
         </td>
       </tr>
       {isOpen && (

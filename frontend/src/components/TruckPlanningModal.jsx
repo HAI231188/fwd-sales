@@ -6,6 +6,7 @@ import {
   getJob, getTruckBookings, updateTruckBooking, getTransportCompany,
 } from '../api';
 import TransportPicker from './TransportPicker';
+import PlanDeliveryModal from './PlanDeliveryModal';
 import { useModalZIndex } from '../hooks/useModalZIndex';
 import { useAuth } from '../App';
 
@@ -47,6 +48,10 @@ export default function TruckPlanningModal({ jobId, jobCode, onClose }) {
   const { user } = useAuth() || {};
   const [saving, setSaving] = useState(false);
   const [previewGroup, setPreviewGroup] = useState(null);
+  // Phase 5 Step 3 — inline sub-modal: PlanDeliveryModal opened from a
+  // noBooking row. PlanDeliveryModal already invalidates the truck-bookings
+  // query on save, so our React Query refetches and the row becomes editable.
+  const [planSubOpen, setPlanSubOpen] = useState(false);
 
   const { data: job, isLoading: jobL } = useQuery({
     queryKey: ['job', jobId],
@@ -152,7 +157,8 @@ export default function TruckPlanningModal({ jobId, jobCode, onClose }) {
           ) : (
             <>
               <SectionTitle>Vùng 1: Bảng kế hoạch theo container</SectionTitle>
-              <Vung1Table rows={rows} job={job} onUpdateRow={updateRow} />
+              <Vung1Table rows={rows} job={job} onUpdateRow={updateRow}
+                onOpenPlanSub={() => setPlanSubOpen(true)} />
 
               <div style={{ height: 16 }} />
               <SectionTitle>Vùng 2: Mail gửi vận tải (theo nhóm)</SectionTitle>
@@ -188,6 +194,11 @@ export default function TruckPlanningModal({ jobId, jobCode, onClose }) {
         <EmailPreviewModal group={previewGroup} job={job} user={user}
           onClose={() => setPreviewGroup(null)} />
       )}
+
+      {planSubOpen && (
+        <PlanDeliveryModal jobId={jobId} jobCode={jobCode}
+          onClose={() => setPlanSubOpen(false)} />
+      )}
     </div>
   ), document.body);
 }
@@ -201,7 +212,7 @@ function SectionTitle({ children }) {
   );
 }
 
-function Vung1Table({ rows, job, onUpdateRow }) {
+function Vung1Table({ rows, job, onUpdateRow, onOpenPlanSub }) {
   const impExp = job?.import_export;
   const inp = { padding: '4px 6px', border: '1px solid var(--border)', borderRadius: 4,
     fontSize: 12, width: '100%', minWidth: 0, boxSizing: 'border-box' };
@@ -249,9 +260,11 @@ function Vung1Table({ rows, job, onUpdateRow }) {
                 </td>
                 <td style={td} title={hint}>
                   {noBooking ? (
-                    <span style={{ color: 'var(--text-3)', fontSize: 11, fontStyle: 'italic' }}>
-                      Cần đặt kế hoạch trước
-                    </span>
+                    <button className="btn btn-ghost btn-sm" style={{ fontSize: 11, padding: '3px 8px' }}
+                      onClick={onOpenPlanSub}
+                      title="Mở 'Đặt kế hoạch xe' để chốt ngày giờ + địa điểm cho cont này">
+                      📅 Đặt kế hoạch
+                    </button>
                   ) : (
                     <TransportPicker
                       value={{
