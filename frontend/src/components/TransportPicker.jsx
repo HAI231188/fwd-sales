@@ -108,7 +108,7 @@ export default function TransportPicker({ value, onChange, compact = false, plac
         />
       )}
 
-      {open && !hasSelection && (
+      {open && (
         <div style={{
           position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 200,
           background: '#fff', border: '1px solid var(--border)', borderRadius: 6,
