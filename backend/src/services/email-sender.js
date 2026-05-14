@@ -338,6 +338,10 @@ async function sendPlanningEmail({
   const transporter = nodemailer.createTransport({
     service: 'gmail',
     auth: { user: sender.gmail_address, pass: appPassword },
+    // Force IPv4 — Railway's container DNS returns AAAA records for
+    // smtp.gmail.com but the egress is IPv4-only, causing ENETUNREACH
+    // on the v6 address. family: 4 makes Node's dns.lookup skip AAAA.
+    family: 4,
   });
   const fromAddress = sender.gmail_display_name
     ? `"${sender.gmail_display_name}" <${sender.gmail_address}>`
