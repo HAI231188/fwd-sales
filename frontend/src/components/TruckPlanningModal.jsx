@@ -7,6 +7,7 @@ import {
   sendPlanningEmail,
 } from '../api';
 import TransportPicker from './TransportPicker';
+import InvoiceRecipientModal from './InvoiceRecipientModal';
 import { useModalZIndex } from '../hooks/useModalZIndex';
 import { useAuth } from '../App';
 
@@ -50,10 +51,50 @@ export default function TruckPlanningModal({ jobId, jobCode, onClose }) {
   const [saving, setSaving] = useState(false);
   const [previewGroup, setPreviewGroup] = useState(null);
   const [sendingGroupKey, setSendingGroupKey] = useState(null); // transport_company_id of the in-flight send
+  // CP3.5b — invoice picker gates the send. pendingMailContext holds the
+  // group + send args while the modal is open; on confirm we fire the
+  // mutation with the chosen invoice_info.
+  const [pendingMailContext, setPendingMailContext] = useState(null);
 
   const sendMut = useMutation({
     mutationFn: (body) => sendPlanningEmail(body),
   });
+
+  async function fireSend(invoiceInfo) {
+    if (!pendingMailContext) return;
+    const ctx = pendingMailContext;
+    setPendingMailContext(null);
+    setSendingGroupKey(ctx.group.transport_company_id);
+    try {
+      const result = await sendMut.mutateAsync({
+        job_id: jobId,
+        transport_company_id: ctx.group.transport_company_id,
+        booking_ids: ctx.group.rows.map(r => r.booking_id).filter(Boolean),
+        mail_type: ctx.mailType,
+        is_replacement: !!ctx.isReplacement,
+        invoice_info: invoiceInfo,
+      });
+      toast.success(`✅ Đã gửi mail cho ${ctx.group.transport_name} (${result.recipient_email})`);
+      qc.invalidateQueries({ queryKey: ['email-history', jobId] });
+    } catch (err) {
+      const status = err?.response?.status ?? err?.status;
+      const code = err?.code;
+      const msg = err?.error || err?.message || 'Lỗi không xác định';
+      if (code === 'NO_GMAIL_SETUP' || status === 412) {
+        if (window.confirm(`${msg}\n\nMở /change-password ngay?`)) {
+          window.location.href = '/change-password';
+        }
+      } else if (code === 'NO_TRANSPORT_EMAIL') {
+        if (window.confirm(`${msg}\n\nMở /transport-companies ngay?`)) {
+          window.location.href = '/transport-companies';
+        }
+      } else {
+        toast.error(`Lỗi gửi mail: ${msg}`);
+      }
+    } finally {
+      setSendingGroupKey(null);
+    }
+  }
 
   const { data: job, isLoading: jobL } = useQuery({
     queryKey: ['job', jobId],
@@ -175,38 +216,12 @@ export default function TruckPlanningModal({ jobId, jobCode, onClose }) {
                     <TransportCard key={g.transport_company_id} group={g}
                       sending={sendingGroupKey === g.transport_company_id}
                       onPreview={() => setPreviewGroup(g)}
-                      onSend={async () => {
-                        if (!window.confirm(
-                          `Gửi mail kế hoạch cho ${g.transport_name} (${g.rows.length} cont)?`
-                        )) return;
-                        setSendingGroupKey(g.transport_company_id);
-                        try {
-                          const result = await sendMut.mutateAsync({
-                            job_id: jobId,
-                            transport_company_id: g.transport_company_id,
-                            booking_ids: g.rows.map(r => r.booking_id).filter(Boolean),
-                            mail_type: 'new',
-                          });
-                          toast.success(`✅ Đã gửi mail cho ${g.transport_name} (${result.recipient_email})`);
-                          qc.invalidateQueries({ queryKey: ['email-history', jobId] });
-                        } catch (err) {
-                          const status = err?.response?.status ?? err?.status;
-                          const code = err?.code;
-                          const msg = err?.error || err?.message || 'Lỗi không xác định';
-                          if (code === 'NO_GMAIL_SETUP' || status === 412) {
-                            if (window.confirm(`${msg}\n\nMở /change-password ngay?`)) {
-                              window.location.href = '/change-password';
-                            }
-                          } else if (code === 'NO_TRANSPORT_EMAIL') {
-                            if (window.confirm(`${msg}\n\nMở /transport-companies ngay?`)) {
-                              window.location.href = '/transport-companies';
-                            }
-                          } else {
-                            toast.error(`Lỗi gửi mail: ${msg}`);
-                          }
-                        } finally {
-                          setSendingGroupKey(null);
-                        }
+                      onSend={() => {
+                        // Open invoice picker first; actual mutation fires
+                        // from fireSend() on InvoiceRecipientModal confirm.
+                        setPendingMailContext({
+                          group: g, mailType: 'new', isReplacement: false,
+                        });
                       }} />
                   ))}
                 </div>
@@ -228,6 +243,17 @@ export default function TruckPlanningModal({ jobId, jobCode, onClose }) {
         <EmailPreviewModal group={previewGroup} job={job} user={user}
           onClose={() => setPreviewGroup(null)} />
       )}
+
+      <InvoiceRecipientModal
+        isOpen={!!pendingMailContext}
+        customer={job ? {
+          name: job.customer_name,
+          invoice_company: job.invoice_company_name,
+          invoice_tax: job.invoice_tax_code,
+          invoice_address: job.invoice_address,
+        } : null}
+        onClose={() => setPendingMailContext(null)}
+        onConfirm={(invoiceInfo) => fireSend(invoiceInfo)} />
     </div>
   ), document.body);
 }

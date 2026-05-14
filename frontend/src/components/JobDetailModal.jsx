@@ -425,7 +425,7 @@ function buildDraft(job) {
     status: job.status || 'pending',
     other_services: { ...otherSvc },
     containers: Array.isArray(job.containers) && job.containers.length > 0
-      ? job.containers.map(c => ({ cont_type: c.cont_type || '', cont_number: c.cont_number || '', seal_number: c.seal_number || '' }))
+      ? job.containers.map(c => ({ cont_type: c.cont_type || '', cont_number: c.cont_number || '', seal_number: c.seal_number || '', weight_tons: c.weight_tons != null ? String(c.weight_tons) : '' }))
       : [],
   };
 }
@@ -510,7 +510,7 @@ export default function JobDetailModal({ jobId, onClose }) {
     setDraft(d => ({ ...d, other_services: { ...d.other_services, [key]: !d.other_services[key] } }));
   }
   function addCont() {
-    setDraft(d => ({ ...d, containers: [...d.containers, { cont_type: '', cont_number: '', seal_number: '' }] }));
+    setDraft(d => ({ ...d, containers: [...d.containers, { cont_type: '', cont_number: '', seal_number: '', weight_tons: '' }] }));
   }
   function removeCont(i) {
     setDraft(d => ({ ...d, containers: d.containers.filter((_, idx) => idx !== i) }));
@@ -740,7 +740,7 @@ export default function JobDetailModal({ jobId, onClose }) {
                             </div>
                           ) : (
                             draft.containers.map((c, i) => (
-                              <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr auto', gap: '0 8px', marginBottom: 8, alignItems: 'end' }}>
+                              <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 0.7fr auto', gap: '0 8px', marginBottom: 8, alignItems: 'end' }}>
                                 <FRow label={i === 0 ? 'Loại cont' : ''}>
                                   <select style={INP} value={c.cont_type} onChange={e => updateCont(i, 'cont_type', e.target.value)}>
                                     <option value="">—</option>
@@ -752,6 +752,11 @@ export default function JobDetailModal({ jobId, onClose }) {
                                 </FRow>
                                 <FRow label={i === 0 ? 'Số seal' : ''}>
                                   <input style={INP} value={c.seal_number} onChange={e => updateCont(i, 'seal_number', e.target.value)} />
+                                </FRow>
+                                <FRow label={i === 0 ? 'Tấn' : ''}>
+                                  <input style={INP} type="number" step="0.01" min="0"
+                                    value={c.weight_tons || ''}
+                                    onChange={e => updateCont(i, 'weight_tons', e.target.value)} />
                                 </FRow>
                                 <button type="button" onClick={() => removeCont(i)} style={{ padding: '4px 8px', background: 'var(--danger-dim)', border: 'none', borderRadius: 4, cursor: 'pointer', color: 'var(--danger)', marginBottom: 10 }}>✕</button>
                               </div>
@@ -827,6 +832,7 @@ export default function JobDetailModal({ jobId, onClose }) {
                                     <th style={{ textAlign: 'left', padding: '4px 6px', color: 'var(--text-2)', fontWeight: 600, borderBottom: '1px solid var(--border)' }}>Loại</th>
                                     <th style={{ textAlign: 'left', padding: '4px 6px', color: 'var(--text-2)', fontWeight: 600, borderBottom: '1px solid var(--border)' }}>Số cont</th>
                                     <th style={{ textAlign: 'left', padding: '4px 6px', color: 'var(--text-2)', fontWeight: 600, borderBottom: '1px solid var(--border)' }}>Số seal</th>
+                                    <th style={{ textAlign: 'right', padding: '4px 6px', color: 'var(--text-2)', fontWeight: 600, borderBottom: '1px solid var(--border)' }}>Tấn</th>
                                   </tr>
                                 </thead>
                                 <tbody>
@@ -835,6 +841,9 @@ export default function JobDetailModal({ jobId, onClose }) {
                                       <td style={{ padding: '4px 6px', fontWeight: 500 }}>{c.cont_type}</td>
                                       <td style={{ padding: '4px 6px' }}>{c.cont_number || '—'}</td>
                                       <td style={{ padding: '4px 6px', color: 'var(--text-2)' }}>{c.seal_number || '—'}</td>
+                                      <td style={{ padding: '4px 6px', textAlign: 'right', color: 'var(--text-2)' }}>
+                                        {c.weight_tons != null ? c.weight_tons : '—'}
+                                      </td>
                                     </tr>
                                   ))}
                                 </tbody>

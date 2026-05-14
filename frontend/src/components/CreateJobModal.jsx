@@ -114,7 +114,7 @@ export default function CreateJobModal({ onClose, onCreated }) {
         const existing = cs.filter(c => c.cont_type === t);
         const want = nextQty[t] || 0;
         for (let i = 0; i < want; i++) {
-          out.push(existing[i] || { cont_type: t, cont_number: '', seal_number: '' });
+          out.push(existing[i] || { cont_type: t, cont_number: '', seal_number: '', weight_tons: '' });
         }
       }
       return out;
@@ -537,8 +537,9 @@ export default function CreateJobModal({ onClose, onCreated }) {
                       const importMissing = form.import_export === 'import'
                         && (!(c.cont_number || '').trim() || !(c.seal_number || '').trim());
                       return (
-                        <div key={i} style={{ display: 'grid', gridTemplateColumns: '90px 1fr 1fr', gap: 6, alignItems: 'center' }}>
-                          <span style={{ fontWeight: 600, fontSize: 12, padding: '6px 10px', textAlign: 'center',
+                        <div key={i} style={{ display: 'grid',
+                          gridTemplateColumns: '70px 1fr 1fr 90px', gap: 6, alignItems: 'center' }}>
+                          <span style={{ fontWeight: 600, fontSize: 12, padding: '6px 8px', textAlign: 'center',
                             background: 'var(--bg)', borderRadius: 6, border: '1px solid var(--border)', color: 'var(--text-2)' }}>
                             {c.cont_type}
                           </span>
@@ -550,6 +551,12 @@ export default function CreateJobModal({ onClose, onCreated }) {
                             onChange={e => updateCont(i, 'seal_number', e.target.value)}
                             style={{ fontSize: 12, ...(importMissing && !(c.seal_number || '').trim()
                               ? { borderColor: 'var(--warning)' } : {}) }} />
+                          <input className="form-input" type="number" step="0.01" min="0"
+                            value={c.weight_tons || ''}
+                            placeholder="Trọng lượng (tấn)"
+                            title="Trọng lượng (tấn) — tuỳ chọn, hiển thị trong mail kế hoạch"
+                            onChange={e => updateCont(i, 'weight_tons', e.target.value)}
+                            style={{ fontSize: 12 }} />
                         </div>
                       );
                     })}

@@ -1205,9 +1205,14 @@ router.post('/', requireAuth, async (req, res) => {
     if (Array.isArray(containers) && containers.length > 0) {
       for (const c of containers) {
         if (!c.cont_type) continue;
+        const w = c.weight_tons;
+        const wNum = (w === '' || w == null) ? null : Number(w);
         await client.query(
-          `INSERT INTO job_containers (job_id, cont_number, cont_type, seal_number) VALUES ($1,$2,$3,$4)`,
-          [job.id, c.cont_number || null, c.cont_type, c.seal_number || null]
+          `INSERT INTO job_containers
+             (job_id, cont_number, cont_type, seal_number, weight_tons)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [job.id, c.cont_number || null, c.cont_type, c.seal_number || null,
+           (Number.isFinite(wNum) ? wNum : null)]
         );
       }
     }
@@ -1425,6 +1430,10 @@ router.post('/', requireAuth, async (req, res) => {
 // GET /api/jobs/:id
 router.get('/:id', requireAuth, async (req, res) => {
   try {
+    // LATERAL JOIN customer_pipeline (L15) so invoice info is on the response.
+    // Match on LOWER(company_name) = LOWER(j.customer_name) and prefer the
+    // pipeline owned by this job's sales_id when present (avoids picking a
+    // stale pipeline if the same company exists under multiple sales).
     const { rows } = await db.query(`
       SELECT j.*,
         u_sales.name AS sales_name, u_created.name AS created_by_name,
@@ -1434,7 +1443,10 @@ router.get('/:id', requireAuth, async (req, res) => {
         ja.ops_done, ja.ops_done_at,
         u_cus.name AS cus_name, u_cus.code AS cus_code,
         u_ops.name AS ops_name, u_ops.code AS ops_code,
-        u_dd.name AS dieu_do_name, u_dd.code AS dieu_do_code
+        u_dd.name AS dieu_do_name, u_dd.code AS dieu_do_code,
+        cp_inv.company_full_name AS invoice_company_name,
+        cp_inv.tax_code          AS invoice_tax_code,
+        cp_inv.invoice_address   AS invoice_address
       FROM jobs j
       LEFT JOIN job_assignments ja ON ja.job_id = j.id
       LEFT JOIN users u_cus ON u_cus.id = ja.cus_id
@@ -1442,6 +1454,14 @@ router.get('/:id', requireAuth, async (req, res) => {
       LEFT JOIN users u_dd ON u_dd.id = ja.dieu_do_id
       LEFT JOIN users u_sales ON u_sales.id = j.sales_id
       LEFT JOIN users u_created ON u_created.id = j.created_by
+      LEFT JOIN LATERAL (
+        SELECT cp.company_full_name, cp.tax_code, cp.invoice_address
+          FROM customer_pipeline cp
+         WHERE LOWER(cp.company_name) = LOWER(j.customer_name)
+           AND cp.deleted_at IS NULL
+         ORDER BY (cp.sales_id = j.sales_id) DESC NULLS LAST, cp.id DESC
+         LIMIT 1
+      ) cp_inv ON true
       WHERE j.id = $1 AND j.deleted_at IS NULL
     `, [req.params.id]);
     if (!rows[0]) return res.status(404).json({ error: 'Không tìm thấy job' });
@@ -1451,7 +1471,7 @@ router.get('/:id', requireAuth, async (req, res) => {
       db.query(`SELECT * FROM job_truck WHERE job_id = $1`, [req.params.id]),
       db.query(`SELECT jot.*, u.name AS ops_name FROM job_ops_task jot LEFT JOIN users u ON u.id = jot.ops_id WHERE jot.job_id = $1`, [req.params.id]),
       db.query(`SELECT jh.*, u.name AS changed_by_name FROM job_history jh LEFT JOIN users u ON u.id = jh.changed_by WHERE jh.job_id = $1 ORDER BY jh.changed_at DESC`, [req.params.id]),
-      db.query(`SELECT id, cont_number, cont_type, seal_number FROM job_containers WHERE job_id = $1 ORDER BY id`, [req.params.id]),
+      db.query(`SELECT id, cont_number, cont_type, seal_number, weight_tons FROM job_containers WHERE job_id = $1 ORDER BY id`, [req.params.id]),
     ]);
 
     res.json({ ...rows[0], tk: tkR.rows[0] || null, truck: truckR.rows[0] || null, ops_tasks: opsR.rows, history: histR.rows, containers: contsR.rows });

@@ -157,11 +157,15 @@ export const getGmailSetup = () => api.get('/users/me/gmail-setup');
 export const updateGmailSetup = (data) => api.put('/users/me/gmail-setup', data);
 export const deleteGmailSetup = () => api.delete('/users/me/gmail-setup');
 
-// Planning email (Phase 5 Step 3 Part 2 CP3)
-// body: { job_id, transport_company_id, booking_ids: int[], mail_type: 'new'|'cancel' }
+// Planning email (Phase 5 Step 3 Part 2 CP3 + CP3.5b)
+// body: { job_id, transport_company_id, booking_ids: int[], mail_type: 'new'|'cancel',
+//         invoice_info: {type, company, tax, address}, is_replacement?: bool }
 export const sendPlanningEmail = (body) => api.post('/email/send-planning', body);
 export const getEmailHistory = (jobId) =>
   api.get('/email/history', { params: { job_id: jobId } });
+// SLB legal info — used by the invoice modal "SLB Logistics" pre-fill so the
+// strings aren't hard-coded in two places. CP3.5b — DD + TPL + lead.
+export const getSlbInvoiceInfo = () => api.get('/email/slb-invoice-info');
 
 // Notifications
 export const getNotifications = () => api.get('/notifications');
