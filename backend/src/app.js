@@ -16,6 +16,7 @@ const transportRoutes = require('./routes/transport');
 const customerPipelineRoutes = require('./routes/customer-pipeline');
 const truckBookingsRoutes = require('./routes/truck-bookings');
 const usersRoutes = require('./routes/users');
+const emailRoutes = require('./routes/email');
 const encryption = require('./utils/encryption');
 
 // One-shot startup check — logs whether email encryption is ready, so DD
@@ -51,6 +52,7 @@ app.use('/api/transport-companies', transportRoutes);
 app.use('/api/customer-pipeline', customerPipelineRoutes);
 app.use('/api/truck-bookings', truckBookingsRoutes);
 app.use('/api/users', usersRoutes);
+app.use('/api/email', emailRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {

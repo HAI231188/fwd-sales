@@ -157,6 +157,12 @@ export const getGmailSetup = () => api.get('/users/me/gmail-setup');
 export const updateGmailSetup = (data) => api.put('/users/me/gmail-setup', data);
 export const deleteGmailSetup = () => api.delete('/users/me/gmail-setup');
 
+// Planning email (Phase 5 Step 3 Part 2 CP3)
+// body: { job_id, transport_company_id, booking_ids: int[], mail_type: 'new'|'cancel' }
+export const sendPlanningEmail = (body) => api.post('/email/send-planning', body);
+export const getEmailHistory = (jobId) =>
+  api.get('/email/history', { params: { job_id: jobId } });
+
 // Notifications
 export const getNotifications = () => api.get('/notifications');
 export const getUnreadCount = () => api.get('/notifications/unread-count');

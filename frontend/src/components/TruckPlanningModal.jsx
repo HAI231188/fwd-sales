@@ -1,9 +1,10 @@
 import { useState, useMemo, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import {
   getJob, getTruckBookings, updateTruckBooking, getTransportCompany,
+  sendPlanningEmail,
 } from '../api';
 import TransportPicker from './TransportPicker';
 import { useModalZIndex } from '../hooks/useModalZIndex';
@@ -44,9 +45,15 @@ function fmtHanLenh(val, impExp) {
 
 export default function TruckPlanningModal({ jobId, jobCode, onClose }) {
   const zIndex = useModalZIndex();
+  const qc = useQueryClient();
   const { user } = useAuth() || {};
   const [saving, setSaving] = useState(false);
   const [previewGroup, setPreviewGroup] = useState(null);
+  const [sendingGroupKey, setSendingGroupKey] = useState(null); // transport_company_id of the in-flight send
+
+  const sendMut = useMutation({
+    mutationFn: (body) => sendPlanningEmail(body),
+  });
 
   const { data: job, isLoading: jobL } = useQuery({
     queryKey: ['job', jobId],
@@ -166,8 +173,41 @@ export default function TruckPlanningModal({ jobId, jobCode, onClose }) {
                   gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 12 }}>
                   {groups.map(g => (
                     <TransportCard key={g.transport_company_id} group={g}
+                      sending={sendingGroupKey === g.transport_company_id}
                       onPreview={() => setPreviewGroup(g)}
-                      onMockSend={() => toast('Chức năng gửi mail đang được phát triển — sẽ làm trong phase tiếp', { icon: '🚧' })} />
+                      onSend={async () => {
+                        if (!window.confirm(
+                          `Gửi mail kế hoạch cho ${g.transport_name} (${g.rows.length} cont)?`
+                        )) return;
+                        setSendingGroupKey(g.transport_company_id);
+                        try {
+                          const result = await sendMut.mutateAsync({
+                            job_id: jobId,
+                            transport_company_id: g.transport_company_id,
+                            booking_ids: g.rows.map(r => r.booking_id).filter(Boolean),
+                            mail_type: 'new',
+                          });
+                          toast.success(`✅ Đã gửi mail cho ${g.transport_name} (${result.recipient_email})`);
+                          qc.invalidateQueries({ queryKey: ['email-history', jobId] });
+                        } catch (err) {
+                          const status = err?.response?.status ?? err?.status;
+                          const code = err?.code;
+                          const msg = err?.error || err?.message || 'Lỗi không xác định';
+                          if (code === 'NO_GMAIL_SETUP' || status === 412) {
+                            if (window.confirm(`${msg}\n\nMở /change-password ngay?`)) {
+                              window.location.href = '/change-password';
+                            }
+                          } else if (code === 'NO_TRANSPORT_EMAIL') {
+                            if (window.confirm(`${msg}\n\nMở /transport-companies ngay?`)) {
+                              window.location.href = '/transport-companies';
+                            }
+                          } else {
+                            toast.error(`Lỗi gửi mail: ${msg}`);
+                          }
+                        } finally {
+                          setSendingGroupKey(null);
+                        }
+                      }} />
                   ))}
                 </div>
               )}
@@ -286,8 +326,10 @@ function Vung1Table({ rows, job, onUpdateRow }) {
   );
 }
 
-function TransportCard({ group, onPreview, onMockSend }) {
-  // Mock status — Phase 5 Step 3 spec says always "Chưa gửi" until next part.
+function TransportCard({ group, sending, onPreview, onSend }) {
+  // Status field is still MOCK "Chưa gửi" — real per-card status (Đã gửi /
+  // Có thay đổi sau gửi / Cần gửi HỦY) lands in CP5 once email_history is
+  // queried per (job, transport_company_id) and diffed against current state.
   return (
     <div className="card" style={{ padding: 14 }}>
       <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 8,
@@ -318,10 +360,10 @@ function TransportCard({ group, onPreview, onMockSend }) {
         Trạng thái: <span style={{ color: 'var(--warning)', fontWeight: 600 }}>Chưa gửi</span>
       </div>
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-        <button className="btn btn-primary btn-sm" onClick={onMockSend}>
-          📧 Gửi mail kế hoạch
+        <button className="btn btn-primary btn-sm" onClick={onSend} disabled={sending}>
+          {sending ? '⏳ Đang gửi...' : '📧 Gửi mail kế hoạch'}
         </button>
-        <button className="btn btn-ghost btn-sm" onClick={onPreview}>
+        <button className="btn btn-ghost btn-sm" onClick={onPreview} disabled={sending}>
           👁 Xem preview
         </button>
       </div>
