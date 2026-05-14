@@ -8,8 +8,10 @@ const db = require('../db');
 const { requireAuth } = require('../middleware/auth');
 const enc = require('../utils/encryption');
 
-// @gmail.com or @googlemail.com (case-insensitive), with a basic local-part.
-const GMAIL_RE = /^[^\s@]+@(gmail\.com|googlemail\.com)$/i;
+// Whitelist of domains that work with Gmail SMTP (smtp.gmail.com).
+// @gmail.com + @googlemail.com are personal Gmail; @slbglobal.com is the
+// company's Google Workspace domain — same SMTP backend.
+const GMAIL_RE = /^[^\s@]+@(gmail\.com|googlemail\.com|slbglobal\.com)$/i;
 
 function parseDisplayName(v) {
   if (v == null) return null;
@@ -59,7 +61,7 @@ router.put('/me/gmail-setup', requireAuth, async (req, res) => {
   const addr = parseEmail(gmail_address);
   if (gmail_address !== undefined && addr && !GMAIL_RE.test(addr)) {
     return res.status(400).json({
-      error: 'Email phải có đuôi @gmail.com hoặc @googlemail.com',
+      error: 'Email phải có đuôi @gmail.com, @googlemail.com hoặc @slbglobal.com',
     });
   }
   const displayName = parseDisplayName(gmail_display_name);

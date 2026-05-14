@@ -239,9 +239,12 @@ function GmailSetupCard() {
       <div style={{ marginBottom: 14 }}>
         <label style={lblStyle}>Gmail của tôi</label>
         <input className="form-input" type="email"
-          placeholder="ten.cua.toi@gmail.com"
+          placeholder="ten.cua.toi@slbglobal.com"
           value={addr} onChange={e => setAddr(e.target.value)}
           style={{ width: '100%', boxSizing: 'border-box' }} />
+        <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 4 }}>
+          Hỗ trợ: @gmail.com, @googlemail.com, @slbglobal.com (Google Workspace)
+        </div>
       </div>
 
       <div style={{ marginBottom: 14 }}>
@@ -301,7 +304,7 @@ function GmailSetupCard() {
           ℹ️ Hướng dẫn lấy App password Gmail
         </summary>
         <ol style={{ paddingLeft: 18, marginTop: 8 }}>
-          <li>Bật xác thực 2 bước (2FA) cho Google Account.</li>
+          <li>Bật xác thực 2 bước (2FA) cho Google Account (cá nhân hoặc Workspace @slbglobal.com).</li>
           <li>Vào <strong>myaccount.google.com</strong> → Security → <strong>App passwords</strong>.</li>
           <li>Tạo password mới cho ứng dụng &quot;FWD Sales&quot; (chọn type là &quot;Mail&quot; nếu được hỏi).</li>
           <li>Copy chuỗi 16 ký tự Google sinh ra và dán vào ô <strong>App password</strong> phía trên.</li>
