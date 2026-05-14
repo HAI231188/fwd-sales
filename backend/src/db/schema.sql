@@ -77,6 +77,15 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS username VARCHAR(50);
 ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON users(username);
 
+-- Phase 5 Step 3 Part 2 CP1 — Gmail SMTP per-user setup (encrypted at rest).
+-- All nullable so existing users continue working without configuration; DD
+-- fills these in via /change-password (CP2). The encrypted column stores the
+-- ciphertext of a Gmail App Password (not the plain Google password) — CP2
+-- handles the AES-GCM encrypt/decrypt with a server-side key.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS gmail_address VARCHAR(255);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS gmail_app_password_encrypted TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS gmail_display_name VARCHAR(200);
+
 -- ============================================================
 -- Pipeline feature
 -- ============================================================
@@ -724,3 +733,61 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_pipeline_sales_company_active
   ON customer_pipeline(sales_id, LOWER(company_name)) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_pipeline_deleted_at
   ON customer_pipeline(deleted_at) WHERE deleted_at IS NOT NULL;
+
+-- ============================================================
+-- Phase 5 Step 3 Part 2 CP1 — Email history (Quản lý đặt xe → gửi mail kế hoạch)
+--
+-- One row per send-attempt from a DD/TPL user to a transport company for a
+-- specific job, grouping N bookings into one mail. Snapshots both sides
+-- (sender + recipient identity, full CC list) and the full rendered body
+-- so "có thay đổi sau gửi" detection can diff `last_sent_data` against
+-- the current truck_bookings state without needing a row-by-row audit
+-- table. Soft-delete pattern (L17) so accidentally-sent rows can be
+-- tombstoned without losing the audit trail.
+--
+-- mail_type:
+--   'new'    — first send OR re-send for added bookings ("mail bổ sung").
+--   'cancel' — mail HỦY when transport assignment changes or booking dropped.
+--
+-- status:
+--   'sent'   — nodemailer accepted the message (CP3).
+--   'failed' — caught exception; error_message holds the reason.
+--
+-- last_sent_data jsonb shape (one snapshot per row in this email):
+--   { bookings: [{ id, booking_code, cont_number, cont_type,
+--                  planned_datetime, delivery_location, cost,
+--                  transport_company_id, transport_name, vehicle_number }] }
+-- Comparing this against fresh getTruckBookings(job_id) gives the
+-- field-level diff for "có thay đổi sau gửi" notifications (CP3+).
+-- ============================================================
+CREATE TABLE IF NOT EXISTS email_history (
+  id                            SERIAL PRIMARY KEY,
+  sender_user_id                INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  sender_email                  VARCHAR(255) NOT NULL,                       -- snapshot
+  sender_display_name           VARCHAR(200),                                -- snapshot
+  recipient_transport_company_id INTEGER REFERENCES transport_companies(id) ON DELETE SET NULL,
+  recipient_email               VARCHAR(255) NOT NULL,                       -- snapshot
+  recipient_cc                  TEXT,                                        -- JSON-array snapshot (L16)
+  job_id                        INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+  booking_ids                   INTEGER[] NOT NULL,                          -- truck_bookings.id list
+  mail_type                     VARCHAR(20) NOT NULL CHECK (mail_type IN ('new', 'cancel')),
+  subject                       TEXT NOT NULL,
+  body                          TEXT NOT NULL,
+  bbbg_attached                 BOOLEAN DEFAULT FALSE,                       -- attachment flag, no file storage
+  status                        VARCHAR(20) NOT NULL CHECK (status IN ('sent', 'failed')),
+  error_message                 TEXT,                                        -- only when status='failed'
+  last_sent_data                JSONB NOT NULL,                              -- bookings snapshot for diff
+  created_at                    TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  deleted_at                    TIMESTAMP WITH TIME ZONE                     -- soft delete (L17)
+);
+
+-- Partial indexes filter out soft-deleted rows so common-path queries
+-- skip tombstones automatically (mirrors truck_bookings index pattern).
+CREATE INDEX IF NOT EXISTS idx_email_history_job
+  ON email_history(job_id) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_email_history_transport
+  ON email_history(recipient_transport_company_id) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_email_history_sender
+  ON email_history(sender_user_id) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_email_history_status
+  ON email_history(status) WHERE deleted_at IS NULL;
