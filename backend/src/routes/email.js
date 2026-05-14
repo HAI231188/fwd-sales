@@ -10,7 +10,9 @@
 const router = require('express').Router();
 const db = require('../db');
 const { requireAuth } = require('../middleware/auth');
-const { sendPlanningEmail, SLB_INVOICE_INFO } = require('../services/email-sender');
+const {
+  sendPlanningEmail, previewPlanningEmail, SLB_INVOICE_INFO,
+} = require('../services/email-sender');
 
 const SEND_ROLES = ['dieu_do', 'truong_phong_log'];
 const READ_ROLES = ['dieu_do', 'truong_phong_log', 'lead'];
@@ -139,6 +141,62 @@ router.get('/history', requireAuth, async (req, res) => {
     res.json(rows);
   } catch (err) {
     console.error('GET /api/email/history error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── POST /api/email/preview-planning ────────────────────────────────────────
+// Renders subject + body using the same template as send-planning, but does
+// NOT send via SMTP and does NOT write to email_history. invoice_info is
+// OPTIONAL — when omitted, the body shows a "(Sẽ chọn khi gửi)" placeholder.
+// Same auth as send (DD + TPL) so a CUS/lead preview wouldn't bypass the
+// send-side role gate.
+router.post('/preview-planning', requireAuth, async (req, res) => {
+  if (!SEND_ROLES.includes(req.user?.role)) {
+    return res.status(403).json({ error: 'Không có quyền' });
+  }
+
+  const { job_id, transport_company_id, booking_ids, mail_type,
+          invoice_info, is_replacement } = req.body || {};
+
+  const jobId = parseInt(job_id, 10);
+  const tcId = parseInt(transport_company_id, 10);
+  if (!Number.isFinite(jobId)) return res.status(400).json({ error: 'job_id không hợp lệ' });
+  if (!Number.isFinite(tcId)) return res.status(400).json({ error: 'transport_company_id không hợp lệ' });
+  if (!Array.isArray(booking_ids) || booking_ids.length === 0) {
+    return res.status(400).json({ error: 'booking_ids rỗng' });
+  }
+  if (!['new', 'cancel'].includes(mail_type)) {
+    return res.status(400).json({ error: 'mail_type phải là "new" hoặc "cancel"' });
+  }
+  const bookingIds = booking_ids.map(x => parseInt(x, 10)).filter(Number.isFinite);
+  if (bookingIds.length !== booking_ids.length) {
+    return res.status(400).json({ error: 'booking_ids có giá trị không hợp lệ' });
+  }
+
+  // invoice_info validation is intentionally LIGHT here. If the caller
+  // passes a partial / missing object, the service renders the placeholder.
+  // If the caller passes invoice_info with the wrong shape, drop the fields
+  // we can't trust and treat as missing.
+  let normalizedInvoice = null;
+  if (invoice_info && typeof invoice_info === 'object') {
+    const c = String(invoice_info.company || '').trim();
+    const t = String(invoice_info.tax || '').trim();
+    const a = String(invoice_info.address || '').trim();
+    if (c && t && a) normalizedInvoice = { type: invoice_info.type || 'custom', company: c, tax: t, address: a };
+  }
+
+  try {
+    const result = await previewPlanningEmail({
+      senderUserId: req.user.id,
+      jobId, transportCompanyId: tcId,
+      bookingIds, mailType: mail_type,
+      isReplacement: !!is_replacement,
+      invoiceInfo: normalizedInvoice,
+    });
+    res.json(result);
+  } catch (err) {
+    console.error('POST /api/email/preview-planning error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });

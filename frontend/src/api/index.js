@@ -166,6 +166,10 @@ export const getEmailHistory = (jobId) =>
 // SLB legal info — used by the invoice modal "SLB Logistics" pre-fill so the
 // strings aren't hard-coded in two places. CP3.5b — DD + TPL + lead.
 export const getSlbInvoiceInfo = () => api.get('/email/slb-invoice-info');
+// CP3.5c — Preview rendering: same body shape as send, but server skips
+// SMTP + email_history insert. invoice_info OPTIONAL. Returns
+// { subject, body, recipient_email, cc, transport_name, has_invoice_info }.
+export const previewPlanningEmail = (body) => api.post('/email/preview-planning', body);
 
 // Notifications
 export const getNotifications = () => api.get('/notifications');

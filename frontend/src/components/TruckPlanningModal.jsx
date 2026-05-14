@@ -4,7 +4,7 @@ import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import {
   getJob, getTruckBookings, updateTruckBooking, getTransportCompany,
-  sendPlanningEmail,
+  sendPlanningEmail, previewPlanningEmail,
 } from '../api';
 import TransportPicker from './TransportPicker';
 import InvoiceRecipientModal from './InvoiceRecipientModal';
@@ -240,7 +240,7 @@ export default function TruckPlanningModal({ jobId, jobCode, onClose }) {
       </div>
 
       {previewGroup && (
-        <EmailPreviewModal group={previewGroup} job={job} user={user}
+        <EmailPreviewModal group={previewGroup} job={job}
           onClose={() => setPreviewGroup(null)} />
       )}
 
@@ -397,56 +397,65 @@ function TransportCard({ group, sending, onPreview, onSend }) {
   );
 }
 
-function EmailPreviewModal({ group, job, user, onClose }) {
+function EmailPreviewModal({ group, job, onClose }) {
   const zIndex = useModalZIndex();
-  const { data: tc } = useQuery({
-    queryKey: ['transport-company', group.transport_company_id],
-    queryFn: () => getTransportCompany(group.transport_company_id),
-    enabled: !!group.transport_company_id,
+  // CP3.5c — Real backend rendering. Server runs the same renderSubject +
+  // renderBody pipeline as send-planning (no SMTP, no email_history insert).
+  // invoice_info is intentionally omitted from the request so the body shows
+  // the "(Sẽ chọn khi gửi)" placeholder for that section.
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['email-preview', job?.id, group.transport_company_id, group.rows.map(r => r.booking_id).join(',')],
+    queryFn: () => previewPlanningEmail({
+      job_id: job?.id,
+      transport_company_id: group.transport_company_id,
+      booking_ids: group.rows.map(r => r.booking_id).filter(Boolean),
+      mail_type: 'new',
+      is_replacement: false,
+    }),
+    enabled: !!(job?.id && group.transport_company_id),
   });
-  const ccList = useMemo(() => {
-    if (!tc?.email_cc) return [];
-    try {
-      const parsed = typeof tc.email_cc === 'string' ? JSON.parse(tc.email_cc) : tc.email_cc;
-      return Array.isArray(parsed) ? parsed : [];
-    } catch { return []; }
-  }, [tc?.email_cc]);
 
-  const subject = `[Kế hoạch giao xe] Job ${job?.job_code || `#${job?.id}`} - ${group.rows.length} kế hoạch`;
+  const toLine = (label, val) => `${label}: ${val ?? '—'}`;
+  const composed = data && [
+    toLine('To', data.recipient_email || '(chưa có)'),
+    toLine('CC', data.cc?.length ? data.cc.join(', ') : '(không có)'),
+    toLine('Subject', data.subject),
+    '',
+    data.body,
+  ].join('\n');
 
   return createPortal((
     <div className="modal-overlay" style={{ zIndex }}
       onClick={e => { if (e.target === e.currentTarget) onClose?.(); }}>
       <div className="modal modal-lg" style={{ maxHeight: '90vh' }}>
         <div className="modal-header">
-          <h3 style={{ margin: 0, fontSize: 15 }}>👁 Preview mail — {group.transport_name}</h3>
+          <h3 style={{ margin: 0, fontSize: 15 }}>
+            👁 Xem trước nội dung mail — {group.transport_name}
+          </h3>
           <button className="btn btn-ghost btn-sm btn-icon" onClick={onClose}>✕</button>
         </div>
         <div className="modal-body" style={{ padding: 16, overflowY: 'auto' }}>
-          <div style={{ fontFamily: 'monospace', fontSize: 12, lineHeight: 1.7,
-            padding: 14, background: 'var(--bg)', borderRadius: 8, whiteSpace: 'pre-wrap' }}>
-{`To: ${tc?.email || '(chưa có)'}
-CC: ${ccList.length ? ccList.join(', ') : '(không có)'}
-Subject: ${subject}
-
-Kính gửi Quý nhà xe ${group.transport_name},
-
-Vui lòng sắp xếp xe cho các kế hoạch sau:
-
-${group.rows.map((r, i) =>
-`${i + 1}. [${r.booking_code || '—'}] Cont ${r.cont_number || '(chưa số)'} (${r.cont_type})
-   - Ngày giờ: ${fmtPlanned(r.planned_datetime)}
-   - Địa điểm giao: ${r.delivery_location || '—'}
-   - Cước chốt: ${r.cost ? Number(r.cost).toLocaleString('vi-VN') + 'đ' : '(chưa có)'}`
-).join('\n\n')}
-
-Vui lòng xác nhận và báo SỐ XE sớm.
-
-Đính kèm: BBBG (sẽ tự động generate khi gửi thật)
-
-Trân trọng,
-${user?.name || user?.code || 'Điều độ'}`}
+          <div style={{ fontSize: 11, color: 'var(--text-2)', marginBottom: 8,
+            padding: '6px 10px', background: 'var(--info-dim)', borderRadius: 6 }}>
+            ℹ️ Đây là preview mock — phần &quot;Thông tin xuất hóa đơn nâng hạ&quot; sẽ được chọn khi bấm <strong>Gửi mail kế hoạch</strong>.
           </div>
+          {isLoading && (
+            <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-3)' }}>
+              Đang render preview...
+            </div>
+          )}
+          {error && (
+            <div style={{ padding: 12, color: 'var(--danger)', fontSize: 13,
+              background: 'rgba(239,68,68,0.08)', borderRadius: 6 }}>
+              Lỗi render preview: {error?.error || error?.message || 'unknown'}
+            </div>
+          )}
+          {data && (
+            <div style={{ fontFamily: 'monospace', fontSize: 12, lineHeight: 1.7,
+              padding: 14, background: 'var(--bg)', borderRadius: 8, whiteSpace: 'pre-wrap' }}>
+              {composed}
+            </div>
+          )}
         </div>
         <div className="modal-footer">
           <button className="btn btn-ghost btn-sm" onClick={onClose}>Đóng</button>

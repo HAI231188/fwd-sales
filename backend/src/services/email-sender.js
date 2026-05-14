@@ -138,10 +138,16 @@ function renderBody({
   lines.push(`🚢 Hãng tàu: ${shippingLine || '—'}`);
   lines.push(`📅 Hạn lệnh / Cutoff: ${fmtHanLenh(hanLenh, importExport)}`);
   lines.push('');
-  lines.push('📋 Thông tin xuất hóa đơn nâng hạ:');
-  lines.push(`   - Tên: ${invoiceInfo.company}`);
-  lines.push(`   - MST: ${invoiceInfo.tax}`);
-  lines.push(`   - Địa chỉ: ${invoiceInfo.address}`);
+  if (invoiceInfo && invoiceInfo.company && invoiceInfo.tax && invoiceInfo.address) {
+    lines.push('📋 Thông tin xuất hóa đơn nâng hạ:');
+    lines.push(`   - Tên: ${invoiceInfo.company}`);
+    lines.push(`   - MST: ${invoiceInfo.tax}`);
+    lines.push(`   - Địa chỉ: ${invoiceInfo.address}`);
+  } else {
+    // Preview path — invoiceInfo not chosen yet. The real send path always
+    // passes a validated object so this branch only fires for previews.
+    lines.push('📋 Thông tin xuất hóa đơn nâng hạ: (Sẽ chọn khi gửi)');
+  }
   lines.push('');
   lines.push('📝 Chi tiết kế hoạch:');
   lines.push('');
@@ -386,4 +392,132 @@ async function sendPlanningEmail({
   };
 }
 
-module.exports = { sendPlanningEmail, SLB_INVOICE_INFO };
+// ─── previewPlanningEmail ─────────────────────────────────────────────────────
+// Mirrors sendPlanningEmail's data-load but skips Gmail decrypt, nodemailer
+// send, and email_history insert. invoice_info is OPTIONAL — when missing,
+// renderBody emits a "Sẽ chọn khi gửi" placeholder so the preview is useful
+// before the user has picked the invoice recipient.
+//
+// Returns { subject, body, recipient_email, cc }.
+async function previewPlanningEmail({
+  senderUserId, jobId, transportCompanyId, bookingIds, mailType,
+  isReplacement = false, invoiceInfo,
+}) {
+  if (!['new', 'cancel'].includes(mailType)) {
+    throw new Error('mailType phải là "new" hoặc "cancel"');
+  }
+  if (!Array.isArray(bookingIds) || bookingIds.length === 0) {
+    throw new Error('bookingIds rỗng — không có booking nào để preview');
+  }
+
+  // Sender — only the display_name is read from the row; we don't need to
+  // validate the Gmail setup or decrypt for a preview render.
+  const { rows: [sender] } = await db.query(
+    `SELECT id, gmail_display_name FROM users WHERE id = $1`,
+    [senderUserId]
+  );
+  if (!sender) throw new Error('Không tìm thấy người gửi');
+
+  // Transport — load name + email + email_cc. Soft on email: render even
+  // when no email is set (the preview row shows "(chưa có)").
+  const { rows: [tc] } = await db.query(
+    `SELECT id, name, email, email_cc
+       FROM transport_companies WHERE id = $1 AND deleted_at IS NULL`,
+    [transportCompanyId]
+  );
+  if (!tc) throw new Error('Không tìm thấy vận tải');
+  const recipientEmail = (tc.email || '').trim();
+  const ccList = parseCcList(tc.email_cc);
+
+  // Job + bookings — identical query to send path.
+  const { rows: [job] } = await db.query(
+    `SELECT id, job_code, customer_name, han_lenh, import_export, NULL::text AS shipping_line
+       FROM jobs WHERE id = $1 AND deleted_at IS NULL`,
+    [jobId]
+  );
+  if (!job) throw new Error('Không tìm thấy job');
+
+  const { rows: bookings } = await db.query(`
+    SELECT tb.id, tb.booking_code, tb.transport_company_id, tb.transport_name,
+           tb.planned_datetime, tb.delivery_location, tb.cost, tb.notes, tb.note,
+           tb.vehicle_number,
+           COALESCE((
+             SELECT string_agg(COALESCE(jc.cont_number, '(chưa số)'), ', ' ORDER BY jc.id)
+               FROM truck_booking_containers tbc
+               JOIN job_containers jc ON jc.id = tbc.container_id
+              WHERE tbc.booking_id = tb.id
+           ), '(chưa có cont)') AS cont_number,
+           COALESCE((
+             SELECT string_agg(jc.cont_type, ', ' ORDER BY jc.id)
+               FROM truck_booking_containers tbc
+               JOIN job_containers jc ON jc.id = tbc.container_id
+              WHERE tbc.booking_id = tb.id
+           ), '—') AS cont_type,
+           NULLIF((
+             SELECT string_agg(jc.weight_tons::text, ', ' ORDER BY jc.id)
+               FROM truck_booking_containers tbc
+               JOIN job_containers jc ON jc.id = tbc.container_id
+              WHERE tbc.booking_id = tb.id AND jc.weight_tons IS NOT NULL
+           ), '') AS weight_tons
+      FROM truck_bookings tb
+     WHERE tb.id = ANY($1::int[])
+       AND tb.job_id = $2
+       AND tb.deleted_at IS NULL
+     ORDER BY tb.id ASC
+  `, [bookingIds, jobId]);
+
+  if (bookings.length === 0) {
+    throw new Error('Không tìm thấy booking nào khớp với booking_ids cho job này');
+  }
+
+  // Normalize invoiceInfo: pass an object only when all 3 fields are non-empty.
+  // Otherwise pass null so renderBody emits the placeholder.
+  let normalizedInvoice = null;
+  if (invoiceInfo
+      && String(invoiceInfo.company || '').trim()
+      && String(invoiceInfo.tax || '').trim()
+      && String(invoiceInfo.address || '').trim()) {
+    normalizedInvoice = {
+      type: invoiceInfo.type || 'custom',
+      company: String(invoiceInfo.company).trim(),
+      tax: String(invoiceInfo.tax).trim(),
+      address: String(invoiceInfo.address).trim(),
+    };
+  }
+
+  const earliestPlanned = bookings
+    .map(b => b.planned_datetime)
+    .filter(Boolean)
+    .sort((a, b) => new Date(a) - new Date(b))[0];
+
+  const subject = renderSubject({
+    mailType,
+    jobCode: job.job_code,
+    customerName: job.customer_name,
+    n: bookings.length,
+    importExport: job.import_export,
+    earliestPlanned,
+  });
+  const body = renderBody({
+    mailType,
+    isReplacement: !!isReplacement,
+    jobCode: job.job_code,
+    customerName: job.customer_name,
+    shippingLine: job.shipping_line,
+    hanLenh: job.han_lenh,
+    importExport: job.import_export,
+    invoiceInfo: normalizedInvoice,
+    bookings,
+  });
+
+  return {
+    subject,
+    body,
+    recipient_email: recipientEmail || null,
+    cc: ccList,
+    transport_name: tc.name,
+    has_invoice_info: !!normalizedInvoice,
+  };
+}
+
+module.exports = { sendPlanningEmail, previewPlanningEmail, SLB_INVOICE_INFO };
