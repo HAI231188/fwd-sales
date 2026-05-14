@@ -335,13 +335,19 @@ async function sendPlanningEmail({
   };
 
   // ─── 7. Send via nodemailer (Gmail SMTP) ───────────────────────────────
+  // Gmail SMTP over STARTTLS on 587 instead of implicit-TLS on 465. Railway's
+  // egress blocks/times-out outbound 465 (we saw "Connection timeout" after
+  // family:4 fixed the IPv6 hop); 587 is the more permissive port and goes
+  // through cleanly. End-to-end TLS is the same — secure:false + requireTLS:
+  // true means "connect plain, upgrade via STARTTLS, refuse to proceed if
+  // the upgrade can't be negotiated".
   const transporter = nodemailer.createTransport({
-    service: 'gmail',
+    host: 'smtp.gmail.com',
+    port: 587,
+    secure: false,
+    requireTLS: true,
+    family: 4,            // keep IPv4 force from the prior fix
     auth: { user: sender.gmail_address, pass: appPassword },
-    // Force IPv4 — Railway's container DNS returns AAAA records for
-    // smtp.gmail.com but the egress is IPv4-only, causing ENETUNREACH
-    // on the v6 address. family: 4 makes Node's dns.lookup skip AAAA.
-    family: 4,
   });
   const fromAddress = sender.gmail_display_name
     ? `"${sender.gmail_display_name}" <${sender.gmail_address}>`
