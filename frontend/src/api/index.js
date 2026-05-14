@@ -152,6 +152,11 @@ export const createTransportCompany = (data) => api.post('/transport-companies',
 export const updateTransportCompany = (id, data) => api.patch(`/transport-companies/${id}`, data);
 export const deleteTransportCompany = (id) => api.delete(`/transport-companies/${id}`);
 
+// Gmail setup (per-user, encrypted at rest — Phase 5 Step 3 Part 2 CP2)
+export const getGmailSetup = () => api.get('/users/me/gmail-setup');
+export const updateGmailSetup = (data) => api.put('/users/me/gmail-setup', data);
+export const deleteGmailSetup = () => api.delete('/users/me/gmail-setup');
+
 // Notifications
 export const getNotifications = () => api.get('/notifications');
 export const getUnreadCount = () => api.get('/notifications/unread-count');
