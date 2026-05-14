@@ -332,6 +332,10 @@ CREATE TABLE IF NOT EXISTS job_containers (
   created_at  TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_job_containers_job_id ON job_containers(job_id);
+-- Phase 5 Step 3 Part 2 CP3.5b — per-container weight, surfaced in the
+-- planning email per spec ("Cont X (40HC) - 28.50 tấn"). Nullable so
+-- existing rows + cont creation without weight still work.
+ALTER TABLE job_containers ADD COLUMN IF NOT EXISTS weight_tons DECIMAL(10,2);
 
 CREATE TABLE IF NOT EXISTS job_delete_requests (
   id           SERIAL PRIMARY KEY,

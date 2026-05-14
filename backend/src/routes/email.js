@@ -10,10 +10,11 @@
 const router = require('express').Router();
 const db = require('../db');
 const { requireAuth } = require('../middleware/auth');
-const { sendPlanningEmail } = require('../services/email-sender');
+const { sendPlanningEmail, SLB_INVOICE_INFO } = require('../services/email-sender');
 
 const SEND_ROLES = ['dieu_do', 'truong_phong_log'];
 const READ_ROLES = ['dieu_do', 'truong_phong_log', 'lead'];
+const INVOICE_TYPES = ['customer', 'slb', 'custom'];
 
 // ─── POST /api/email/send-planning ─────────────────────────────────────────────
 router.post('/send-planning', requireAuth, async (req, res) => {
@@ -21,7 +22,10 @@ router.post('/send-planning', requireAuth, async (req, res) => {
     return res.status(403).json({ error: 'Không có quyền gửi mail' });
   }
 
-  const { job_id, transport_company_id, booking_ids, mail_type } = req.body || {};
+  const {
+    job_id, transport_company_id, booking_ids, mail_type,
+    invoice_info, is_replacement,
+  } = req.body || {};
 
   // Basic shape validation (the service does the heavier checks).
   const jobId = parseInt(job_id, 10);
@@ -43,6 +47,22 @@ router.post('/send-planning', requireAuth, async (req, res) => {
     .filter(Number.isFinite);
   if (bookingIds.length !== booking_ids.length) {
     return res.status(400).json({ error: 'booking_ids có giá trị không hợp lệ' });
+  }
+
+  // ─── invoice_info validation (CP3.5b) ────────────────────────────────────
+  if (!invoice_info || typeof invoice_info !== 'object') {
+    return res.status(400).json({ error: 'Thiếu thông tin xuất hóa đơn' });
+  }
+  if (!INVOICE_TYPES.includes(invoice_info.type)) {
+    return res.status(400).json({
+      error: `Loại bên xuất hóa đơn phải là ${INVOICE_TYPES.join(' / ')}`,
+    });
+  }
+  const invCompany = String(invoice_info.company || '').trim();
+  const invTax = String(invoice_info.tax || '').trim();
+  const invAddress = String(invoice_info.address || '').trim();
+  if (!invCompany || !invTax || !invAddress) {
+    return res.status(400).json({ error: 'Thiếu thông tin xuất hóa đơn (Tên / MST / Địa chỉ)' });
   }
 
   // Pre-flight: caller's Gmail setup must be complete. The service throws
@@ -70,6 +90,13 @@ router.post('/send-planning', requireAuth, async (req, res) => {
       senderUserId: req.user.id,
       jobId, transportCompanyId: tcId,
       bookingIds, mailType: mail_type,
+      isReplacement: !!is_replacement,
+      invoiceInfo: {
+        type: invoice_info.type,
+        company: invCompany,
+        tax: invTax,
+        address: invAddress,
+      },
     });
     res.json(result);
   } catch (err) {
@@ -114,6 +141,17 @@ router.get('/history', requireAuth, async (req, res) => {
     console.error('GET /api/email/history error:', err.message);
     res.status(500).json({ error: err.message });
   }
+});
+
+// ─── GET /api/email/slb-invoice-info ──────────────────────────────────────────
+// Exposes SLB's own legal info so the frontend invoice modal can offer
+// "SLB Logistics" as a one-click pick without hardcoding the strings in JS.
+// DD + TPL + lead can read.
+router.get('/slb-invoice-info', requireAuth, (req, res) => {
+  if (!READ_ROLES.includes(req.user?.role)) {
+    return res.status(403).json({ error: 'Không có quyền' });
+  }
+  res.json({ ...SLB_INVOICE_INFO, type: 'slb' });
 });
 
 module.exports = router;

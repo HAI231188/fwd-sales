@@ -19,6 +19,16 @@ const nodemailer = require('nodemailer');
 const db = require('../db');
 const enc = require('../utils/encryption');
 
+// Phase 5 Step 3 Part 2 CP3.5b — SLB's own legal info, exposed via
+// GET /api/email/slb-invoice-info so the frontend invoice modal can pick
+// "SLB Logistics" as the bên xuất hóa đơn nâng hạ option without hard-
+// coding the same strings in JS.
+const SLB_INVOICE_INFO = Object.freeze({
+  company: 'CÔNG TY TNHH TIẾP VẬN TOÀN CẦU SLB',
+  tax: '0201743661',
+  address: 'Tầng 8 Tòa nhà Diamond, Số 7 Lô 8A Đường Lê Hồng Phong, Phường Gia Viên, Thành phố Hải Phòng, Việt Nam',
+});
+
 function fmtDt(val) {
   if (!val) return '—';
   const d = new Date(val);
@@ -26,11 +36,42 @@ function fmtDt(val) {
   return `${pad(d.getDate())}/${pad(d.getMonth()+1)}/${d.getFullYear()} `
        + `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
+// L19 — han_lenh meaning depends on jobs.import_export. For 'import' the value
+// is a calendar date (date-only on UI); for 'export' it's a precise cutoff
+// datetime. Same column, different format.
+function fmtHanLenh(val, impExp) {
+  if (!val) return '—';
+  const d = new Date(val);
+  const pad = n => String(n).padStart(2, '0');
+  if (impExp === 'import') {
+    return `${pad(d.getDate())}/${pad(d.getMonth()+1)}/${d.getFullYear()}`;
+  }
+  return `${pad(d.getDate())}/${pad(d.getMonth()+1)}/${d.getFullYear()} `
+       + `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+function shortDate(val) {
+  if (!val) return '';
+  const d = new Date(val);
+  const pad = n => String(n).padStart(2, '0');
+  return `${pad(d.getDate())}/${pad(d.getMonth()+1)}`;
+}
+function firstWord(s) {
+  if (!s) return '';
+  return String(s).trim().split(/\s+/)[0];
+}
 function fmtCost(c) {
   if (c == null || c === '') return '—';
   const n = Number(c);
   if (!Number.isFinite(n)) return '—';
   return n.toLocaleString('vi-VN') + 'đ';
+}
+function fmtWeight(w) {
+  if (w == null || w === '') return '';
+  const n = Number(w);
+  if (!Number.isFinite(n) || n === 0) return '';
+  // Drop trailing .00 if integer-equivalent.
+  const s = Number.isInteger(n) ? String(n) : n.toString();
+  return ` - ${s} tấn`;
 }
 function parseCcList(raw) {
   if (!raw) return [];
@@ -42,20 +83,27 @@ function parseCcList(raw) {
   } catch { return []; }
 }
 
-function renderSubject({ mailType, jobCode, n, transportName }) {
-  if (mailType === 'cancel') {
-    return `[HỦY kế hoạch giao xe] Job ${jobCode} - ${transportName}`;
-  }
-  return `[Kế hoạch giao xe] Job ${jobCode} - ${n} kế hoạch - ${transportName}`;
+function renderSubject({ mailType, jobCode, customerName, n, importExport, earliestPlanned }) {
+  const customerShort = firstWord(customerName);
+  const ieLabel = importExport === 'import' ? 'Nhập' : 'Xuất';
+  const dateLabel = shortDate(earliestPlanned);
+  const prefix = mailType === 'cancel' ? 'HỦY ĐẶT KẾ HOẠCH XE' : 'ĐẶT KẾ HOẠCH XE';
+  return `${prefix} ${jobCode} - ${customerShort} - ${n} cont / ${ieLabel} / ${dateLabel}`;
 }
 
-function renderBody({ mailType, transportName, bookings, senderDisplay }) {
+function renderBody({
+  mailType, isReplacement,
+  jobCode, customerName, shippingLine, hanLenh, importExport,
+  invoiceInfo, bookings,
+}) {
   const lines = [];
-  lines.push(`Kính gửi Quý nhà xe ${transportName},`);
+  lines.push('Kính gửi anh/chị,');
   lines.push('');
 
   if (mailType === 'cancel') {
-    lines.push('Chúng tôi xin thông báo HỦY các kế hoạch giao xe sau đây:');
+    lines.push('⚠️ THÔNG BÁO HỦY KẾ HOẠCH ⚠️');
+    lines.push('');
+    lines.push(`SLB Logistics xin HỦY các kế hoạch giao xe sau đây cho job ${jobCode}:`);
     lines.push('');
     bookings.forEach((b, i) => {
       lines.push(`${i + 1}. [${b.booking_code}] Cont ${b.cont_number || '(chưa số)'} (${b.cont_type})`);
@@ -63,34 +111,74 @@ function renderBody({ mailType, transportName, bookings, senderDisplay }) {
       lines.push(`   - Địa điểm: ${b.delivery_location || '—'}`);
       lines.push('');
     });
-    lines.push('Lý do: Có thay đổi kế hoạch. Vui lòng KHÔNG sắp xếp xe cho các kế hoạch trên.');
+    lines.push('Lý do: Có thay đổi kế hoạch.');
     lines.push('');
-    lines.push('Một kế hoạch mới sẽ được gửi trong email tiếp theo (nếu có).');
+    lines.push('Vui lòng KHÔNG sắp xếp xe theo các kế hoạch trên.');
+    lines.push('');
+    lines.push('Nếu có kế hoạch mới thay thế, sẽ được gửi trong email tiếp theo.');
     lines.push('');
     lines.push('Xin lỗi vì sự bất tiện này.');
+    lines.push('');
+    lines.push('Trân trọng,');
+    lines.push('Điều vận - SLB Logistics');
+    return lines.join('\n');
+  }
+
+  // mailType === 'new'
+  if (isReplacement) {
+    lines.push('🆕 KẾ HOẠCH MỚI (THAY THẾ KẾ HOẠCH ĐÃ HỦY) 🆕');
+    lines.push('');
+    lines.push(`SLB Logistics gửi kế hoạch giao hàng CẬP NHẬT cho job ${jobCode} như sau, nhờ anh/chị sắp xếp:`);
   } else {
-    lines.push('Vui lòng sắp xếp xe cho các kế hoạch sau:');
-    lines.push('');
-    bookings.forEach((b, i) => {
-      lines.push(`${i + 1}. [${b.booking_code}] Cont ${b.cont_number || '(chưa số)'} (${b.cont_type})`);
-      lines.push(`   - Ngày giờ giao: ${fmtDt(b.planned_datetime)}`);
-      lines.push(`   - Địa điểm giao: ${b.delivery_location || '—'}`);
-      lines.push(`   - Cước chốt: ${fmtCost(b.cost)}`);
-      lines.push(`   - Ghi chú: ${b.notes || '—'}`);
-      lines.push('');
-    });
-    lines.push('Vui lòng xác nhận và báo SỐ XE sớm nhất có thể.');
-    lines.push('');
-    lines.push('Đính kèm: Biên bản bàn giao (sẽ có ở phase tiếp theo)');
+    lines.push('SLB Logistics gửi kế hoạch giao hàng như sau, nhờ anh/chị sắp xếp:');
   }
   lines.push('');
+  lines.push(`📦 Tổng cộng: ${bookings.length} cont`);
+  lines.push(`🏢 Khách hàng: ${customerName || '—'}`);
+  lines.push(`🚢 Hãng tàu: ${shippingLine || '—'}`);
+  lines.push(`📅 Hạn lệnh / Cutoff: ${fmtHanLenh(hanLenh, importExport)}`);
+  lines.push('');
+  lines.push('📋 Thông tin xuất hóa đơn nâng hạ:');
+  lines.push(`   - Tên: ${invoiceInfo.company}`);
+  lines.push(`   - MST: ${invoiceInfo.tax}`);
+  lines.push(`   - Địa chỉ: ${invoiceInfo.address}`);
+  lines.push('');
+  lines.push('📝 Chi tiết kế hoạch:');
+  lines.push('');
+  bookings.forEach((b, i) => {
+    lines.push(`${i + 1}. [${b.booking_code}] Cont ${b.cont_number || '(chưa số)'} (${b.cont_type})${fmtWeight(b.weight_tons)}`);
+    lines.push(`   - Ngày giờ giao: ${fmtDt(b.planned_datetime)}`);
+    lines.push(`   - Địa điểm giao: ${b.delivery_location || '—'}`);
+    lines.push(`   - Cước chốt: ${fmtCost(b.cost)}`);
+    lines.push(`   - Ghi chú: ${b.note || b.notes || '—'}`);
+    lines.push('');
+  });
+  lines.push('Vui lòng xác nhận và báo SỐ XE sớm nhất có thể.');
+  lines.push('');
+  lines.push('Đính kèm: Biên bản bàn giao (đang phát triển)');
+  lines.push('');
   lines.push('Trân trọng,');
-  lines.push(senderDisplay || 'Điều độ');
+  lines.push('Điều vận - SLB Logistics');
   return lines.join('\n');
+}
+
+function validateInvoiceInfo(info) {
+  if (!info || typeof info !== 'object') {
+    throw new Error('Thiếu thông tin xuất hóa đơn');
+  }
+  const company = String(info.company || '').trim();
+  const tax = String(info.tax || '').trim();
+  const address = String(info.address || '').trim();
+  if (!company || !tax || !address) {
+    throw new Error('Thiếu thông tin xuất hóa đơn (cần đủ Tên, MST, Địa chỉ)');
+  }
+  // type is informational — accept any value, default 'custom'.
+  return { type: info.type || 'custom', company, tax, address };
 }
 
 async function sendPlanningEmail({
   senderUserId, jobId, transportCompanyId, bookingIds, mailType,
+  isReplacement = false, invoiceInfo,
 }) {
   if (!['new', 'cancel'].includes(mailType)) {
     throw new Error('mailType phải là "new" hoặc "cancel"');
@@ -98,6 +186,10 @@ async function sendPlanningEmail({
   if (!Array.isArray(bookingIds) || bookingIds.length === 0) {
     throw new Error('bookingIds rỗng — không có booking nào để gửi');
   }
+  // invoiceInfo is required for 'new' (body section needs it). For 'cancel'
+  // we still validate so the call shape stays uniform — but the cancel
+  // body doesn't render the invoice block, so callers can pass SLB defaults.
+  const invoice = validateInvoiceInfo(invoiceInfo);
 
   // ─── 1. Sender + decrypt ────────────────────────────────────────────────
   const { rows: [sender] } = await db.query(
@@ -140,18 +232,26 @@ async function sendPlanningEmail({
   const ccList = parseCcList(tc.email_cc);
 
   // ─── 3. Job ────────────────────────────────────────────────────────────
+  // shipping_line column doesn't exist yet on `jobs` — CP3.5b template
+  // shows it as '—' if NULL. A later schema change can add the column
+  // without touching this query (the COALESCE here will pick it up).
   const { rows: [job] } = await db.query(
-    `SELECT id, job_code, customer_name
+    `SELECT id, job_code, customer_name, han_lenh, import_export, NULL::text AS shipping_line
        FROM jobs WHERE id = $1 AND deleted_at IS NULL`,
     [jobId]
   );
   if (!job) throw new Error('Không tìm thấy job');
 
   // ─── 4. Bookings + container info ──────────────────────────────────────
-  // string_agg of cont numbers per booking (a booking can hold several conts).
+  // string_agg of cont numbers / types / weights per booking. Multi-cont
+  // bookings show all three as comma-separated lists; single-cont bookings
+  // (the common Phase 5 Step 2 batch pattern) render as a single value
+  // each. weight_tons is aggregated only when at least one container has a
+  // non-null weight — fmtWeight() drops the suffix when the joined string
+  // is empty.
   const { rows: bookings } = await db.query(`
     SELECT tb.id, tb.booking_code, tb.transport_company_id, tb.transport_name,
-           tb.planned_datetime, tb.delivery_location, tb.cost, tb.notes,
+           tb.planned_datetime, tb.delivery_location, tb.cost, tb.notes, tb.note,
            tb.vehicle_number,
            COALESCE((
              SELECT string_agg(COALESCE(jc.cont_number, '(chưa số)'), ', ' ORDER BY jc.id)
@@ -164,7 +264,13 @@ async function sendPlanningEmail({
                FROM truck_booking_containers tbc
                JOIN job_containers jc ON jc.id = tbc.container_id
               WHERE tbc.booking_id = tb.id
-           ), '—') AS cont_type
+           ), '—') AS cont_type,
+           NULLIF((
+             SELECT string_agg(jc.weight_tons::text, ', ' ORDER BY jc.id)
+               FROM truck_booking_containers tbc
+               JOIN job_containers jc ON jc.id = tbc.container_id
+              WHERE tbc.booking_id = tb.id AND jc.weight_tons IS NOT NULL
+           ), '') AS weight_tons
       FROM truck_bookings tb
      WHERE tb.id = ANY($1::int[])
        AND tb.job_id = $2
@@ -177,13 +283,30 @@ async function sendPlanningEmail({
   }
 
   // ─── 5. Render ──────────────────────────────────────────────────────────
+  // Earliest planned_datetime across the bookings → dd/MM subject suffix.
+  const earliestPlanned = bookings
+    .map(b => b.planned_datetime)
+    .filter(Boolean)
+    .sort((a, b) => new Date(a) - new Date(b))[0];
+
   const subject = renderSubject({
-    mailType, jobCode: job.job_code,
-    n: bookings.length, transportName: tc.name,
+    mailType,
+    jobCode: job.job_code,
+    customerName: job.customer_name,
+    n: bookings.length,
+    importExport: job.import_export,
+    earliestPlanned,
   });
   const body = renderBody({
-    mailType, transportName: tc.name, bookings,
-    senderDisplay: sender.gmail_display_name,
+    mailType,
+    isReplacement: !!isReplacement,
+    jobCode: job.job_code,
+    customerName: job.customer_name,
+    shippingLine: job.shipping_line,
+    hanLenh: job.han_lenh,
+    importExport: job.import_export,
+    invoiceInfo: invoice,
+    bookings,
   });
 
   // ─── 6. JSONB snapshot for "có thay đổi sau gửi" diff (CP5) ─────────────
@@ -193,6 +316,7 @@ async function sendPlanningEmail({
       booking_code: b.booking_code,
       cont_number: b.cont_number,
       cont_type: b.cont_type,
+      weight_tons: b.weight_tons,
       planned_datetime: b.planned_datetime,
       delivery_location: b.delivery_location,
       cost: b.cost,
@@ -200,6 +324,8 @@ async function sendPlanningEmail({
       transport_name: b.transport_name,
       vehicle_number: b.vehicle_number,
     })),
+    invoiceInfo: invoice,
+    isReplacement: !!isReplacement,
   };
 
   // ─── 7. Send via nodemailer (Gmail SMTP) ───────────────────────────────
@@ -260,4 +386,4 @@ async function sendPlanningEmail({
   };
 }
 
-module.exports = { sendPlanningEmail };
+module.exports = { sendPlanningEmail, SLB_INVOICE_INFO };
