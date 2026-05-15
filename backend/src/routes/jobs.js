@@ -855,6 +855,8 @@ router.get('/filtered', requireAuth, async (req, res) => {
           tb.planned_datetime,
           tb.delivery_location AS truck_delivery_location,
           tb.cost,
+          tb.receiver_name,
+          tb.receiver_phone,
           get_truck_booking_status(j.id) AS booking_status,
           COALESCE((
             SELECT string_agg(

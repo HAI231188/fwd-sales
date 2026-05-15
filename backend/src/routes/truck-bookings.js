@@ -65,7 +65,8 @@ async function loadBookingsByJob(client, jobId) {
       tb.transport_company_id, tb.transport_name,
       tb.planned_datetime, tb.actual_datetime, tb.delivery_location,
       tb.pickup_location, tb.cost, tb.vehicle_number,
-      tb.notes, tb.note, tb.completed_at, tb.created_at, tb.updated_at,
+      tb.notes, tb.note, tb.receiver_name, tb.receiver_phone, tb.bbbg_note,
+      tb.completed_at, tb.created_at, tb.updated_at,
       tc.name AS transport_current_name,
       COALESCE((
         SELECT json_agg(json_build_object(
@@ -93,7 +94,8 @@ async function loadBookingById(client, id) {
       tb.transport_company_id, tb.transport_name,
       tb.planned_datetime, tb.actual_datetime, tb.delivery_location,
       tb.pickup_location, tb.cost, tb.vehicle_number,
-      tb.notes, tb.note, tb.completed_at, tb.created_at, tb.updated_at,
+      tb.notes, tb.note, tb.receiver_name, tb.receiver_phone, tb.bbbg_note,
+      tb.completed_at, tb.created_at, tb.updated_at,
       tc.name AS transport_current_name,
       COALESCE((
         SELECT json_agg(json_build_object(
@@ -141,6 +143,7 @@ router.post('/', requireAuth, async (req, res) => {
     job_id, transport_company_id, planned_datetime, delivery_location,
     cost, container_ids, notes, note,
     actual_datetime, pickup_location,
+    receiver_name, receiver_phone, bbbg_note,
   } = req.body || {};
 
   if (!Number.isFinite(parseInt(job_id, 10))) {
@@ -230,8 +233,10 @@ router.post('/', requireAuth, async (req, res) => {
          (job_id, booking_code, transport_company_id, transport_name,
           planned_datetime, actual_datetime,
           delivery_location, pickup_location,
-          cost, notes, note, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+          cost, notes, note,
+          receiver_name, receiver_phone, bbbg_note,
+          created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
        RETURNING id`,
       [job_id, bookingCode, tcId, transport_name,
        planned_datetime,
@@ -239,7 +244,11 @@ router.post('/', requireAuth, async (req, res) => {
        delivery_location,
        (pickup_location === '' || pickup_location == null) ? null : pickup_location,
        (cost === '' || cost == null) ? null : cost,
-       notes || null, note || null, req.user.id]
+       notes || null, note || null,
+       (receiver_name  === '' || receiver_name  == null) ? null : receiver_name,
+       (receiver_phone === '' || receiver_phone == null) ? null : receiver_phone,
+       (bbbg_note      === '' || bbbg_note      == null) ? null : bbbg_note,
+       req.user.id]
     );
     const bookingId = bRows[0].id;
 
@@ -272,7 +281,8 @@ router.post('/', requireAuth, async (req, res) => {
 // container_ids NOT editable here — caller must DELETE + re-POST to re-shuffle.
 const PATCH_FIELDS = ['transport_company_id', 'planned_datetime', 'actual_datetime',
                       'delivery_location', 'pickup_location',
-                      'cost', 'vehicle_number', 'notes', 'note'];
+                      'cost', 'vehicle_number', 'notes', 'note',
+                      'receiver_name', 'receiver_phone', 'bbbg_note'];
 
 router.patch('/:id', requireAuth, async (req, res) => {
   if (!canWrite(req)) return res.status(403).json({ error: 'Không có quyền' });
@@ -302,7 +312,8 @@ router.patch('/:id', requireAuth, async (req, res) => {
       if (req.body[f] === undefined) continue;
       let v = req.body[f];
       // Normalize empty strings to null for the nullable columns.
-      if (['cost', 'vehicle_number', 'notes', 'note', 'actual_datetime', 'pickup_location'].includes(f)
+      if (['cost', 'vehicle_number', 'notes', 'note', 'actual_datetime', 'pickup_location',
+           'receiver_name', 'receiver_phone', 'bbbg_note'].includes(f)
           && (v === '' || v == null)) v = null;
       sets.push(`${f} = $${idx++}`); params.push(v);
     }
@@ -430,6 +441,9 @@ router.post('/batch', requireAuth, async (req, res) => {
       planned_datetime: r.planned_datetime,
       delivery_location: String(r.delivery_location).trim(),
       note: (r.note === '' || r.note == null) ? null : String(r.note),
+      receiver_name:  (r.receiver_name  === '' || r.receiver_name  == null) ? null : String(r.receiver_name),
+      receiver_phone: (r.receiver_phone === '' || r.receiver_phone == null) ? null : String(r.receiver_phone),
+      bbbg_note:      (r.bbbg_note      === '' || r.bbbg_note      == null) ? null : String(r.bbbg_note),
     });
   }
 
@@ -488,10 +502,13 @@ router.post('/batch', requireAuth, async (req, res) => {
       const { rows: bRows } = await client.query(
         `INSERT INTO truck_bookings
            (job_id, booking_code, transport_company_id, transport_name,
-            planned_datetime, delivery_location, note, created_by)
-         VALUES ($1, $2, NULL, NULL, $3, $4, $5, $6)
+            planned_datetime, delivery_location, note,
+            receiver_name, receiver_phone, bbbg_note,
+            created_by)
+         VALUES ($1, $2, NULL, NULL, $3, $4, $5, $6, $7, $8, $9)
          RETURNING id`,
-        [r.job_id, bookingCode, r.planned_datetime, r.delivery_location, r.note, req.user.id]
+        [r.job_id, bookingCode, r.planned_datetime, r.delivery_location, r.note,
+         r.receiver_name, r.receiver_phone, r.bbbg_note, req.user.id]
       );
       const bookingId = bRows[0].id;
       await client.query(

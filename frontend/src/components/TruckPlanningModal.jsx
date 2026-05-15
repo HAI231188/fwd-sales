@@ -3,11 +3,12 @@ import { createPortal } from 'react-dom';
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import {
-  getJob, getTruckBookings, updateTruckBooking, getTransportCompany,
+  getJob, getTruckBookings, updateTruckBooking,
   sendPlanningEmail, previewPlanningEmail,
 } from '../api';
 import TransportPicker from './TransportPicker';
 import InvoiceRecipientModal from './InvoiceRecipientModal';
+import ReceiverInfoModal from './ReceiverInfoModal';
 import { useModalZIndex } from '../hooks/useModalZIndex';
 import { useAuth } from '../App';
 
@@ -51,6 +52,8 @@ export default function TruckPlanningModal({ jobId, jobCode, onClose }) {
   const [saving, setSaving] = useState(false);
   const [previewGroup, setPreviewGroup] = useState(null);
   const [sendingGroupKey, setSendingGroupKey] = useState(null); // transport_company_id of the in-flight send
+  // CP4.1 — which booking's receiver-info modal is open (null = closed).
+  const [receiverModalBookingId, setReceiverModalBookingId] = useState(null);
   // CP3.5b — invoice picker gates the send. pendingMailContext holds the
   // group + send args while the modal is open; on confirm we fire the
   // mutation with the chosen invoice_info.
@@ -124,6 +127,11 @@ export default function TruckPlanningModal({ jobId, jobCode, onClose }) {
         transport_name: b?.transport_current_name || b?.transport_name || '',
         cost: b?.cost != null ? String(b.cost) : '',
         vehicle_number: b?.vehicle_number || '',
+        // CP4.1 — surfaced read-only into the row for the chip rendering; the
+        // actual edit happens via ReceiverInfoModal which PATCHes directly.
+        receiver_name:  b?.receiver_name  || '',
+        receiver_phone: b?.receiver_phone || '',
+        bbbg_note:      b?.bbbg_note      || '',
         dirty: false,
       };
     });
@@ -200,7 +208,8 @@ export default function TruckPlanningModal({ jobId, jobCode, onClose }) {
           ) : (
             <>
               <SectionTitle>Vùng 1: Bảng kế hoạch theo container</SectionTitle>
-              <Vung1Table rows={rows} job={job} onUpdateRow={updateRow} />
+              <Vung1Table rows={rows} job={job} onUpdateRow={updateRow}
+                onOpenReceiver={(bookingId) => setReceiverModalBookingId(bookingId)} />
 
               <div style={{ height: 16 }} />
               <SectionTitle>Vùng 2: Mail gửi vận tải (theo nhóm)</SectionTitle>
@@ -254,6 +263,31 @@ export default function TruckPlanningModal({ jobId, jobCode, onClose }) {
         } : null}
         onClose={() => setPendingMailContext(null)}
         onConfirm={(invoiceInfo) => fireSend(invoiceInfo)} />
+
+      {/* CP4.1 — Receiver info per booking. Find the row matching the open
+          booking id; pass through booking shape ReceiverInfoModal expects. */}
+      <ReceiverInfoModal
+        isOpen={receiverModalBookingId != null}
+        booking={(() => {
+          if (receiverModalBookingId == null) return null;
+          const r = rows.find(x => x.booking_id === receiverModalBookingId);
+          return r ? {
+            id: r.booking_id, booking_code: r.booking_code,
+            receiver_name: r.receiver_name, receiver_phone: r.receiver_phone,
+            bbbg_note: r.bbbg_note,
+          } : null;
+        })()}
+        onClose={() => setReceiverModalBookingId(null)}
+        onSave={async (data) => {
+          try {
+            await updateTruckBooking(receiverModalBookingId, data);
+            await qc.invalidateQueries({ queryKey: ['truck-bookings', jobId] });
+            toast.success('Đã lưu người liên hệ');
+            setReceiverModalBookingId(null);
+          } catch (e) {
+            toast.error(e?.error || e?.message || 'Lỗi khi lưu');
+          }
+        }} />
     </div>
   ), document.body);
 }
@@ -267,7 +301,7 @@ function SectionTitle({ children }) {
   );
 }
 
-function Vung1Table({ rows, job, onUpdateRow }) {
+function Vung1Table({ rows, job, onUpdateRow, onOpenReceiver }) {
   const impExp = job?.import_export;
   const inp = { padding: '4px 6px', border: '1px solid var(--border)', borderRadius: 4,
     fontSize: 12, width: '100%', minWidth: 0, boxSizing: 'border-box' };
@@ -288,6 +322,7 @@ function Vung1Table({ rows, job, onUpdateRow }) {
             <th style={th}>Ngày giờ giao</th>
             <th style={th}>Hạn lệnh</th>
             <th style={{ ...th, minWidth: 180 }}>Vận tải</th>
+            <th style={th}>👤 Người liên hệ</th>
             <th style={th}>Cước</th>
             <th style={th}>Số xe</th>
           </tr>
@@ -328,6 +363,37 @@ function Vung1Table({ rows, job, onUpdateRow }) {
                         transport_company_id: v.transport_company_id ?? null,
                         transport_name: v.transport_name ?? '',
                       })} />
+                  )}
+                </td>
+                <td style={td}>
+                  {noBooking ? (
+                    <span style={{ color: 'var(--text-3)' }}>—</span>
+                  ) : r.receiver_name ? (
+                    <button type="button"
+                      onClick={() => onOpenReceiver(r.booking_id)}
+                      title={r.receiver_phone
+                        ? `${r.receiver_name} — ${r.receiver_phone}`
+                        : r.receiver_name}
+                      style={{
+                        padding: '2px 8px', background: 'var(--info-dim)',
+                        color: 'var(--info)', border: '1px solid transparent',
+                        borderRadius: 999, fontSize: 11, fontWeight: 600,
+                        cursor: 'pointer', whiteSpace: 'nowrap', maxWidth: 140,
+                        overflow: 'hidden', textOverflow: 'ellipsis',
+                      }}>
+                      👤 {r.receiver_name}
+                    </button>
+                  ) : (
+                    <button type="button"
+                      onClick={() => onOpenReceiver(r.booking_id)}
+                      style={{
+                        padding: '2px 8px', background: 'transparent',
+                        color: 'var(--text-2)', border: '1px dashed var(--border)',
+                        borderRadius: 6, fontSize: 11, fontWeight: 500,
+                        cursor: 'pointer', whiteSpace: 'nowrap',
+                      }}>
+                      👤 + Thêm
+                    </button>
                   )}
                 </td>
                 <td style={td}>

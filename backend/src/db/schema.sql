@@ -605,6 +605,18 @@ ALTER TABLE truck_bookings ADD COLUMN IF NOT EXISTS pickup_location TEXT;
 ALTER TABLE truck_bookings ALTER COLUMN transport_name DROP NOT NULL;
 ALTER TABLE truck_bookings ADD COLUMN IF NOT EXISTS note TEXT;
 
+-- Phase 5 Step 3 Part 2 CP4.1 — receiver contact at delivery location + driver note.
+-- BBBG (the document the truck driver carries) needs the warehouse contact's
+-- name + phone so the driver knows who to find on arrival, and a driver-only
+-- note that is intentionally NOT included in the email body to the carrier.
+--   • receiver_name / receiver_phone: "Người liên hệ tại kho" (per-booking, so
+--     different bookings on the same job can target different warehouses).
+--   • bbbg_note: text printed in BBBG only — does NOT bleed into the planning
+--     mail body (existing `note` column handles transport-facing notes).
+ALTER TABLE truck_bookings ADD COLUMN IF NOT EXISTS receiver_name  VARCHAR(200);
+ALTER TABLE truck_bookings ADD COLUMN IF NOT EXISTS receiver_phone VARCHAR(50);
+ALTER TABLE truck_bookings ADD COLUMN IF NOT EXISTS bbbg_note      TEXT;
+
 -- Phase 5 Step 3 — booking_code (Mã kế hoạch).
 -- Format "KH-{job_code}-{NN}", NN = 2-digit (or longer) sequential per job.
 -- The number space is permanent: soft-deleted bookings still occupy their

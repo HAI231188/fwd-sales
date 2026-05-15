@@ -137,6 +137,7 @@ function getColumns(filterType) {
       { key: 'planned_datetime',        label: 'KH ngày giờ' },
       { key: 'truck_delivery_location', label: 'Địa điểm giao' },
       { key: 'transport_name',          label: 'Vận tải' },
+      { key: 'receiver',                label: 'Người liên hệ' },
       { key: 'vehicle_number',          label: 'Số xe' },
       { key: 'booking_status',          label: 'Trạng thái' },
     ];
@@ -260,6 +261,16 @@ function renderCell(key, j, filterType) {
       </span>;
     case 'truck_delivery_location':
       return <span style={{ fontSize: 12, color: 'var(--text-2)' }}>{j.truck_delivery_location || '—'}</span>;
+    case 'receiver':
+      if (!j.receiver_name) return <span style={{ color: 'var(--text-3)', fontSize: 12 }}>—</span>;
+      return (
+        <span style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
+          👤 {j.receiver_name}
+          {j.receiver_phone && (
+            <span style={{ color: 'var(--text-2)' }}> — {j.receiver_phone}</span>
+          )}
+        </span>
+      );
     case 'ops_tasks_pending':
       return <span style={{ fontSize: 12, color: j.ops_tasks_pending ? 'var(--text)' : 'var(--text-3)' }}>
         {j.ops_tasks_pending || '—'}

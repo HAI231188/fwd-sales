@@ -861,6 +861,13 @@ function BookingRow({ j, isOpen, total, booked, ieBg, ieFg, imp,
                       <button className="btn btn-ghost btn-sm" style={{ fontSize: 11, color: 'var(--danger)' }}
                         onClick={e => { e.stopPropagation(); onDelete(b); }}>🗑 Xóa</button>
                     </div>
+                    {b.receiver_name && (
+                      <div style={{ gridColumn: '1 / -1', fontSize: 11, color: 'var(--text-2)',
+                        paddingTop: 4, borderTop: '1px dashed var(--border)' }}>
+                        👤 Người liên hệ: <strong style={{ color: 'var(--text)' }}>{b.receiver_name}</strong>
+                        {b.receiver_phone ? ` — ${b.receiver_phone}` : ''}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>

@@ -203,6 +203,11 @@ function BookingsSection({ jobId, jobCode, customerName, truckBookingStatus, can
                             Cont: {conts}
                           </div>
                         )}
+                        {b.receiver_name && (
+                          <div style={{ fontSize: 10, color: 'var(--text-2)', marginTop: 2 }}>
+                            👤 {b.receiver_name}{b.receiver_phone ? ` — ${b.receiver_phone}` : ''}
+                          </div>
+                        )}
                       </td>
                       <td style={td}>
                         {b.vehicle_number
