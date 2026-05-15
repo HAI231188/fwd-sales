@@ -14,6 +14,7 @@ const {
   sendPlanningEmail, previewPlanningEmail, SLB_INVOICE_INFO,
 } = require('../services/email-sender');
 const { generateMultiBookingBBBG } = require('../services/bbbg-pdf');
+const { getMailStatusPerTransport } = require('../services/email-status');
 
 const SEND_ROLES = ['dieu_do', 'truong_phong_log'];
 const READ_ROLES = ['dieu_do', 'truong_phong_log', 'lead'];
@@ -291,6 +292,142 @@ router.post('/preview-bbbg', requireAuth, async (req, res) => {
   } catch (err) {
     console.error('POST /api/email/preview-bbbg error:', err.message);
     if (!res.headersSent) res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── POST /api/email/send-cancel-planning ────────────────────────────────────
+// CP5.1 — send a HỦY mail to one transport company on a job. Looks up the
+// most recent successful 'new' mail to that (job, transport), pulls its
+// bookings_snapshot, and replays it as a cancel mail. No PDF attachments.
+//
+// Body: { job_id, transport_company_id, last_sent_email_id?, reason? }
+// last_sent_email_id is optional — when supplied, scope-validates that the
+// row belongs to this (job, transport). Otherwise the route picks the
+// latest 'sent new' row itself.
+//
+// Auth: same DD + TPL gate as send-planning.
+router.post('/send-cancel-planning', requireAuth, async (req, res) => {
+  if (!SEND_ROLES.includes(req.user?.role)) {
+    return res.status(403).json({ error: 'Không có quyền gửi mail' });
+  }
+
+  const { job_id, transport_company_id, last_sent_email_id, reason } = req.body || {};
+  const jobId = parseInt(job_id, 10);
+  const tcId  = parseInt(transport_company_id, 10);
+  if (!Number.isFinite(jobId)) return res.status(400).json({ error: 'job_id không hợp lệ' });
+  if (!Number.isFinite(tcId))  return res.status(400).json({ error: 'transport_company_id không hợp lệ' });
+  const lastIdRaw = last_sent_email_id != null ? parseInt(last_sent_email_id, 10) : null;
+  if (last_sent_email_id != null && !Number.isFinite(lastIdRaw)) {
+    return res.status(400).json({ error: 'last_sent_email_id không hợp lệ' });
+  }
+
+  try {
+    // Gmail pre-flight (mirrors /send-planning) so the user gets a 412 with
+    // an actionable redirect instead of a generic 500.
+    const { rows: [u] } = await db.query(
+      `SELECT (gmail_address IS NOT NULL
+               AND gmail_app_password_encrypted IS NOT NULL) AS ready
+         FROM users WHERE id = $1`,
+      [req.user.id]
+    );
+    if (!u?.ready) {
+      return res.status(412).json({
+        error: 'Vui lòng setup Gmail trong /change-password',
+        code: 'NO_GMAIL_SETUP',
+      });
+    }
+
+    // Look up the source 'new' row. If the caller passed an explicit id we
+    // scope-validate it; otherwise we pick the latest sent 'new' for this
+    // (job, transport).
+    const baseQuery = `
+      SELECT id, last_sent_data, booking_ids
+        FROM email_history
+       WHERE job_id = $1
+         AND recipient_transport_company_id = $2
+         AND mail_type = 'new'
+         AND status = 'sent'
+         AND deleted_at IS NULL
+    `;
+    const { rows: [hist] } = lastIdRaw
+      ? await db.query(`${baseQuery} AND id = $3 LIMIT 1`, [jobId, tcId, lastIdRaw])
+      : await db.query(`${baseQuery} ORDER BY created_at DESC, id DESC LIMIT 1`, [jobId, tcId]);
+    if (!hist) {
+      return res.status(404).json({
+        error: 'Không tìm thấy mail kế hoạch đã gửi để hủy. Cần gửi mail kế hoạch trước.',
+        code: 'NO_PREVIOUS_NEW_MAIL',
+      });
+    }
+
+    const snapshot = hist.last_sent_data || {};
+    const bookingsSnapshot = Array.isArray(snapshot.bookings_snapshot)
+      ? snapshot.bookings_snapshot
+      // Backward-compat: older 'new' rows stored bookings under .bookings.
+      : Array.isArray(snapshot.bookings) ? snapshot.bookings : [];
+    if (bookingsSnapshot.length === 0) {
+      return res.status(500).json({
+        error: 'Snapshot trong email_history không có thông tin bookings — không render được mail hủy.',
+      });
+    }
+
+    // bookingIds is required by sendPlanningEmail's body validation; supply
+    // the canonical id list from the snapshot so the email_history row's
+    // booking_ids[] column still references the canceled bookings.
+    const bookingIds = bookingsSnapshot
+      .map(b => Number(b.id))
+      .filter(Number.isFinite);
+
+    const result = await sendPlanningEmail({
+      senderUserId: req.user.id,
+      jobId, transportCompanyId: tcId,
+      bookingIds,
+      mailType: 'cancel',
+      // BBBG never attached on cancel; "Đính kèm" line always omitted.
+      attachBbbg: false,
+      // Force the renderer to use the historical snapshot rather than
+      // re-querying current truck_bookings (which may have moved/disappeared).
+      bookingsOverride: bookingsSnapshot,
+      reason: typeof reason === 'string' ? reason : null,
+      // SLB defaults for the invoice block — cancel template doesn't render
+      // it but the service still validates the shape. Pass SLB info so the
+      // validator passes; the value is moot since renderBody's cancel branch
+      // never touches invoiceInfo.
+      invoiceInfo: { type: 'slb', ...SLB_INVOICE_INFO },
+    });
+    res.json(result);
+  } catch (err) {
+    console.error('POST /api/email/send-cancel-planning error:', err.message);
+    if (err.code === 'NO_GMAIL_SETUP') {
+      return res.status(412).json({ error: err.message, code: err.code });
+    }
+    if (err.code === 'NO_TRANSPORT_EMAIL') {
+      return res.status(400).json({ error: err.message, code: err.code });
+    }
+    res.status(500).json({
+      error: err.message,
+      email_history_id: err.email_history_id,
+    });
+  }
+});
+
+// ─── GET /api/email/mail-status/:jobId ───────────────────────────────────────
+// CP5.1 — derived per-(job, transport) mail status that drives Vùng 2 pills.
+// DD + TPL gated (same as send-planning). Returns { groups, job_code }; see
+// services/email-status.js for the status enum + diff semantics.
+router.get('/mail-status/:jobId', requireAuth, async (req, res) => {
+  if (!SEND_ROLES.includes(req.user?.role)) {
+    return res.status(403).json({ error: 'Không có quyền' });
+  }
+  const jobId = parseInt(req.params.jobId, 10);
+  if (!Number.isFinite(jobId)) {
+    return res.status(400).json({ error: 'jobId không hợp lệ' });
+  }
+  try {
+    const result = await getMailStatusPerTransport(jobId);
+    res.json(result);
+  } catch (err) {
+    console.error('GET /api/email/mail-status/:jobId error:', err.message);
+    res.status(500).json({ error: err.message });
   }
 });
 

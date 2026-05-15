@@ -132,31 +132,37 @@ function renderBody({
   // entirely (no mention of attachments). Default true preserves CP4.3
   // behavior for callers that don't pass it.
   includeBbbgLine = true,
+  // CP5.1 — free-text cancellation reason. Rendered as "Lý do hủy: …"
+  // when present on a cancel mail; ignored on 'new' mails.
+  reason = null,
 }) {
   const lines = [];
   lines.push('Kính gửi anh/chị,');
   lines.push('');
 
   if (mailType === 'cancel') {
+    // CP5.1 — cancel template rewrite. Body uses bookings_snapshot from the
+    // historical 'new' mail (passed by the caller as `bookings`), so even if
+    // the original truck_bookings have since been moved/deleted the carrier
+    // still sees what they were originally asked to schedule.
     lines.push('⚠️ THÔNG BÁO HỦY KẾ HOẠCH ⚠️');
     lines.push('');
-    lines.push(`SLB Logistics xin HỦY các kế hoạch giao xe sau đây cho job ${jobCode}:`);
+    lines.push(`SLB Logistics xin thông báo HỦY kế hoạch giao hàng đã gửi trước đó cho job ${jobCode}:`);
     lines.push('');
-    bookings.forEach((b, i) => {
-      lines.push(`${i + 1}. [${b.booking_code}] Cont ${b.cont_number || '(chưa số)'} (${b.cont_type})`);
-      lines.push(`   - Ngày giờ đã chốt: ${fmtDt(b.planned_datetime)}`);
+    bookings.forEach(b => {
+      lines.push(`📦 [${b.booking_code}] Cont ${b.cont_number || '(chưa số)'} (${b.cont_type || '—'})`);
+      lines.push(`   - Ngày giao đã đặt: ${fmtDt(b.planned_datetime)}`);
       lines.push(`   - Địa điểm: ${b.delivery_location || '—'}`);
-      const rl = receiverLine(b);
-      if (rl) lines.push(rl);
       lines.push('');
     });
-    lines.push('Lý do: Có thay đổi kế hoạch.');
+    const cleanReason = (typeof reason === 'string' ? reason.trim() : '');
+    if (cleanReason) {
+      lines.push(`Lý do hủy: ${cleanReason}`);
+      lines.push('');
+    }
+    lines.push('Vui lòng KHÔNG sắp xếp xe cho kế hoạch này.');
     lines.push('');
-    lines.push('Vui lòng KHÔNG sắp xếp xe theo các kế hoạch trên.');
-    lines.push('');
-    lines.push('Nếu có kế hoạch mới thay thế, sẽ được gửi trong email tiếp theo.');
-    lines.push('');
-    lines.push('Xin lỗi vì sự bất tiện này.');
+    lines.push('Một kế hoạch MỚI sẽ được gửi trong email tiếp theo (nếu có).');
     lines.push('');
     lines.push('Trân trọng,');
     lines.push('Điều vận - SLB Logistics');
@@ -247,6 +253,14 @@ async function sendPlanningEmail({
   // compat: existing callers + scripts keep the auto-attach behavior they
   // expect; the InvoiceRecipientModal explicitly threads this through.
   attachBbbg = true,
+  // CP5.1 — cancel-flow overrides. When the caller supplies bookingsOverride
+  // (an array of snapshot rows from a previous 'new' mail), the loader is
+  // bypassed and the snapshot is used verbatim. This lets HỦY mails render
+  // the historical state even after the originating bookings were moved or
+  // deleted. `reason` is the free-text cancellation reason threaded into
+  // renderBody.
+  bookingsOverride = null,
+  reason = null,
 }) {
   if (!['new', 'cancel'].includes(mailType)) {
     throw new Error('mailType phải là "new" hoặc "cancel"');
@@ -311,13 +325,18 @@ async function sendPlanningEmail({
   if (!job) throw new Error('Không tìm thấy job');
 
   // ─── 4. Bookings + container info ──────────────────────────────────────
-  // string_agg of cont numbers / types / weights per booking. Multi-cont
-  // bookings show all three as comma-separated lists; single-cont bookings
-  // (the common Phase 5 Step 2 batch pattern) render as a single value
-  // each. weight_tons is aggregated only when at least one container has a
-  // non-null weight — fmtWeight() drops the suffix when the joined string
-  // is empty.
-  const { rows: bookings } = await db.query(`
+  // CP5.1 — cancel flow short-circuits the DB load: when bookingsOverride is
+  // supplied (historical snapshot from a previous 'new' mail), render that
+  // verbatim. The historical truck_bookings rows may have been moved or
+  // deleted by now, but the carrier needs to see what they were originally
+  // told to schedule. The shape matches what renderBody's cancel branch
+  // reads: booking_code / cont_number / cont_type / planned_datetime /
+  // delivery_location.
+  let bookings;
+  if (Array.isArray(bookingsOverride) && bookingsOverride.length > 0) {
+    bookings = bookingsOverride;
+  } else {
+  const { rows: rowsLoaded } = await db.query(`
     SELECT tb.id, tb.booking_code, tb.transport_company_id, tb.transport_name,
            tb.planned_datetime, tb.delivery_location, tb.cost, tb.notes, tb.note,
            tb.receiver_name, tb.receiver_phone,
@@ -346,6 +365,8 @@ async function sendPlanningEmail({
        AND tb.deleted_at IS NULL
      ORDER BY tb.id ASC
   `, [bookingIds, jobId]);
+  bookings = rowsLoaded;
+  }
 
   if (bookings.length === 0) {
     throw new Error('Không tìm thấy booking nào khớp với booking_ids cho job này');
@@ -430,25 +451,30 @@ async function sendPlanningEmail({
     // attach loop was skipped (attachBbbg=false), this is false too, so the
     // body drops the "Đính kèm" line entirely.
     includeBbbgLine: attachBbbg,
+    // CP5.1 — free-text reason on cancel mails. Ignored for mailType='new'.
+    reason,
   });
 
-  // ─── 6. JSONB snapshot for "có thay đổi sau gửi" diff (CP5) ─────────────
+  // ─── 6. JSONB snapshot for "có thay đổi sau gửi" diff + cancel render ───
+  // CP5.1 — new shape. Top-level `booking_ids` is the canonical signal that
+  // email-status.js's diff logic reads. `bookings_snapshot` keeps the per-
+  // booking fields the cancel template needs to render the historical
+  // bookings even after they've been moved/deleted in current state.
   const snapshot = {
-    bookings: bookings.map(b => ({
+    booking_ids: bookings.map(b => Number(b.id)).filter(Number.isFinite),
+    transport_company_id: transportCompanyId,
+    job_id: jobId,
+    mailType,
+    isReplacement: !!isReplacement,
+    invoiceInfo: invoice,
+    bookings_snapshot: bookings.map(b => ({
       id: b.id,
       booking_code: b.booking_code,
       cont_number: b.cont_number,
       cont_type: b.cont_type,
-      weight_tons: b.weight_tons,
       planned_datetime: b.planned_datetime,
       delivery_location: b.delivery_location,
-      cost: b.cost,
-      transport_company_id: b.transport_company_id,
-      transport_name: b.transport_name,
-      vehicle_number: b.vehicle_number,
     })),
-    invoiceInfo: invoice,
-    isReplacement: !!isReplacement,
   };
 
   // ─── 7. Send via nodemailer (Gmail SMTP) ───────────────────────────────
