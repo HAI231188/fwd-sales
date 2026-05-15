@@ -80,21 +80,23 @@ function queryDieuDoStaffStats(scope) {
     SELECT u.id, u.name, u.role, u.code, u.avatar_color,
       COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL) AS pending_dd,
       COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL
-        AND get_truck_booking_status(j.id) = 'chua_dat_xe') AS no_plan,
+        AND get_truck_booking_status(j.id) = 'chua_dat_kh') AS no_plan,
       COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL
-        AND get_truck_booking_status(j.id) IN ('dat_xe_1_phan','da_dat_xe_du_cho_so_xe')) AS has_plan,
+        AND get_truck_booking_status(j.id) NOT IN ('chua_dat_kh','hoan_thanh')) AS has_plan,
       COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL
-        AND get_truck_booking_status(j.id) IN ('dat_xe_1_phan','da_dat_xe_du_cho_so_xe','da_giao_xong')) AS booked,
+        AND get_truck_booking_status(j.id) NOT IN ('chua_dat_kh','hoan_thanh')) AS booked,
       COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL
-        AND get_truck_booking_status(j.id) = 'dat_xe_1_phan') AS plan_no_truck,
-      -- "Sắp giao chưa đặt xe" = chua_dat_xe AND earliest deadline (han_lenh) within 24h.
+        AND get_truck_booking_status(j.id) = 'dat_kh_1_phan') AS plan_no_truck,
+      -- "Sắp giao chưa đặt xe" = chua_dat_kh AND earliest deadline (han_lenh) within 24h.
       COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL
-        AND get_truck_booking_status(j.id) = 'chua_dat_xe'
+        AND get_truck_booking_status(j.id) = 'chua_dat_kh'
         AND j.han_lenh BETWEEN NOW() AND NOW() + INTERVAL '24 hours') AS urgent_no_truck,
+      -- "Giao rồi chưa hoàn thành" = trucks dispatched (vehicles assigned) but
+      -- actual_datetime not yet captured on every booking → status du_xe_cho_giao.
       COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL
-        AND get_truck_booking_status(j.id) = 'da_dat_xe_du_cho_so_xe') AS overdue_delivery,
+        AND get_truck_booking_status(j.id) = 'du_xe_cho_giao') AS overdue_delivery,
       COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL
-        AND get_truck_booking_status(j.id) IN ('chua_dat_xe','dat_xe_1_phan','da_dat_xe_du_cho_so_xe')) AS quan_ly_dat_xe
+        AND get_truck_booking_status(j.id) <> 'hoan_thanh') AS quan_ly_dat_xe
     FROM users u
     LEFT JOIN job_assignments ja ON ja.dieu_do_id = u.id
     LEFT JOIN jobs j ON j.id = ja.job_id
@@ -222,12 +224,12 @@ router.get('/stats', requireAuth, async (req, res) => {
              jobChuaHt, keHoachDaDat, keHoachChuaDat,
              khQuaHan, khHomNay, khD1, khD2, khD3, khD4, khD5] = await Promise.all([
         db.query(`SELECT COUNT(*) AS v ${BASE}`, [userId]),
-        db.query(`SELECT COUNT(*) AS v ${BASE} AND get_truck_booking_status(j.id) IN ('dat_xe_1_phan','da_dat_xe_du_cho_so_xe')`, [userId]),
-        db.query(`SELECT COUNT(*) AS v ${BASE} AND get_truck_booking_status(j.id) = 'chua_dat_xe'`, [userId]),
-        db.query(`SELECT COUNT(*) AS v ${BASE} AND get_truck_booking_status(j.id) IN ('dat_xe_1_phan','da_dat_xe_du_cho_so_xe','da_giao_xong')`, [userId]),
-        db.query(`SELECT COUNT(*) AS v ${BASE} AND get_truck_booking_status(j.id) = 'chua_dat_xe' AND j.han_lenh BETWEEN NOW() AND NOW() + INTERVAL '24 hours'`, [userId]),
-        db.query(`SELECT COUNT(*) AS v ${BASE} AND get_truck_booking_status(j.id) IN ('dat_xe_1_phan','da_dat_xe_du_cho_so_xe') AND j.destination = 'hai_phong' AND COALESCE(ja.ops_done, FALSE) = FALSE`, [userId]),
-        db.query(`SELECT COUNT(*) AS v ${BASE} AND get_truck_booking_status(j.id) = 'da_dat_xe_du_cho_so_xe'`, [userId]),
+        db.query(`SELECT COUNT(*) AS v ${BASE} AND get_truck_booking_status(j.id) NOT IN ('chua_dat_kh','hoan_thanh')`, [userId]),
+        db.query(`SELECT COUNT(*) AS v ${BASE} AND get_truck_booking_status(j.id) = 'chua_dat_kh'`, [userId]),
+        db.query(`SELECT COUNT(*) AS v ${BASE} AND get_truck_booking_status(j.id) NOT IN ('chua_dat_kh','hoan_thanh')`, [userId]),
+        db.query(`SELECT COUNT(*) AS v ${BASE} AND get_truck_booking_status(j.id) = 'chua_dat_kh' AND j.han_lenh BETWEEN NOW() AND NOW() + INTERVAL '24 hours'`, [userId]),
+        db.query(`SELECT COUNT(*) AS v ${BASE} AND get_truck_booking_status(j.id) NOT IN ('chua_dat_kh','hoan_thanh') AND j.destination = 'hai_phong' AND COALESCE(ja.ops_done, FALSE) = FALSE`, [userId]),
+        db.query(`SELECT COUNT(*) AS v ${BASE} AND get_truck_booking_status(j.id) = 'du_xe_cho_giao'`, [userId]),
         db.query(`SELECT COUNT(*) AS v ${BASE} AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '48 hours'`, [userId]),
         queryDieuDoStaffStats({ userId }),
         // Phase 5 Step 1 — new counts driving Card 1.
@@ -704,31 +706,31 @@ router.get('/filtered', requireAuth, async (req, res) => {
         break;
       case 'staff_dd_no_plan':
         staffField = 'dieu_do_id';
-        extraWhere = `AND get_truck_booking_status(j.id) = 'chua_dat_xe'`;
+        extraWhere = `AND get_truck_booking_status(j.id) = 'chua_dat_kh'`;
         break;
       case 'staff_dd_has_plan':
         staffField = 'dieu_do_id';
-        extraWhere = `AND get_truck_booking_status(j.id) IN ('dat_xe_1_phan','da_dat_xe_du_cho_so_xe')`;
+        extraWhere = `AND get_truck_booking_status(j.id) NOT IN ('chua_dat_kh','hoan_thanh')`;
         break;
       case 'staff_dd_booked':
         staffField = 'dieu_do_id';
-        extraWhere = `AND get_truck_booking_status(j.id) IN ('dat_xe_1_phan','da_dat_xe_du_cho_so_xe','da_giao_xong')`;
+        extraWhere = `AND get_truck_booking_status(j.id) NOT IN ('chua_dat_kh','hoan_thanh')`;
         break;
       case 'staff_dd_plan_no_truck':
         staffField = 'dieu_do_id';
-        extraWhere = `AND get_truck_booking_status(j.id) = 'dat_xe_1_phan'`;
+        extraWhere = `AND get_truck_booking_status(j.id) = 'dat_kh_1_phan'`;
         break;
       case 'staff_dd_urgent_no_truck':
         staffField = 'dieu_do_id';
-        extraWhere = `AND get_truck_booking_status(j.id) = 'chua_dat_xe' AND j.han_lenh BETWEEN NOW() AND NOW() + INTERVAL '24 hours'`;
+        extraWhere = `AND get_truck_booking_status(j.id) = 'chua_dat_kh' AND j.han_lenh BETWEEN NOW() AND NOW() + INTERVAL '24 hours'`;
         break;
       case 'staff_dd_overdue_delivery':
         staffField = 'dieu_do_id';
-        extraWhere = `AND get_truck_booking_status(j.id) = 'da_dat_xe_du_cho_so_xe'`;
+        extraWhere = `AND get_truck_booking_status(j.id) = 'du_xe_cho_giao'`;
         break;
       case 'staff_dd_quan_ly_dat_xe':
         staffField = 'dieu_do_id';
-        extraWhere = `AND get_truck_booking_status(j.id) IN ('chua_dat_xe','dat_xe_1_phan','da_dat_xe_du_cho_so_xe')`;
+        extraWhere = `AND get_truck_booking_status(j.id) <> 'hoan_thanh'`;
         break;
       case 'staff_ops_managing':
         staffField = 'ops_id';
@@ -896,14 +898,15 @@ router.get('/filtered', requireAuth, async (req, res) => {
     case 'cus_waiting_confirm': extraWhere = `AND ja.cus_id IS NOT NULL AND ja.cus_confirm_status = 'pending'`; break;
     case 'cus_near_deadline':   extraWhere = `AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '24 hours'`; break;
     case 'cus_overdue':         extraWhere = `AND j.deadline < NOW()`; break;
-    // DieuDo filters — Phase 4: all migrated to get_truck_booking_status()
+    // DieuDo filters — Phase 5 CP4.5: migrated to 8-status enum. 'hoan_thanh'
+    // is now the true completion signal (= all bookings have actual_datetime).
     case 'truck_total':      break;
-    case 'truck_pending':    extraWhere = `AND get_truck_booking_status(j.id) <> 'da_giao_xong'`; break;
-    case 'truck_booked':     extraWhere = `AND get_truck_booking_status(j.id) = 'da_giao_xong'`; break;
-    case 'truck_not_booked': extraWhere = `AND get_truck_booking_status(j.id) = 'dat_xe_1_phan'`; break;
-    case 'truck_warning':    extraWhere = `AND get_truck_booking_status(j.id) <> 'da_giao_xong' AND j.han_lenh BETWEEN NOW() AND NOW() + INTERVAL '24 hours'`; break;
-    case 'dd_co_kh_xe':      extraWhere = `AND get_truck_booking_status(j.id) IN ('dat_xe_1_phan','da_dat_xe_du_cho_so_xe')`; break;
-    case 'dd_chua_kh_xe':    extraWhere = `AND get_truck_booking_status(j.id) = 'chua_dat_xe'`; break;
+    case 'truck_pending':    extraWhere = `AND get_truck_booking_status(j.id) <> 'hoan_thanh'`; break;
+    case 'truck_booked':     extraWhere = `AND get_truck_booking_status(j.id) = 'du_xe_cho_giao'`; break;
+    case 'truck_not_booked': extraWhere = `AND get_truck_booking_status(j.id) = 'dat_kh_1_phan'`; break;
+    case 'truck_warning':    extraWhere = `AND get_truck_booking_status(j.id) <> 'hoan_thanh' AND j.han_lenh BETWEEN NOW() AND NOW() + INTERVAL '24 hours'`; break;
+    case 'dd_co_kh_xe':      extraWhere = `AND get_truck_booking_status(j.id) NOT IN ('chua_dat_kh','hoan_thanh')`; break;
+    case 'dd_chua_kh_xe':    extraWhere = `AND get_truck_booking_status(j.id) = 'chua_dat_kh'`; break;
     // Phase 5 Step 1: container-level coverage drilldowns. L5-locked to the
     // ke_hoach_da_dat / ke_hoach_chua_dat stat counts above.
     case 'dd_ke_hoach_da_dat':
@@ -925,9 +928,9 @@ router.get('/filtered', requireAuth, async (req, res) => {
            )
       )`;
       break;
-    case 'dd_canh_bao_chua_van_tai':   extraWhere = `AND get_truck_booking_status(j.id) = 'chua_dat_xe' AND j.han_lenh BETWEEN NOW() AND NOW() + INTERVAL '24 hours'`; break;
-    case 'dd_canh_bao_chua_doi_lenh':  extraWhere = `AND get_truck_booking_status(j.id) IN ('dat_xe_1_phan','da_dat_xe_du_cho_so_xe') AND j.destination = 'hai_phong' AND COALESCE(ja.ops_done, FALSE) = FALSE`; break;
-    case 'dd_canh_bao_chua_hoan_thanh':extraWhere = `AND get_truck_booking_status(j.id) = 'da_dat_xe_du_cho_so_xe'`; break;
+    case 'dd_canh_bao_chua_van_tai':   extraWhere = `AND get_truck_booking_status(j.id) = 'chua_dat_kh' AND j.han_lenh BETWEEN NOW() AND NOW() + INTERVAL '24 hours'`; break;
+    case 'dd_canh_bao_chua_doi_lenh':  extraWhere = `AND get_truck_booking_status(j.id) NOT IN ('chua_dat_kh','hoan_thanh') AND j.destination = 'hai_phong' AND COALESCE(ja.ops_done, FALSE) = FALSE`; break;
+    case 'dd_canh_bao_chua_hoan_thanh':extraWhere = `AND get_truck_booking_status(j.id) = 'du_xe_cho_giao'`; break;
     case 'dd_sap_han':       extraWhere = `AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '48 hours'`; break;
     // OPS filters — must match the corresponding stat-card WHERE clauses exactly (CLAUDE.md L5)
     case 'ops_waiting_tq_doilenh':
@@ -2779,10 +2782,12 @@ router.post('/:id/bbbg-pdf', requireAuth, async (req, res) => {
 // CRUDed via /api/truck-bookings (see routes/truck-bookings.js).
 
 // GET /api/jobs/:id/truck-booking-status
-// Returns one of: 'no_containers' | 'chua_dat_xe' | 'dat_xe_1_phan' |
-// 'da_dat_xe_du_cho_so_xe' | 'da_giao_xong'. Logic lives in the plpgsql
-// function so the four dashboards stay aligned on a single source of truth
-// (L20). Any authenticated user can read.
+// Phase 5 CP4.5 — returns one of 8 strings:
+//   'chua_dat_kh' | 'dat_kh_1_phan' | 'du_kh_chua_chot_vt' |
+//   'du_kh_chot_vt_1_phan' | 'du_vt_chua_co_xe' | 'du_vt_co_xe_1_phan' |
+//   'du_xe_cho_giao' | 'hoan_thanh'.
+// Logic lives in the plpgsql function so the four dashboards stay aligned
+// on a single source of truth (L20). Any authenticated user can read.
 router.get('/:id/truck-booking-status', requireAuth, async (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (!Number.isFinite(id)) return res.status(400).json({ error: 'ID không hợp lệ' });
@@ -2790,7 +2795,7 @@ router.get('/:id/truck-booking-status', requireAuth, async (req, res) => {
     const { rows } = await db.query(
       `SELECT get_truck_booking_status($1) AS status`, [id]
     );
-    res.json({ status: rows[0]?.status || 'no_containers' });
+    res.json({ status: rows[0]?.status || 'chua_dat_kh' });
   } catch (err) {
     console.error('GET /:id/truck-booking-status error:', err.message);
     res.status(500).json({ error: err.message });

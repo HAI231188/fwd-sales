@@ -197,12 +197,13 @@ export default function LogDashboardDieuDo() {
     enabled: tab === 'completed',
     refetchInterval: 30000,
   });
-  // Phase 4: tab filters use truck_booking_status. "Đã có KH xe" = at least one
-  // booking exists (any non-final live status); "Chưa có KH xe" = no bookings.
+  // CP4.5: tab filters use the 8-status truck_booking_status. "Đã có KH xe" =
+  // any booking exists (not 'chua_dat_kh' AND not 'hoan_thanh' — the latter
+  // also gets filtered by status='pending' upstream); "Chưa có KH xe" =
+  // 'chua_dat_kh'.
   const coKhXeJobs = pendingJobs.filter(j =>
-    j.truck_booking_status === 'dat_xe_1_phan' ||
-    j.truck_booking_status === 'da_dat_xe_du_cho_so_xe');
-  const chuaKhXeJobs = pendingJobs.filter(j => j.truck_booking_status === 'chua_dat_xe');
+    j.truck_booking_status && j.truck_booking_status !== 'chua_dat_kh' && j.truck_booking_status !== 'hoan_thanh');
+  const chuaKhXeJobs = pendingJobs.filter(j => j.truck_booking_status === 'chua_dat_kh');
   const jobs = tab === 'completed' ? completedJobs
     : tab === 'co_kh_xe' ? coKhXeJobs
     : tab === 'chua_kh_xe' ? chuaKhXeJobs

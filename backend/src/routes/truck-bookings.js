@@ -1,4 +1,6 @@
 // /api/truck-bookings — multi-truck booking CRUD (Phase 2 of the truck_bookings system).
+// CP4.5: status enum migrated to 8 detailed values (see get_truck_booking_status
+// in schema.sql + frontend utils/truckBookingStatus.js).
 //
 // Replaces the deprecated job_truck workflow. One job can have N truck_bookings;
 // each booking carries a subset of the job's containers via truck_booking_containers
@@ -363,6 +365,19 @@ router.patch('/:id', requireAuth, async (req, res) => {
       }
     }
 
+    // CP4.5 — actual_datetime is the new completion driver. When it flips
+    // NULL → value (or value → NULL), the job's derived truck_booking_status
+    // may cross the 'hoan_thanh' threshold, so we run checkAndCompleteJob.
+    let actualDatetimeTransitioned = false;
+    if (req.body.actual_datetime !== undefined) {
+      const prev = cur.actual_datetime ? new Date(cur.actual_datetime).getTime() : null;
+      const rawNext = req.body.actual_datetime;
+      const nextNorm = (rawNext === '' || rawNext == null) ? null : new Date(rawNext).getTime();
+      if ((prev == null) !== (nextNorm == null) || prev !== nextNorm) {
+        actualDatetimeTransitioned = true;
+      }
+    }
+
     if (sets.length === 0) {
       await client.query('ROLLBACK');
       return res.json(await loadBookingById(db, id));
@@ -373,10 +388,13 @@ router.patch('/:id', requireAuth, async (req, res) => {
       `UPDATE truck_bookings SET ${sets.join(', ')} WHERE id = $${idx}`, params
     );
 
-    // Phase 4: vehicle_number transitions may flip the job's truck_booking_status
-    // to/from 'da_giao_xong', which can complete (or un-complete) the parent job.
-    // Call inside the same transaction so completion is atomic with the booking update.
-    if (vehicleTransitioned) {
+    // Phase 5 CP4.5: both vehicle_number AND actual_datetime transitions may
+    // flip the derived truck_booking_status, so either one triggers
+    // checkAndCompleteJob. Auto-complete fires only on the new 'hoan_thanh'
+    // value (= every alive booking has actual_datetime). vehicle_number
+    // transitions kept in the trigger set because they affect the derived
+    // status, even though the new auto-complete signal is actual_datetime.
+    if (vehicleTransitioned || actualDatetimeTransitioned) {
       await checkAndCompleteJob(client, cur.job_id, req.user.id, null);
     }
 

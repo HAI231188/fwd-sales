@@ -701,47 +701,82 @@ CREATE INDEX IF NOT EXISTS idx_truck_bookings_transport
 CREATE INDEX IF NOT EXISTS idx_truck_booking_containers_booking
   ON truck_booking_containers(booking_id);
 
--- Job-level booking status derived from container coverage + vehicle assignment:
---   'no_containers'         job has no containers at all
---   'chua_dat_xe'           job has containers but no active bookings
---   'dat_xe_1_phan'         at least one container booked, but some still loose
---   'da_dat_xe_du_cho_so_xe' all containers booked but some bookings missing vehicle_number
---   'da_giao_xong'          all containers booked AND all bookings have vehicle_number
+-- Phase 5 CP4.5 — jobs.completed_at captures when the job auto-flipped from
+-- pending to completed (driven by all bookings reaching actual_datetime
+-- IS NOT NULL — see services/job-completion.js). Idempotent.
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;
+
+-- Job-level booking status — Phase 5 CP4.5 expansion to 8 detailed states.
+-- A = total job_containers
+-- B = unique containers covered by an alive booking
+-- C = alive bookings with transport_company_id set
+-- D = alive bookings with vehicle_number set
+-- E = alive bookings with actual_datetime set
+-- total_bookings = COUNT(alive bookings)
+--
+-- Returns one of (in workflow order):
+--   'chua_dat_kh'           no plan at all
+--   'dat_kh_1_phan'         some containers booked, some still loose
+--   'du_kh_chua_chot_vt'    full coverage, no carrier picked on any booking
+--   'du_kh_chot_vt_1_phan'  full coverage, some bookings have carrier
+--   'du_vt_chua_co_xe'      full coverage + all carriers, no vehicles yet
+--   'du_vt_co_xe_1_phan'    full coverage + all carriers, some vehicles
+--   'du_xe_cho_giao'        all vehicles assigned, awaiting actual delivery
+--   'hoan_thanh'            every booking has actual_datetime — triggers
+--                           auto-complete of the parent job
 CREATE OR REPLACE FUNCTION get_truck_booking_status(p_job_id INT) RETURNS TEXT AS $$
 DECLARE
-  total_cont            INT;
-  booked_cont           INT;
-  total_booking         INT;
-  bookings_with_vehicle INT;
+  a_total_cont          INT;  -- A
+  b_booked_cont         INT;  -- B
+  c_with_transport      INT;  -- C
+  d_with_vehicle        INT;  -- D
+  e_with_actual         INT;  -- E
+  total_bookings        INT;
 BEGIN
-  SELECT COUNT(*) INTO total_cont FROM job_containers WHERE job_id = p_job_id;
+  SELECT COUNT(*) INTO a_total_cont
+    FROM job_containers WHERE job_id = p_job_id;
 
-  IF total_cont = 0 THEN
-    RETURN 'no_containers';
-  END IF;
+  SELECT COUNT(*) INTO total_bookings
+    FROM truck_bookings WHERE job_id = p_job_id AND deleted_at IS NULL;
 
-  SELECT COUNT(DISTINCT tbc.container_id) INTO booked_cont
+  SELECT COUNT(DISTINCT tbc.container_id) INTO b_booked_cont
     FROM truck_booking_containers tbc
     JOIN truck_bookings tb ON tb.id = tbc.booking_id
    WHERE tb.job_id = p_job_id AND tb.deleted_at IS NULL;
 
-  SELECT COUNT(*) INTO total_booking
-    FROM truck_bookings WHERE job_id = p_job_id AND deleted_at IS NULL;
+  SELECT
+    COUNT(*) FILTER (WHERE tb.transport_company_id IS NOT NULL),
+    COUNT(*) FILTER (WHERE tb.vehicle_number   IS NOT NULL AND tb.vehicle_number   <> ''),
+    COUNT(*) FILTER (WHERE tb.actual_datetime  IS NOT NULL)
+    INTO c_with_transport, d_with_vehicle, e_with_actual
+    FROM truck_bookings tb
+   WHERE tb.job_id = p_job_id AND tb.deleted_at IS NULL;
 
-  SELECT COUNT(*) INTO bookings_with_vehicle
-    FROM truck_bookings
-   WHERE job_id = p_job_id AND deleted_at IS NULL
-     AND vehicle_number IS NOT NULL AND vehicle_number != '';
-
-  IF total_booking = 0 THEN
-    RETURN 'chua_dat_xe';
-  ELSIF booked_cont < total_cont THEN
-    RETURN 'dat_xe_1_phan';
-  ELSIF bookings_with_vehicle < total_booking THEN
-    RETURN 'da_dat_xe_du_cho_so_xe';
-  ELSE
-    RETURN 'da_giao_xong';
+  -- Branch: no containers (typical LCL before cont entry, or any job whose
+  -- containers haven't been added). If there ARE bookings (rare under the
+  -- M:N invariant but possible if future flows decouple), still grade them
+  -- through the C/D/E pipeline.
+  IF a_total_cont = 0 THEN
+    IF total_bookings = 0                THEN RETURN 'chua_dat_kh';        END IF;
+    IF c_with_transport < total_bookings THEN RETURN 'du_kh_chua_chot_vt'; END IF;
+    IF d_with_vehicle   < total_bookings THEN RETURN 'du_vt_chua_co_xe';   END IF;
+    IF e_with_actual    < total_bookings THEN RETURN 'du_xe_cho_giao';    END IF;
+    RETURN 'hoan_thanh';
   END IF;
+
+  -- Main path: A > 0 (containers exist).
+  IF b_booked_cont = 0            THEN RETURN 'chua_dat_kh';        END IF;
+  IF b_booked_cont < a_total_cont THEN RETURN 'dat_kh_1_phan';      END IF;
+  -- All containers covered.
+  IF c_with_transport = 0                THEN RETURN 'du_kh_chua_chot_vt';   END IF;
+  IF c_with_transport < total_bookings   THEN RETURN 'du_kh_chot_vt_1_phan'; END IF;
+  -- All bookings have a carrier.
+  IF d_with_vehicle = 0                  THEN RETURN 'du_vt_chua_co_xe';     END IF;
+  IF d_with_vehicle < total_bookings     THEN RETURN 'du_vt_co_xe_1_phan';   END IF;
+  -- All bookings have a vehicle.
+  IF e_with_actual < total_bookings      THEN RETURN 'du_xe_cho_giao';       END IF;
+  -- All bookings have actual_datetime.
+  RETURN 'hoan_thanh';
 END;
 $$ LANGUAGE plpgsql;
 

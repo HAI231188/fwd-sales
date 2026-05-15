@@ -3,9 +3,13 @@
 // truck-bookings.js, …) — kept in one place per L19 (single source of truth
 // for derived status logic).
 //
-// Phase 4 update: truck side is sourced from get_truck_booking_status() —
-// `da_giao_xong` means all containers covered by bookings AND every booking
-// has a vehicle. The legacy job_truck.completed_at column is no longer read.
+// Phase 5 CP4.5 update: truck side is now sourced from the new 8-status
+// get_truck_booking_status() — `hoan_thanh` means every alive booking has
+// actual_datetime IS NOT NULL (the new "delivery actually happened" signal).
+// Previous `da_giao_xong` was a vehicle-assignment milestone, NOT a delivery
+// signal, and incorrectly triggered job completion before delivery occurred.
+// jobs.completed_at is now stamped with NOW() at the same time as the status
+// flip.
 
 async function checkAndCompleteJob(client, jobId, changedBy, recordHistory) {
   const { rows } = await client.query(`
@@ -23,7 +27,7 @@ async function checkAndCompleteJob(client, jobId, changedBy, recordHistory) {
   if (j.status === 'completed') return false;
 
   const tkDone    = !!j.tk_completed_at;
-  const truckDone = j.truck_booking_status === 'da_giao_xong';
+  const truckDone = j.truck_booking_status === 'hoan_thanh';
   const opsDone   = !!j.ops_done;
 
   let ready = false;
@@ -40,7 +44,7 @@ async function checkAndCompleteJob(client, jobId, changedBy, recordHistory) {
   if (!ready) return false;
 
   await client.query(
-    `UPDATE jobs SET status = 'completed', updated_at = NOW() WHERE id = $1`,
+    `UPDATE jobs SET status = 'completed', completed_at = NOW(), updated_at = NOW() WHERE id = $1`,
     [jobId]
   );
   if (recordHistory) {
