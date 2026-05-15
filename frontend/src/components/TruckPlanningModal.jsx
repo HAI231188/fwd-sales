@@ -5,10 +5,12 @@ import toast from 'react-hot-toast';
 import {
   getJob, getTruckBookings, updateTruckBooking,
   sendPlanningEmail, previewPlanningEmail, previewBBBGPdf,
+  getMailStatus, sendCancelPlanningEmail,
 } from '../api';
 import TransportPicker from './TransportPicker';
 import InvoiceRecipientModal from './InvoiceRecipientModal';
 import ReceiverInfoModal from './ReceiverInfoModal';
+import CancelMailConfirmModal from './CancelMailConfirmModal';
 import { useModalZIndex } from '../hooks/useModalZIndex';
 import { useAuth } from '../App';
 
@@ -149,6 +151,8 @@ export default function TruckPlanningModal({ jobId, jobCode, onClose }) {
           { icon: '⚠️', duration: 8000 });
       }
       qc.invalidateQueries({ queryKey: ['email-history', jobId] });
+      // CP5.2 — flip the transport's pill from chua_gui / co_thay_doi → da_gui.
+      qc.invalidateQueries({ queryKey: ['mail-status', jobId] });
     } catch (err) {
       const status = err?.response?.status ?? err?.status;
       const code = err?.code;
@@ -179,6 +183,21 @@ export default function TruckPlanningModal({ jobId, jobCode, onClose }) {
     queryFn: () => getTruckBookings(jobId),
     enabled: !!jobId,
   });
+
+  // CP5.2 — per-transport mail status (Vùng 2 pills + buttons). Returns
+  // groups for every transport involved in the job (currently OR historically),
+  // each with status enum + diff + last-sent snapshot.
+  const { data: mailStatusData } = useQuery({
+    queryKey: ['mail-status', jobId],
+    queryFn: () => getMailStatus(jobId),
+    enabled: !!jobId,
+  });
+  const mailStatusMap = useMemo(() => {
+    const map = new Map();
+    const groups = mailStatusData?.groups || [];
+    for (const g of groups) map.set(g.transport_company_id, g);
+    return map;
+  }, [mailStatusData]);
 
   // Per-container rows. Match each container to its booking (if any).
   const containers = job?.containers || [];
@@ -238,6 +257,10 @@ export default function TruckPlanningModal({ jobId, jobCode, onClose }) {
       }
       toast.success(`Đã lưu ${dirty.length} kế hoạch`);
       refetchBookings();
+      // CP5.2 — re-evaluate the per-transport status pills after any save;
+      // a transport change on a booking can flip a 'da_gui' card to
+      // 'co_thay_doi' or move it to 'can_huy'.
+      qc.invalidateQueries({ queryKey: ['mail-status', jobId] });
     } catch (e) {
       toast.error(e?.error || e?.message || 'Lỗi khi lưu');
     } finally {
@@ -263,6 +286,61 @@ export default function TruckPlanningModal({ jobId, jobCode, onClose }) {
     }
     return Array.from(map.values());
   }, [rows]);
+
+  // CP5.2 — Vùng 2 also shows "ghost" transports that have NO current bookings
+  // but DO have a previous 'sent new' mail (status can_huy / da_huy). Without
+  // these, DD couldn't reach the HỦY workflow for transports whose bookings
+  // were all moved to another carrier.
+  const ghostGroups = useMemo(() => {
+    if (!mailStatusData?.groups) return [];
+    const liveIds = new Set(groups.map(g => g.transport_company_id));
+    return mailStatusData.groups
+      .filter(s => !liveIds.has(s.transport_company_id))
+      .filter(s => s.status === 'can_huy' || s.status === 'da_huy')
+      .map(s => ({
+        transport_company_id: s.transport_company_id,
+        transport_name: s.transport_name || '(không xác định)',
+        rows: [],
+        isGhost: true,
+      }));
+  }, [mailStatusData, groups]);
+  const allGroups = useMemo(() => [...groups, ...ghostGroups], [groups, ghostGroups]);
+
+  // CP5.2 — Confirm modal target for HỦY send. Holds the (group, statusInfo)
+  // pair so the modal can render the bookings_snapshot from email_history.
+  const [cancelTarget, setCancelTarget] = useState(null);
+  const [cancelingGroupKey, setCancelingGroupKey] = useState(null);
+
+  async function fireSendCancel({ group, statusInfo, reason }) {
+    setCancelingGroupKey(group.transport_company_id);
+    try {
+      await sendCancelPlanningEmail({
+        job_id: jobId,
+        transport_company_id: group.transport_company_id,
+        last_sent_email_id: statusInfo?.last_sent_email_id || undefined,
+        reason: reason || undefined,
+      });
+      toast.success(`✅ Đã gửi mail HỦY cho ${group.transport_name}`);
+      setCancelTarget(null);
+      qc.invalidateQueries({ queryKey: ['mail-status', jobId] });
+      qc.invalidateQueries({ queryKey: ['email-history', jobId] });
+      qc.invalidateQueries({ queryKey: ['truck-bookings', jobId] });
+    } catch (err) {
+      const code = err?.code;
+      const msg = err?.error || err?.message || 'Lỗi gửi mail HỦY';
+      if (code === 'NO_GMAIL_SETUP') {
+        if (window.confirm(`${msg}\n\nMở /change-password ngay?`)) {
+          window.location.href = '/change-password';
+        }
+      } else if (code === 'NO_PREVIOUS_NEW_MAIL') {
+        toast.error('Không có mail kế hoạch trước đó để hủy.');
+      } else {
+        toast.error(`Lỗi gửi HỦY: ${msg}`);
+      }
+    } finally {
+      setCancelingGroupKey(null);
+    }
+  }
 
   const loading = jobL || bookingL;
 
@@ -290,7 +368,7 @@ export default function TruckPlanningModal({ jobId, jobCode, onClose }) {
 
               <div style={{ height: 16 }} />
               <SectionTitle>Vùng 2: Mail gửi vận tải (theo nhóm)</SectionTitle>
-              {groups.length === 0 ? (
+              {allGroups.length === 0 ? (
                 <div style={{ padding: 16, textAlign: 'center', color: 'var(--text-3)',
                   fontSize: 13, background: 'var(--bg)', borderRadius: 8 }}>
                   Chưa có vận tải nào được chốt. Vui lòng chọn vận tải ở bảng trên.
@@ -298,29 +376,52 @@ export default function TruckPlanningModal({ jobId, jobCode, onClose }) {
               ) : (
                 <div style={{ display: 'grid',
                   gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 12 }}>
-                  {groups.map(g => (
-                    <TransportCard key={g.transport_company_id} group={g}
-                      sending={sendingGroupKey === g.transport_company_id}
-                      loadingBbbg={bbbgLoadingGroupKey === g.transport_company_id}
-                      onPreview={() => setPreviewGroup(g)}
-                      onSend={() => {
-                        // Open invoice picker first; actual mutation fires
-                        // from fireSend() on InvoiceRecipientModal confirm.
-                        setPendingMailContext({
-                          group: g, mailType: 'new', isReplacement: false,
-                        });
-                      }}
-                      onPreviewBbbg={() => {
-                        // CP4.2 — dirty guard runs HERE so we don't open the
-                        // invoice modal when the user still has unsaved edits
-                        // (which would render with stale DB state).
-                        if (rows.some(r => r.dirty)) {
-                          window.alert('Bạn có thay đổi chưa lưu. Vui lòng Lưu trước khi xem BBBG.');
-                          return;
-                        }
-                        setPendingBbbgContext({ group: g });
-                      }} />
-                  ))}
+                  {allGroups.map(g => {
+                    const statusInfo = mailStatusMap.get(g.transport_company_id) || null;
+                    return (
+                      <TransportCard key={g.transport_company_id} group={g}
+                        statusInfo={statusInfo}
+                        sending={sendingGroupKey === g.transport_company_id}
+                        canceling={cancelingGroupKey === g.transport_company_id}
+                        loadingBbbg={bbbgLoadingGroupKey === g.transport_company_id}
+                        onPreview={() => setPreviewGroup(g)}
+                        onSend={() => {
+                          // Open invoice picker first; actual mutation fires
+                          // from fireSend() on InvoiceRecipientModal confirm.
+                          setPendingMailContext({
+                            group: g, mailType: 'new', isReplacement: false,
+                          });
+                        }}
+                        onPreviewBbbg={() => {
+                          // CP4.2 — dirty guard runs HERE so we don't open the
+                          // invoice modal when the user still has unsaved edits
+                          // (which would render with stale DB state).
+                          if (rows.some(r => r.dirty)) {
+                            window.alert('Bạn có thay đổi chưa lưu. Vui lòng Lưu trước khi xem BBBG.');
+                            return;
+                          }
+                          setPendingBbbgContext({ group: g });
+                        }}
+                        onCancelMail={() => {
+                          if (!statusInfo || !statusInfo.last_sent_email_id) {
+                            toast.error('Không có mail kế hoạch trước đó để hủy.');
+                            return;
+                          }
+                          setCancelTarget({ group: g, statusInfo });
+                        }}
+                        onShowHistory={() => {
+                          if (!statusInfo?.last_sent_at) {
+                            toast('Chưa có lịch sử gửi mail cho vận tải này.', { icon: 'ℹ️' });
+                            return;
+                          }
+                          const when = new Date(statusInfo.last_sent_at)
+                            .toLocaleString('vi-VN', { hour12: false });
+                          const kind = statusInfo.status === 'da_huy' ? 'HỦY' : 'MỚI';
+                          toast(`📜 Lần gửi cuối: ${when} — Gửi ${kind} (mail #${statusInfo.last_sent_email_id})`,
+                            { icon: '📜', duration: 6000 });
+                        }} />
+                    );
+                  })}
                 </div>
               )}
             </>
@@ -370,6 +471,22 @@ export default function TruckPlanningModal({ jobId, jobCode, onClose }) {
         } : null}
         onClose={() => setPendingBbbgContext(null)}
         onConfirm={(invoiceInfo) => firePreviewBbbg(invoiceInfo)} />
+
+      {/* CP5.2 — HỦY mail confirm. Renders the snapshot from email_history
+          so DD sees what's about to be cancelled before firing the POST. */}
+      <CancelMailConfirmModal
+        isOpen={!!cancelTarget}
+        transport={cancelTarget?.group ? {
+          name: cancelTarget.group.transport_name,
+          transport_company_id: cancelTarget.group.transport_company_id,
+        } : null}
+        bookings={cancelTarget?.statusInfo?.last_sent_snapshot || []}
+        onClose={() => setCancelTarget(null)}
+        onConfirm={({ reason }) => fireSendCancel({
+          group: cancelTarget.group,
+          statusInfo: cancelTarget.statusInfo,
+          reason,
+        })} />
 
       {/* CP4.1 — Receiver info per booking. Find the row matching the open
           booking id; pass through booking shape ReceiverInfoModal expects. */}
@@ -531,21 +648,75 @@ function Vung1Table({ rows, job, onUpdateRow, onOpenReceiver }) {
   );
 }
 
-function TransportCard({ group, sending, loadingBbbg, onPreview, onSend, onPreviewBbbg }) {
-  // Status field is still MOCK "Chưa gửi" — real per-card status (Đã gửi /
-  // Có thay đổi sau gửi / Cần gửi HỦY) lands in CP5 once email_history is
-  // queried per (job, transport_company_id) and diffed against current state.
+// CP5.2 — Status pill styles per spec.
+const STATUS_PILL = {
+  chua_gui:    { bg: 'rgba(107,114,128,0.12)', fg: '#6b7280', label: 'Chưa gửi' },
+  da_gui:      { bg: 'rgba(34,197,94,0.12)',   fg: '#16a34a', label: '✅ Đã gửi' },
+  co_thay_doi: { bg: 'rgba(217,119,6,0.14)',   fg: '#d97706', label: '⚠️ Có thay đổi sau gửi' },
+  can_huy:     { bg: 'rgba(239,68,68,0.12)',   fg: '#ef4444', label: '🚫 Cần gửi mail HỦY' },
+  da_huy:      { bg: 'rgba(75,85,99,0.16)',    fg: '#374151', label: '🚫 Đã hủy' },
+};
+function fmtSentTime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleString('vi-VN', { day: '2-digit', month: '2-digit',
+    hour: '2-digit', minute: '2-digit' });
+}
+
+function TransportCard({
+  group, statusInfo,
+  sending, canceling, loadingBbbg,
+  onPreview, onSend, onPreviewBbbg, onCancelMail, onShowHistory,
+}) {
+  const status = statusInfo?.status || 'chua_gui';
+  const pill = STATUS_PILL[status] || STATUS_PILL.chua_gui;
+  const sentTime = fmtSentTime(statusInfo?.last_sent_at);
+  // Diff summary for the co_thay_doi pill: "+1 cont, -2 cont"
+  const diff = statusInfo?.diff;
+  const diffSummary = diff
+    ? [diff.added?.length ? `+${diff.added.length} cont` : null,
+       diff.removed?.length ? `-${diff.removed.length} cont` : null]
+        .filter(Boolean).join(', ')
+    : '';
+
+  const busy = sending || canceling || loadingBbbg;
+  const isGhost = !!group.isGhost;
+  // Snapshot rows for ghost cards (no current bookings) — show what the
+  // carrier was originally promised so DD knows WHAT they're cancelling.
+  const ghostList = isGhost ? (statusInfo?.last_sent_snapshot || []) : [];
+
   return (
     <div className="card" style={{ padding: 14 }}>
       <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 8,
         display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
         <span>{group.transport_name}</span>
         <span style={{ fontSize: 11, color: 'var(--text-2)', fontWeight: 500 }}>
-          {group.rows.length} cont
+          {isGhost
+            ? `${ghostList.length} cont (đã chuyển)`
+            : `${group.rows.length} cont`}
         </span>
       </div>
+
+      {/* Current rows (live transports) — empty for ghost cards. */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 10 }}>
-        {group.rows.map(r => (
+        {isGhost && ghostList.length > 0 ? (
+          ghostList.map(b => (
+            <div key={b.id} style={{ fontSize: 12, display: 'flex', gap: 6, flexWrap: 'wrap',
+              color: 'var(--text-3)', textDecoration: 'line-through' }}>
+              <span style={{ padding: '1px 6px', background: 'rgba(107,114,128,0.14)',
+                color: 'var(--text-2)', borderRadius: 4, fontWeight: 600,
+                fontFamily: 'var(--font-display)', fontSize: 11 }}>
+                {b.booking_code || '—'}
+              </span>
+              <span>
+                {b.cont_number || '(chưa số)'} ({b.cont_type})
+                {b.planned_datetime ? ` — ${fmtPlanned(b.planned_datetime)}` : ''}
+                {b.delivery_location ? `, ${b.delivery_location}` : ''}
+              </span>
+            </div>
+          ))
+        ) : group.rows.map(r => (
           <div key={r.container_id} style={{ fontSize: 12, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
             <span style={{ padding: '1px 6px', background: 'var(--primary-dim)',
               color: 'var(--primary)', borderRadius: 4, fontWeight: 600,
@@ -561,19 +732,85 @@ function TransportCard({ group, sending, loadingBbbg, onPreview, onSend, onPrevi
           </div>
         ))}
       </div>
-      <div style={{ fontSize: 11, color: 'var(--text-2)', marginBottom: 10 }}>
-        Trạng thái: <span style={{ color: 'var(--warning)', fontWeight: 600 }}>Chưa gửi</span>
+
+      {/* CP5.2 — real status pill. */}
+      <div style={{ fontSize: 11, color: 'var(--text-2)', marginBottom: 10,
+        display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+        <span>Trạng thái:</span>
+        <span style={{ background: pill.bg, color: pill.fg,
+          padding: '2px 8px', borderRadius: 6, fontWeight: 600, fontSize: 11 }}>
+          {pill.label}
+          {status === 'da_gui' && sentTime ? ` (${sentTime})` : ''}
+          {status === 'co_thay_doi' && diffSummary ? ` (${diffSummary})` : ''}
+          {status === 'da_huy' && sentTime ? ` (${sentTime})` : ''}
+        </span>
       </div>
+
+      {/* CP5.2 — buttons per status. */}
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-        <button className="btn btn-primary btn-sm" onClick={onSend} disabled={sending || loadingBbbg}>
-          {sending ? '⏳ Đang gửi...' : '📧 Gửi mail kế hoạch'}
-        </button>
-        <button className="btn btn-ghost btn-sm" onClick={onPreview} disabled={sending || loadingBbbg}>
-          👁 Xem preview
-        </button>
-        <button className="btn btn-ghost btn-sm" onClick={onPreviewBbbg} disabled={sending || loadingBbbg}>
-          {loadingBbbg ? '⏳ Đang tạo...' : '👁 Xem BBBG'}
-        </button>
+        {status === 'chua_gui' && (
+          <>
+            <button className="btn btn-primary btn-sm" onClick={onSend} disabled={busy}>
+              {sending ? '⏳ Đang gửi...' : '📧 Gửi mail kế hoạch'}
+            </button>
+            <button className="btn btn-ghost btn-sm" onClick={onPreview} disabled={busy}>
+              👁 Xem mail
+            </button>
+            <button className="btn btn-ghost btn-sm" onClick={onPreviewBbbg} disabled={busy}>
+              {loadingBbbg ? '⏳ Đang tạo...' : '👁 Xem BBBG'}
+            </button>
+          </>
+        )}
+
+        {status === 'da_gui' && (
+          <>
+            <button className="btn btn-ghost btn-sm" onClick={onPreview} disabled={busy}>
+              👁 Xem mail đã gửi
+            </button>
+            <button className="btn btn-ghost btn-sm" onClick={onShowHistory} disabled={busy}>
+              📜 Lịch sử
+            </button>
+          </>
+        )}
+
+        {status === 'co_thay_doi' && (
+          <>
+            <button className="btn btn-sm" onClick={onCancelMail} disabled={busy}
+              style={{ background: '#ef4444', color: '#fff', borderColor: '#ef4444' }}>
+              {canceling ? '⏳ Đang gửi HỦY...' : '🚫 Gửi HỦY'}
+            </button>
+            <button className="btn btn-primary btn-sm" onClick={onSend} disabled={busy}>
+              {sending ? '⏳ Đang gửi...' : '📧 Gửi MỚI'}
+            </button>
+            <button className="btn btn-ghost btn-sm" onClick={onPreview} disabled={busy}>
+              👁 Xem mail
+            </button>
+            <button className="btn btn-ghost btn-sm" onClick={onPreviewBbbg} disabled={busy}>
+              {loadingBbbg ? '⏳ Đang tạo...' : '👁 Xem BBBG'}
+            </button>
+            <button className="btn btn-ghost btn-sm" onClick={onShowHistory} disabled={busy}>
+              📜 Lịch sử
+            </button>
+          </>
+        )}
+
+        {status === 'can_huy' && (
+          <>
+            <button className="btn btn-sm" onClick={onCancelMail} disabled={busy}
+              style={{ background: '#ef4444', color: '#fff', borderColor: '#ef4444' }}>
+              {canceling ? '⏳ Đang gửi HỦY...' : '🚫 Gửi mail HỦY'}
+            </button>
+            <button className="btn btn-ghost btn-sm" onClick={onShowHistory} disabled={busy}>
+              📜 Lịch sử
+            </button>
+          </>
+        )}
+
+        {status === 'da_huy' && (
+          <button className="btn btn-ghost btn-sm" onClick={onShowHistory} disabled={busy}>
+            📜 Lịch sử
+          </button>
+        )}
       </div>
     </div>
   );

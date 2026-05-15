@@ -39,6 +39,25 @@ function extractBookingIds(lastSentData) {
   return [];
 }
 
+// CP5.2 — expose the per-booking snapshot so the cancel-confirm modal can
+// preview what's about to be cancelled. Handles both new CP5.1 shape
+// (bookings_snapshot[]) and legacy CP3+ shape (bookings[] with extra fields).
+function extractSnapshot(lastSentData) {
+  if (!lastSentData || typeof lastSentData !== 'object') return null;
+  const src = Array.isArray(lastSentData.bookings_snapshot) ? lastSentData.bookings_snapshot
+            : Array.isArray(lastSentData.bookings)         ? lastSentData.bookings
+            : null;
+  if (!src || src.length === 0) return null;
+  return src.map(b => ({
+    id:                Number(b.id),
+    booking_code:      b.booking_code || null,
+    cont_number:       b.cont_number  || null,
+    cont_type:         b.cont_type    || null,
+    planned_datetime:  b.planned_datetime || null,
+    delivery_location: b.delivery_location || null,
+  }));
+}
+
 function diffSets(currentIds, lastIds) {
   const curSet = new Set(currentIds);
   const lastSet = new Set(lastIds);
@@ -153,6 +172,13 @@ async function getMailStatusPerTransport(jobId) {
       last_sent_email_id,
       last_sent_booking_ids,
       diff,
+      // CP5.2 — only attach the snapshot when there's a successful 'new'
+      // baseline (statuses that drive HỦY confirm UI). For chua_gui/da_huy
+      // it's null since the cancel flow doesn't apply or no longer applies.
+      last_sent_snapshot:
+        (status === 'da_gui' || status === 'co_thay_doi' || status === 'can_huy')
+          ? extractSnapshot(r.last_sent_data)
+          : null,
     };
   });
 

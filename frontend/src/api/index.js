@@ -178,6 +178,18 @@ export const previewPlanningEmail = (body) => api.post('/email/preview-planning'
 export const previewBBBGPdf = (body) =>
   api.post('/email/preview-bbbg', body, { responseType: 'blob' });
 
+// CP5.2 — per-transport mail status (drives Vùng 2 pills + buttons).
+// Returns { groups: [{transport_company_id, transport_name, booking_ids,
+//   status, last_sent_at, last_sent_email_id, last_sent_booking_ids, diff,
+//   last_sent_snapshot}], job_code }.
+export const getMailStatus = (jobId) => api.get(`/email/mail-status/${jobId}`);
+
+// CP5.2 — send HỦY mail for one (job, transport). Body: {job_id,
+// transport_company_id, last_sent_email_id?, reason?}. Server pulls the
+// bookings_snapshot from the source 'new' row and replays it as a cancel.
+export const sendCancelPlanningEmail = (body) =>
+  api.post('/email/send-cancel-planning', body);
+
 // Notifications
 export const getNotifications = () => api.get('/notifications');
 export const getUnreadCount = () => api.get('/notifications/unread-count');
