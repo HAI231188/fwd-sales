@@ -73,6 +73,16 @@ function fmtWeight(w) {
   const s = Number.isInteger(n) ? String(n) : n.toString();
   return ` - ${s} tấn`;
 }
+// CP4.1 — Per-booking warehouse contact line. Emitted only when name OR phone
+// is set; bbbg_note is intentionally NOT rendered (driver-only, BBBG PDF).
+function receiverLine(b) {
+  const name  = (b.receiver_name  || '').trim();
+  const phone = (b.receiver_phone || '').trim();
+  if (!name && !phone) return null;
+  const nameOut  = name || '—';
+  const phoneOut = phone ? ` - ${phone}` : '';
+  return `   - 👤 Người liên hệ tại kho: ${nameOut}${phoneOut}`;
+}
 function parseCcList(raw) {
   if (!raw) return [];
   try {
@@ -109,6 +119,8 @@ function renderBody({
       lines.push(`${i + 1}. [${b.booking_code}] Cont ${b.cont_number || '(chưa số)'} (${b.cont_type})`);
       lines.push(`   - Ngày giờ đã chốt: ${fmtDt(b.planned_datetime)}`);
       lines.push(`   - Địa điểm: ${b.delivery_location || '—'}`);
+      const rl = receiverLine(b);
+      if (rl) lines.push(rl);
       lines.push('');
     });
     lines.push('Lý do: Có thay đổi kế hoạch.');
@@ -157,6 +169,8 @@ function renderBody({
     lines.push(`   - Địa điểm giao: ${b.delivery_location || '—'}`);
     lines.push(`   - Cước chốt: ${fmtCost(b.cost)}`);
     lines.push(`   - Ghi chú: ${b.note || b.notes || '—'}`);
+    const rl = receiverLine(b);
+    if (rl) lines.push(rl);
     lines.push('');
   });
   lines.push('Vui lòng xác nhận và báo SỐ XE sớm nhất có thể.');
@@ -258,6 +272,7 @@ async function sendPlanningEmail({
   const { rows: bookings } = await db.query(`
     SELECT tb.id, tb.booking_code, tb.transport_company_id, tb.transport_name,
            tb.planned_datetime, tb.delivery_location, tb.cost, tb.notes, tb.note,
+           tb.receiver_name, tb.receiver_phone,
            tb.vehicle_number,
            COALESCE((
              SELECT string_agg(COALESCE(jc.cont_number, '(chưa số)'), ', ' ORDER BY jc.id)
@@ -450,6 +465,7 @@ async function previewPlanningEmail({
   const { rows: bookings } = await db.query(`
     SELECT tb.id, tb.booking_code, tb.transport_company_id, tb.transport_name,
            tb.planned_datetime, tb.delivery_location, tb.cost, tb.notes, tb.note,
+           tb.receiver_name, tb.receiver_phone,
            tb.vehicle_number,
            COALESCE((
              SELECT string_agg(COALESCE(jc.cont_number, '(chưa số)'), ', ' ORDER BY jc.id)
