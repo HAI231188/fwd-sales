@@ -631,6 +631,62 @@ ALTER TABLE truck_bookings ADD COLUMN IF NOT EXISTS receiver_name  VARCHAR(200);
 ALTER TABLE truck_bookings ADD COLUMN IF NOT EXISTS receiver_phone VARCHAR(50);
 ALTER TABLE truck_bookings ADD COLUMN IF NOT EXISTS bbbg_note      TEXT;
 
+-- Phase 5 CP5.3 — mail batch grouping. NULL = booking is in the forming
+-- (not-yet-mailed) batch for its transport. NOT NULL = booking belongs to a
+-- specific mail batch (= email_history.id of the 'new' mail that first
+-- mailed it). When a booking's transport_company_id changes via PATCH, the
+-- service-side handler resets mail_group_id to NULL so the booking joins
+-- the new transport's forming batch.
+ALTER TABLE truck_bookings ADD COLUMN IF NOT EXISTS mail_group_id INTEGER;
+CREATE INDEX IF NOT EXISTS idx_truck_bookings_mail_group
+  ON truck_bookings(mail_group_id) WHERE mail_group_id IS NOT NULL;
+
+-- One-shot backfill: walk every 'sent new' email_history row, parse its
+-- booking_ids from last_sent_data (handles both CP5.1 new shape and legacy
+-- `bookings[].id`), and tag the referenced truck_bookings with that mail
+-- row's id. Idempotent: only updates rows where mail_group_id IS NULL.
+DO $$
+DECLARE
+  m RECORD;
+  ids INT[];
+BEGIN
+  FOR m IN
+    SELECT eh.id AS email_id, eh.last_sent_data AS data
+      FROM email_history eh
+     WHERE eh.mail_type = 'new'
+       AND eh.status   = 'sent'
+       AND eh.deleted_at IS NULL
+  LOOP
+    IF m.data IS NULL THEN CONTINUE; END IF;
+    -- CP5.1+ shape: top-level booking_ids array
+    IF m.data ? 'booking_ids' THEN
+      ids := ARRAY(
+        SELECT (x)::int
+          FROM jsonb_array_elements_text(m.data->'booking_ids') AS x
+         WHERE x ~ '^\d+$'
+      );
+    ELSIF m.data ? 'bookings' THEN
+      -- Legacy CP3+ shape: bookings: [{id, ...}, ...]
+      ids := ARRAY(
+        SELECT (b->>'id')::int
+          FROM jsonb_array_elements(m.data->'bookings') AS b
+         WHERE (b->>'id') ~ '^\d+$'
+      );
+    ELSE
+      CONTINUE;
+    END IF;
+
+    IF ids IS NULL OR array_length(ids, 1) IS NULL THEN CONTINUE; END IF;
+
+    UPDATE truck_bookings
+       SET mail_group_id = m.email_id,
+           updated_at    = NOW()
+     WHERE id = ANY(ids)
+       AND mail_group_id IS NULL
+       AND deleted_at   IS NULL;
+  END LOOP;
+END $$;
+
 -- Phase 5 Step 3 — booking_code (Mã kế hoạch).
 -- Format "KH-{job_code}-{NN}", NN = 2-digit (or longer) sequential per job.
 -- The number space is permanent: soft-deleted bookings still occupy their

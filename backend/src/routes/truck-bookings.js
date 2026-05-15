@@ -68,6 +68,7 @@ async function loadBookingsByJob(client, jobId) {
       tb.planned_datetime, tb.actual_datetime, tb.delivery_location,
       tb.pickup_location, tb.cost, tb.vehicle_number,
       tb.notes, tb.note, tb.receiver_name, tb.receiver_phone, tb.bbbg_note,
+      tb.mail_group_id,
       tb.completed_at, tb.created_at, tb.updated_at,
       tc.name AS transport_current_name,
       COALESCE((
@@ -97,6 +98,7 @@ async function loadBookingById(client, id) {
       tb.planned_datetime, tb.actual_datetime, tb.delivery_location,
       tb.pickup_location, tb.cost, tb.vehicle_number,
       tb.notes, tb.note, tb.receiver_name, tb.receiver_phone, tb.bbbg_note,
+      tb.mail_group_id,
       tb.completed_at, tb.created_at, tb.updated_at,
       tc.name AS transport_current_name,
       COALESCE((
@@ -348,6 +350,12 @@ router.patch('/:id', requireAuth, async (req, res) => {
           sets.push(`transport_company_id = $${idx++}`); params.push(newId);
           sets.push(`transport_name = $${idx++}`);       params.push(tcRows[0].name);
         }
+        // CP5.3 — a transport change LEAVES the original batch. Reset
+        // mail_group_id to NULL so the booking joins the new transport's
+        // forming batch (or, if transport went to NULL, drops out of any
+        // batch). The previous batch then sees its booking set shrink,
+        // which the status query surfaces as 'co_thay_doi' or 'can_huy'.
+        sets.push(`mail_group_id = NULL`);
       }
     }
 

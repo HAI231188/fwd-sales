@@ -80,7 +80,7 @@ export default function TruckPlanningModal({ jobId, jobCode, onClose }) {
     if (!pendingBbbgContext) return;
     const ctx = pendingBbbgContext;
     setPendingBbbgContext(null);
-    setBbbgLoadingGroupKey(ctx.group.transport_company_id);
+    setBbbgLoadingGroupKey(ctx.group.key || ctx.group.transport_company_id);
     try {
       const blob = await previewBBBGPdf({
         job_id: jobId,
@@ -119,7 +119,7 @@ export default function TruckPlanningModal({ jobId, jobCode, onClose }) {
     if (!pendingMailContext) return;
     const ctx = pendingMailContext;
     setPendingMailContext(null);
-    setSendingGroupKey(ctx.group.transport_company_id);
+    setSendingGroupKey(ctx.group.key || ctx.group.transport_company_id);
     try {
       const result = await sendMut.mutateAsync({
         job_id: jobId,
@@ -192,10 +192,17 @@ export default function TruckPlanningModal({ jobId, jobCode, onClose }) {
     queryFn: () => getMailStatus(jobId),
     enabled: !!jobId,
   });
+  // CP5.3 — composite key: a single transport can have multiple batch cards
+  // (one per mail_group_id, plus one for the forming batch with key=NULL).
+  function statusKey(transportCompanyId, mailGroupId) {
+    return `${transportCompanyId}-${mailGroupId == null ? 'new' : mailGroupId}`;
+  }
   const mailStatusMap = useMemo(() => {
     const map = new Map();
     const groups = mailStatusData?.groups || [];
-    for (const g of groups) map.set(g.transport_company_id, g);
+    for (const g of groups) {
+      map.set(statusKey(g.transport_company_id, g.mail_group_id), g);
+    }
     return map;
   }, [mailStatusData]);
 
@@ -214,6 +221,8 @@ export default function TruckPlanningModal({ jobId, jobCode, onClose }) {
         planned_datetime: b?.planned_datetime || '',
         transport_company_id: b?.transport_company_id ?? null,
         transport_name: b?.transport_current_name || b?.transport_name || '',
+        // CP5.3 — null = forming batch, number = already-mailed batch id.
+        mail_group_id: b?.mail_group_id ?? null,
         cost: b?.cost != null ? String(b.cost) : '',
         vehicle_number: b?.vehicle_number || '',
         // CP4.1 — local edit state for receiver info. ReceiverInfoModal merges
@@ -268,17 +277,21 @@ export default function TruckPlanningModal({ jobId, jobCode, onClose }) {
     }
   }
 
-  // Vùng 2 grouping: live-derived from current rows. Only rows with a
-  // booking AND a chosen transport_company_id appear.
+  // Vùng 2 grouping: CP5.3 composite key (transport_company_id, mail_group_id).
+  // Each booking row carries its own mail_group_id (null = forming batch),
+  // so the same transport can produce multiple cards: one per sent batch
+  // plus one for any new bookings still in the forming batch.
   const groups = useMemo(() => {
     const map = new Map();
     for (const r of rows) {
       if (!r.booking_id || !r.transport_company_id) continue;
-      const key = r.transport_company_id;
+      const key = statusKey(r.transport_company_id, r.mail_group_id);
       if (!map.has(key)) {
         map.set(key, {
-          transport_company_id: key,
+          key,
+          transport_company_id: r.transport_company_id,
           transport_name: r.transport_name || '(chưa snapshot)',
+          mail_group_id: r.mail_group_id ?? null,
           rows: [],
         });
       }
@@ -287,24 +300,38 @@ export default function TruckPlanningModal({ jobId, jobCode, onClose }) {
     return Array.from(map.values());
   }, [rows]);
 
-  // CP5.2 — Vùng 2 also shows "ghost" transports that have NO current bookings
-  // but DO have a previous 'sent new' mail (status can_huy / da_huy). Without
-  // these, DD couldn't reach the HỦY workflow for transports whose bookings
-  // were all moved to another carrier.
+  // CP5.2 — "ghost" cards for sent batches with zero current alive bookings
+  // (status can_huy / da_huy). DD still needs to see them to send HỦY.
+  // CP5.3 — keyed by composite, so a transport can have BOTH a live forming
+  // batch AND a ghost prior batch surface side by side.
   const ghostGroups = useMemo(() => {
     if (!mailStatusData?.groups) return [];
-    const liveIds = new Set(groups.map(g => g.transport_company_id));
+    const liveKeys = new Set(groups.map(g => g.key));
     return mailStatusData.groups
-      .filter(s => !liveIds.has(s.transport_company_id))
+      .filter(s => !liveKeys.has(statusKey(s.transport_company_id, s.mail_group_id)))
       .filter(s => s.status === 'can_huy' || s.status === 'da_huy')
       .map(s => ({
+        key: statusKey(s.transport_company_id, s.mail_group_id),
         transport_company_id: s.transport_company_id,
         transport_name: s.transport_name || '(không xác định)',
+        mail_group_id: s.mail_group_id,
         rows: [],
         isGhost: true,
       }));
   }, [mailStatusData, groups]);
-  const allGroups = useMemo(() => [...groups, ...ghostGroups], [groups, ghostGroups]);
+  // CP5.3 — sort: transports alphabetically; within a transport, batches by
+  // mail_group_id ASC (earliest mailed first), forming batch (null) at the
+  // bottom so DD's next action gravitates to the live work.
+  const allGroups = useMemo(() => {
+    return [...groups, ...ghostGroups].sort((a, b) => {
+      const na = (a.transport_name || '').toLowerCase();
+      const nb = (b.transport_name || '').toLowerCase();
+      if (na !== nb) return na < nb ? -1 : 1;
+      const ga = a.mail_group_id ?? Number.POSITIVE_INFINITY;
+      const gb = b.mail_group_id ?? Number.POSITIVE_INFINITY;
+      return ga - gb;
+    });
+  }, [groups, ghostGroups]);
 
   // CP5.2 — Confirm modal target for HỦY send. Holds the (group, statusInfo)
   // pair so the modal can render the bookings_snapshot from email_history.
@@ -312,7 +339,7 @@ export default function TruckPlanningModal({ jobId, jobCode, onClose }) {
   const [cancelingGroupKey, setCancelingGroupKey] = useState(null);
 
   async function fireSendCancel({ group, statusInfo, reason }) {
-    setCancelingGroupKey(group.transport_company_id);
+    setCancelingGroupKey(group.key || group.transport_company_id);
     try {
       await sendCancelPlanningEmail({
         job_id: jobId,
@@ -377,13 +404,13 @@ export default function TruckPlanningModal({ jobId, jobCode, onClose }) {
                 <div style={{ display: 'grid',
                   gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 12 }}>
                   {allGroups.map(g => {
-                    const statusInfo = mailStatusMap.get(g.transport_company_id) || null;
+                    const statusInfo = mailStatusMap.get(g.key) || null;
                     return (
-                      <TransportCard key={g.transport_company_id} group={g}
+                      <TransportCard key={g.key} group={g}
                         statusInfo={statusInfo}
-                        sending={sendingGroupKey === g.transport_company_id}
-                        canceling={cancelingGroupKey === g.transport_company_id}
-                        loadingBbbg={bbbgLoadingGroupKey === g.transport_company_id}
+                        sending={sendingGroupKey === g.key}
+                        canceling={cancelingGroupKey === g.key}
+                        loadingBbbg={bbbgLoadingGroupKey === g.key}
                         onPreview={() => setPreviewGroup(g)}
                         onSend={() => {
                           // Open invoice picker first; actual mutation fires
@@ -685,12 +712,24 @@ function TransportCard({
   // Snapshot rows for ghost cards (no current bookings) — show what the
   // carrier was originally promised so DD knows WHAT they're cancelling.
   const ghostList = isGhost ? (statusInfo?.last_sent_snapshot || []) : [];
+  // CP5.3 — Đợt label. Forming batch (no mail_group_id) → "Đợt mới".
+  // Sent batches use the backend-computed batch_number (1, 2, …).
+  const isFormingBatch = group.mail_group_id == null;
+  const batchLabel = isFormingBatch
+    ? 'Đợt mới'
+    : `Đợt ${statusInfo?.batch_number ?? '?'}`;
 
   return (
     <div className="card" style={{ padding: 14 }}>
       <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 8,
         display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-        <span>{group.transport_name}</span>
+        <span>
+          {group.transport_name}
+          <span style={{ color: 'var(--text-2)', fontWeight: 500, fontSize: 12,
+            marginLeft: 6 }}>
+            — {batchLabel}
+          </span>
+        </span>
         <span style={{ fontSize: 11, color: 'var(--text-2)', fontWeight: 500 }}>
           {isGhost
             ? `${ghostList.length} cont (đã chuyển)`

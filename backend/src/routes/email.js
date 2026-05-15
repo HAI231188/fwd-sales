@@ -388,6 +388,10 @@ router.post('/send-cancel-planning', requireAuth, async (req, res) => {
       // re-querying current truck_bookings (which may have moved/disappeared).
       bookingsOverride: bookingsSnapshot,
       reason: typeof reason === 'string' ? reason : null,
+      // CP5.3 — link this cancel row to the source 'new' batch so the
+      // email-status query can flip the batch's pill to 'da_huy'. The
+      // source row's id IS the mail_group_id by construction.
+      mailGroupId: hist.id,
       // SLB defaults for the invoice block — cancel template doesn't render
       // it but the service still validates the shape. Pass SLB info so the
       // validator passes; the value is moot since renderBody's cancel branch

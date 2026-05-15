@@ -261,6 +261,12 @@ async function sendPlanningEmail({
   // renderBody.
   bookingsOverride = null,
   reason = null,
+  // CP5.3 — mail batch id. For 'cancel' sends the caller passes the source
+  // 'new' mail's email_history.id; that's persisted into
+  // last_sent_data.mail_group_id so the status query can link cancel rows
+  // to their parent batch. For 'new' sends this is patched after INSERT
+  // (the row's own id IS the mail_group_id).
+  mailGroupId = null,
 }) {
   if (!['new', 'cancel'].includes(mailType)) {
     throw new Error('mailType phải là "new" hoặc "cancel"');
@@ -475,6 +481,10 @@ async function sendPlanningEmail({
       planned_datetime: b.planned_datetime,
       delivery_location: b.delivery_location,
     })),
+    // CP5.3 — for cancel sends, persist the source 'new' mail's id so
+    // email-status can link cancel rows to their parent batch. For new
+    // sends, patched after INSERT below to equal the row's own id.
+    mail_group_id: mailType === 'cancel' ? (mailGroupId || null) : null,
   };
 
   // ─── 7. Send via nodemailer (Gmail SMTP) ───────────────────────────────
@@ -537,6 +547,32 @@ async function sendPlanningEmail({
     status, errorMessage, JSON.stringify(snapshot),
   ]);
 
+  // CP5.3 — after a successful 'new' send, claim ownership of these bookings
+  // in the forming-batch space: each gets mail_group_id = this row's id. Only
+  // updates bookings that are still in the forming batch (mail_group_id IS
+  // NULL) to avoid stealing them from a previously-mailed older batch (which
+  // would corrupt history). Also patches the snapshot's mail_group_id with
+  // the row's own id so email-status can link cancel rows symmetrically.
+  if (status === 'sent' && mailType === 'new') {
+    await db.query(
+      `UPDATE truck_bookings
+          SET mail_group_id = $1, updated_at = NOW()
+        WHERE id = ANY($2::int[])
+          AND mail_group_id IS NULL
+          AND deleted_at IS NULL`,
+      [hist.id, bookingIds]
+    );
+    await db.query(
+      `UPDATE email_history
+          SET last_sent_data = jsonb_set(
+                COALESCE(last_sent_data, '{}'::jsonb),
+                '{mail_group_id}',
+                to_jsonb($1::int))
+        WHERE id = $1`,
+      [hist.id]
+    );
+  }
+
   if (status === 'failed') {
     const e = new Error(errorMessage || 'Gửi mail thất bại');
     e.email_history_id = hist.id;
@@ -552,6 +588,9 @@ async function sendPlanningEmail({
     subject,
     attachmentCount: attachments.length,
     bbbgErrors: bbbgErrors.length ? bbbgErrors : null,
+    // CP5.3 — surface the batch id so the frontend can correlate. For 'new'
+    // it's the row's own id; for 'cancel' it's the source 'new' mail's id.
+    mail_group_id: mailType === 'new' ? hist.id : (mailGroupId || null),
   };
 }
 
