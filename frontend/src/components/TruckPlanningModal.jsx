@@ -127,8 +127,10 @@ export default function TruckPlanningModal({ jobId, jobCode, onClose }) {
         transport_name: b?.transport_current_name || b?.transport_name || '',
         cost: b?.cost != null ? String(b.cost) : '',
         vehicle_number: b?.vehicle_number || '',
-        // CP4.1 — surfaced read-only into the row for the chip rendering; the
-        // actual edit happens via ReceiverInfoModal which PATCHes directly.
+        // CP4.1 — local edit state for receiver info. ReceiverInfoModal merges
+        // changes here (marking the row dirty); the batch "Lưu thay đổi" footer
+        // PATCHes alongside cost/vehicle_number, matching how every other
+        // Vùng 1 column works.
         receiver_name:  b?.receiver_name  || '',
         receiver_phone: b?.receiver_phone || '',
         bbbg_note:      b?.bbbg_note      || '',
@@ -157,6 +159,11 @@ export default function TruckPlanningModal({ jobId, jobCode, onClose }) {
           transport_company_id: r.transport_company_id,
           cost: r.cost === '' ? null : Number(r.cost),
           vehicle_number: r.vehicle_number,
+          // CP4.1 — included in the batch PATCH so receiver edits from the
+          // small modal flow through the same save path as cost/vehicle.
+          receiver_name:  r.receiver_name  || null,
+          receiver_phone: r.receiver_phone || null,
+          bbbg_note:      r.bbbg_note      || null,
         });
       }
       toast.success(`Đã lưu ${dirty.length} kế hoạch`);
@@ -278,15 +285,21 @@ export default function TruckPlanningModal({ jobId, jobCode, onClose }) {
           } : null;
         })()}
         onClose={() => setReceiverModalBookingId(null)}
-        onSave={async (data) => {
-          try {
-            await updateTruckBooking(receiverModalBookingId, data);
-            await qc.invalidateQueries({ queryKey: ['truck-bookings', jobId] });
-            toast.success('Đã lưu người liên hệ');
-            setReceiverModalBookingId(null);
-          } catch (e) {
-            toast.error(e?.error || e?.message || 'Lỗi khi lưu');
-          }
+        onSave={(data) => {
+          // Option B (CP4.1 bug fix) — merge into local row state + mark dirty.
+          // No PATCH here. The footer "Lưu thay đổi" batch-PATCHes alongside
+          // cost / số xe / vận tải. Avoids the invalidate→refetch→initialRows
+          // reset that was wiping in-progress edits on sibling rows.
+          setRows(rs => rs.map(r =>
+            r.booking_id === receiverModalBookingId
+              ? { ...r,
+                  receiver_name:  data.receiver_name  || '',
+                  receiver_phone: data.receiver_phone || '',
+                  bbbg_note:      data.bbbg_note      || '',
+                  dirty: true }
+              : r
+          ));
+          setReceiverModalBookingId(null);
         }} />
     </div>
   ), document.body);
