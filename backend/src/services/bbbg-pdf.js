@@ -86,8 +86,11 @@ function buildBbbgPdf(data) {
   const companyX = left + (hasLogo ? 110 : 0);
   doc.font('RB').fontSize(11).fillColor('#0066b3').text('SLB GLOBAL LOGISTICS CO., LTD.', companyX, headerY);
   doc.font('R').fontSize(8).fillColor('#000');
-  doc.text('Address: Floor 5, SLB Building, Hanoi, Vietnam', companyX, doc.y + 1);
-  doc.text('Tel: +84 24 1234 5678   |   Hotline: 0900 123 456', companyX, doc.y + 1);
+  // CP4.2.3 — placeholder address/phone replaced with real SLB info. Website
+  // line kept as-is (not a placeholder).
+  doc.text('Address: 8th Floor, Diamond Building, No 7 Lot 8A Le Hong Phong, Ngo Quyen, Hai Phong, Viet Nam',
+    companyX, doc.y + 1);
+  doc.text('Tel: +84 931 334 331   |   Email: info@slbglobal.com', companyX, doc.y + 1);
   doc.text('Website: www.slbglobal.com   |   Email: info@slbglobal.com', companyX, doc.y + 1);
   doc.y = Math.max(doc.y, headerY + (hasLogo ? 70 : 50));
 
@@ -381,8 +384,15 @@ function drawPageHeader(doc, bookingCode, todayDate) {
   doc.font('RB').fontSize(11).fillColor('#0066b3')
      .text('SLB GLOBAL LOGISTICS CO., LTD.', txtX, headerY);
   doc.font('R').fontSize(8).fillColor('#000');
-  doc.text('Floor 5, SLB Building, Hanoi, Vietnam', txtX, doc.y + 1);
-  doc.text('Tel: +84 24 1234 5678   |   Hotline: 0900 123 456', txtX, doc.y + 1);
+  // CP4.2.3 — real address is long; render at 7pt with an explicit width that
+  // stops short of the right-aligned meta block ("Mã KH:" / "Ngày:") to avoid
+  // horizontal collision. lineBreak:false keeps it on one line.
+  doc.fontSize(7).text(
+    '8th Floor, Diamond Building, No 7 Lot 8A Le Hong Phong, Ngo Quyen, Hai Phong, Viet Nam',
+    txtX, doc.y + 1,
+    { width: usableW - 96 - 120, lineBreak: false }
+  );
+  doc.fontSize(8).text('Tel: +84 931 334 331   |   Email: info@slbglobal.com', txtX, doc.y + 1);
   // Right-side meta — booking code + date only.
   doc.font('RB').fontSize(9).text(`Mã KH: ${bookingCode || '—'}`,
     left, headerY, { width: usableW, align: 'right' });
