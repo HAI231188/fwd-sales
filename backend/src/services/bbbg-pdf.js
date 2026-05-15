@@ -15,6 +15,10 @@ const PDFDocument = require('pdfkit');
 const path = require('path');
 const fs = require('fs');
 const db = require('../db');
+// CP4.2.2 — English variant used when the caller picks "SLB Logistics" in
+// InvoiceRecipientModal. The BBBG goes to the customer for signature and is
+// an international document; the mail body keeps the Vietnamese variant.
+const { SLB_INVOICE_INFO_EN } = require('./email-sender');
 
 const FONT_REGULAR = path.join(__dirname, '..', 'assets', 'fonts', 'Roboto-Regular.ttf');
 const FONT_BOLD    = path.join(__dirname, '..', 'assets', 'fonts', 'Roboto-Bold.ttf');
@@ -518,8 +522,15 @@ async function generateMultiBookingBBBG({
 
     const today = new Date().toLocaleDateString('vi-VN');
     const pageTotal = bookings.length;
-    const inv = invoiceInfo && invoiceInfo.company && invoiceInfo.tax && invoiceInfo.address
-      ? invoiceInfo : null;
+    // CP4.2.2 — when the caller picked SLB, swap the company/tax/address in
+    // for the EN variant before the renderer reads them. This keeps the
+    // override on the server so the frontend can't spoof a different name
+    // by sending type='slb' with arbitrary text.
+    const invSource = invoiceInfo?.type === 'slb'
+      ? { ...invoiceInfo, ...SLB_INVOICE_INFO_EN }
+      : invoiceInfo;
+    const inv = invSource && invSource.company && invSource.tax && invSource.address
+      ? invSource : null;
 
     // Cargo totals — FCL uses tons, LCL uses kg. Unit follows cargo_type.
     const isFcl = (job.cargo_type || 'fcl') === 'fcl';

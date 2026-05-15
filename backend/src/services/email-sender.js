@@ -29,6 +29,17 @@ const SLB_INVOICE_INFO = Object.freeze({
   address: 'Tầng 8 Tòa nhà Diamond, Số 7 Lô 8A Đường Lê Hồng Phong, Phường Gia Viên, Thành phố Hải Phòng, Việt Nam',
 });
 
+// CP4.2.2 — English variant for the BBBG PDF (which goes to the customer for
+// signature, international document). Mail body continues to use the Vietnamese
+// SLB_INVOICE_INFO. The split is by destination, not by user choice — when the
+// user picks "SLB Logistics" in InvoiceRecipientModal, backend overrides values
+// from this constant for PDF and from SLB_INVOICE_INFO for mail.
+const SLB_INVOICE_INFO_EN = Object.freeze({
+  company: 'SLB GLOBAL LOGISTICS COMPANY LIMITED',
+  tax: '0201743661',
+  address: '8th Floor, Diamond Building, No 7 Lot 8A Le Hong Phong, Ngo Quyen, Hai Phong, Viet Nam',
+});
+
 function fmtDt(val) {
   if (!val) return '—';
   const d = new Date(val);
@@ -150,11 +161,19 @@ function renderBody({
   lines.push(`🚢 Hãng tàu: ${shippingLine || '—'}`);
   lines.push(`📅 Hạn lệnh / Cutoff: ${fmtHanLenh(hanLenh, importExport)}`);
   lines.push('');
-  if (invoiceInfo && invoiceInfo.company && invoiceInfo.tax && invoiceInfo.address) {
+  // CP4.2.2 — when the user picked "SLB Logistics", force the Vietnamese
+  // values regardless of what the frontend POSTed (it now displays English
+  // text on the SLB option so the BBBG PDF can render in English — but the
+  // mail body must stay Vietnamese for the Vietnamese-speaking carrier).
+  const invForBody = invoiceInfo?.type === 'slb'
+    ? { ...invoiceInfo, ...SLB_INVOICE_INFO }
+    : invoiceInfo;
+
+  if (invForBody && invForBody.company && invForBody.tax && invForBody.address) {
     lines.push('📋 Thông tin xuất hóa đơn nâng hạ:');
-    lines.push(`   - Tên: ${invoiceInfo.company}`);
-    lines.push(`   - MST: ${invoiceInfo.tax}`);
-    lines.push(`   - Địa chỉ: ${invoiceInfo.address}`);
+    lines.push(`   - Tên: ${invForBody.company}`);
+    lines.push(`   - MST: ${invForBody.tax}`);
+    lines.push(`   - Địa chỉ: ${invForBody.address}`);
   } else {
     // Preview path — invoiceInfo not chosen yet. The real send path always
     // passes a validated object so this branch only fires for previews.
@@ -546,4 +565,4 @@ async function previewPlanningEmail({
   };
 }
 
-module.exports = { sendPlanningEmail, previewPlanningEmail, SLB_INVOICE_INFO };
+module.exports = { sendPlanningEmail, previewPlanningEmail, SLB_INVOICE_INFO, SLB_INVOICE_INFO_EN };
