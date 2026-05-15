@@ -13,6 +13,7 @@ const { requireAuth } = require('../middleware/auth');
 const {
   sendPlanningEmail, previewPlanningEmail, SLB_INVOICE_INFO,
 } = require('../services/email-sender');
+const { generateMultiBookingBBBG } = require('../services/bbbg-pdf');
 
 const SEND_ROLES = ['dieu_do', 'truong_phong_log'];
 const READ_ROLES = ['dieu_do', 'truong_phong_log', 'lead'];
@@ -198,6 +199,87 @@ router.post('/preview-planning', requireAuth, async (req, res) => {
   } catch (err) {
     console.error('POST /api/email/preview-planning error:', err.message);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── POST /api/email/preview-bbbg ────────────────────────────────────────────
+// CP4.2 — Render BBBG PDF for ALL bookings in a transport group at once.
+// Same body shape as /preview-planning + /send-planning, but the response is
+// binary application/pdf (inline disposition so window.open() in the browser
+// loads it directly in the built-in PDF viewer).
+//
+// Same role gate as /send-planning (DD + TPL). invoice_info is REQUIRED here
+// because the BBBG section "Thông tin xuất hóa đơn nâng hạ" needs all 3
+// fields — the preview-bbbg flow always opens InvoiceRecipientModal first
+// on the frontend, so a caller without it is a bug we want to fail loud on.
+router.post('/preview-bbbg', requireAuth, async (req, res) => {
+  if (!SEND_ROLES.includes(req.user?.role)) {
+    return res.status(403).json({ error: 'Không có quyền' });
+  }
+
+  const { job_id, transport_company_id, booking_ids, invoice_info } = req.body || {};
+
+  const jobId = parseInt(job_id, 10);
+  const tcId  = parseInt(transport_company_id, 10);
+  if (!Number.isFinite(jobId)) return res.status(400).json({ error: 'job_id không hợp lệ' });
+  if (!Number.isFinite(tcId))  return res.status(400).json({ error: 'transport_company_id không hợp lệ' });
+  if (!Array.isArray(booking_ids) || booking_ids.length === 0) {
+    return res.status(400).json({ error: 'booking_ids rỗng' });
+  }
+  const bookingIds = booking_ids.map(x => parseInt(x, 10)).filter(Number.isFinite);
+  if (bookingIds.length !== booking_ids.length) {
+    return res.status(400).json({ error: 'booking_ids có giá trị không hợp lệ' });
+  }
+  if (!invoice_info || typeof invoice_info !== 'object') {
+    return res.status(400).json({ error: 'Thiếu thông tin xuất hóa đơn' });
+  }
+  if (!INVOICE_TYPES.includes(invoice_info.type)) {
+    return res.status(400).json({
+      error: `Loại bên xuất hóa đơn phải là ${INVOICE_TYPES.join(' / ')}`,
+    });
+  }
+  const invCompany = String(invoice_info.company || '').trim();
+  const invTax     = String(invoice_info.tax || '').trim();
+  const invAddress = String(invoice_info.address || '').trim();
+  if (!invCompany || !invTax || !invAddress) {
+    return res.status(400).json({ error: 'Thiếu thông tin xuất hóa đơn (Tên / MST / Địa chỉ)' });
+  }
+
+  try {
+    // Read job_code + transport short-name once for the filename. The PDF
+    // service does its own job/tc reads — this duplicate read is cheap and
+    // keeps the route in charge of HTTP headers.
+    const { rows: [job] } = await db.query(
+      `SELECT id, job_code FROM jobs WHERE id = $1 AND deleted_at IS NULL`, [jobId]
+    );
+    if (!job) return res.status(404).json({ error: 'Không tìm thấy job' });
+    const { rows: [tc] } = await db.query(
+      `SELECT id, name FROM transport_companies WHERE id = $1 AND deleted_at IS NULL`, [tcId]
+    );
+    if (!tc) return res.status(404).json({ error: 'Không tìm thấy vận tải' });
+
+    const pdfBuffer = await generateMultiBookingBBBG({
+      jobId, transportCompanyId: tcId, bookingIds,
+      invoiceInfo: {
+        type: invoice_info.type, company: invCompany,
+        tax: invTax, address: invAddress,
+      },
+      creatorName: req.user?.name || '',
+    });
+
+    const safeJobCode = (job.job_code || `${job.id}`).replace(/[^a-zA-Z0-9_-]/g, '_');
+    const safeTcName  = (tc.name || `tc${tc.id}`)
+      .normalize('NFD').replace(/[̀-ͯ]/g, '')
+      .replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 24);
+    const filename = `BBBG_${safeJobCode}_${safeTcName}.pdf`;
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+    res.setHeader('Content-Length', pdfBuffer.length);
+    res.send(pdfBuffer);
+  } catch (err) {
+    console.error('POST /api/email/preview-bbbg error:', err.message);
+    if (!res.headersSent) res.status(500).json({ error: err.message });
   }
 });
 

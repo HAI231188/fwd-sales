@@ -1,10 +1,20 @@
 // BBBG (Biên Bản Bàn Giao) PDF builder.
-// Stateless — produces a PDFKit document piped to caller's writable stream.
-// No DB writes, no filesystem writes (only optional reads of font/logo assets).
+//
+// Exports:
+//   buildBbbgPdf(data)                       — legacy single-page form-driven
+//                                              flow used by the manual BBBGModal.
+//                                              Returns a piped PDFDocument.
+//   generateMultiBookingBBBG({...})          — CP4.2 multi-booking BBBG (one
+//                                              page per booking) used by Vùng 2
+//                                              "Xem BBBG" + CP4.3 email attach.
+//                                              Returns Promise<Buffer>.
+//                                              Reads job + transport + bookings
+//                                              from DB itself.
 
 const PDFDocument = require('pdfkit');
 const path = require('path');
 const fs = require('fs');
+const db = require('../db');
 
 const FONT_REGULAR = path.join(__dirname, '..', 'assets', 'fonts', 'Roboto-Regular.ttf');
 const FONT_BOLD    = path.join(__dirname, '..', 'assets', 'fonts', 'Roboto-Bold.ttf');
@@ -227,4 +237,320 @@ function buildBbbgPdf(data) {
   return doc;
 }
 
-module.exports = { buildBbbgPdf };
+// ════════════════════════════════════════════════════════════════════════════
+// CP4.2 — Multi-booking BBBG (1 PDF, N pages, 1 page per booking)
+// ════════════════════════════════════════════════════════════════════════════
+
+function fmtDtVn(val) {
+  if (!val) return '—';
+  const d = new Date(val);
+  if (isNaN(d.getTime())) return '—';
+  const pad = n => String(n).padStart(2, '0');
+  return `${pad(d.getDate())}/${pad(d.getMonth()+1)}/${d.getFullYear()} `
+       + `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+// L19 — han_lenh meaning depends on jobs.import_export. 'import' = date only,
+// 'export' = full datetime cutoff.
+function fmtHanLenhVn(val, impExp) {
+  if (!val) return '—';
+  const d = new Date(val);
+  if (isNaN(d.getTime())) return '—';
+  const pad = n => String(n).padStart(2, '0');
+  if (impExp === 'import') {
+    return `${pad(d.getDate())}/${pad(d.getMonth()+1)}/${d.getFullYear()}`;
+  }
+  return `${pad(d.getDate())}/${pad(d.getMonth()+1)}/${d.getFullYear()} `
+       + `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+function fmtCostVn(c) {
+  if (c == null || c === '') return '—';
+  const n = Number(c);
+  if (!Number.isFinite(n)) return '—';
+  return n.toLocaleString('vi-VN') + 'đ';
+}
+function fmtWeightsList(containers) {
+  // Multi-cont per L20 — emit `25.5 tấn / 26 tấn` for two conts, or `—` when
+  // every container is missing weight_tons.
+  const parts = (containers || [])
+    .map(c => c.weight_tons)
+    .filter(w => w != null && w !== '')
+    .map(w => {
+      const n = Number(w);
+      if (!Number.isFinite(n) || n === 0) return null;
+      const s = Number.isInteger(n) ? String(n) : n.toString();
+      return `${s} tấn`;
+    })
+    .filter(Boolean);
+  return parts.length ? parts.join(' / ') : '—';
+}
+
+// Drawing primitives ─────────────────────────────────────────────────────────
+
+function drawBoxedSection(doc, x, y, w, titleVn, titleEn, rows) {
+  // Title strip
+  const titleH = 18;
+  doc.rect(x, y, w, titleH).fillAndStroke('#0066b3', '#0066b3');
+  doc.fillColor('#fff').font('RB').fontSize(9)
+     .text(titleVn, x + 8, y + 4, { width: w - 16, lineBreak: false });
+  doc.font('RI').fontSize(7).fillColor('#dbeafe')
+     .text(titleEn, x + 8, y + 4, { width: w - 16, align: 'right', lineBreak: false });
+  doc.fillColor('#000');
+  // Body rows
+  const rowH = 18;
+  const bodyH = rowH * rows.length;
+  doc.rect(x, y + titleH, w, bodyH).stroke('#999');
+  const labelW = 170;
+  for (let i = 0; i < rows.length; i++) {
+    const ry = y + titleH + i * rowH;
+    if (i > 0) doc.moveTo(x, ry).lineTo(x + w, ry).strokeColor('#d1d5db').stroke().strokeColor('#000');
+    const [labelVn, labelEn, value] = rows[i];
+    doc.font('RB').fontSize(9).fillColor('#374151')
+       .text(labelVn, x + 8, ry + 3, { width: labelW - 8, lineBreak: false });
+    doc.font('RI').fontSize(7).fillColor('#6b7280')
+       .text(`(${labelEn})`, x + 8, ry + 14, { width: labelW - 8, lineBreak: false });
+    doc.font('R').fontSize(10).fillColor('#000')
+       .text(value || '—', x + labelW, ry + 4, { width: w - labelW - 8, lineBreak: false });
+  }
+  doc.fillColor('#000');
+  return y + titleH + bodyH;
+}
+
+function drawPageHeader(doc, jobCode, bookingCode, customerName, shippingLine, todayDate) {
+  const left = doc.page.margins.left;
+  const right = doc.page.width - doc.page.margins.right;
+  const usableW = right - left;
+
+  const headerY = doc.y;
+  const logoPath = LOGO_CANDIDATES.find(fileExists) || null;
+  if (logoPath) {
+    try { doc.image(logoPath, left, headerY, { width: 80 }); } catch { /* skip */ }
+  }
+  const txtX = left + (logoPath ? 96 : 0);
+  doc.font('RB').fontSize(11).fillColor('#0066b3')
+     .text('SLB GLOBAL LOGISTICS CO., LTD.', txtX, headerY);
+  doc.font('R').fontSize(8).fillColor('#000');
+  doc.text('Floor 5, SLB Building, Hanoi, Vietnam', txtX, doc.y + 1);
+  doc.text('Tel: +84 24 1234 5678   |   Hotline: 0900 123 456', txtX, doc.y + 1);
+  // Right-side meta
+  doc.font('RB').fontSize(9).text(`Mã KH: ${bookingCode || '—'}`,
+    left, headerY, { width: usableW, align: 'right' });
+  doc.font('R').fontSize(8).text(`Ngày: ${todayDate}`,
+    left, headerY + 14, { width: usableW, align: 'right' });
+  doc.y = Math.max(doc.y, headerY + (logoPath ? 60 : 44));
+
+  // Title
+  doc.moveDown(0.3);
+  doc.font('RB').fontSize(16).fillColor('#000')
+     .text('BIÊN BẢN BÀN GIAO', { align: 'center' });
+  doc.font('RI').fontSize(9).fillColor('#444')
+     .text('(Handover Record / Proof of Delivery)', { align: 'center' });
+  doc.fillColor('#000');
+
+  // Job/customer meta block
+  doc.moveDown(0.4);
+  const my = doc.y;
+  doc.font('RB').fontSize(10).text(`Số job: `, left, my, { continued: true })
+     .font('R').text(jobCode || '—', { continued: true })
+     .font('RB').text('    Mã KH: ', { continued: true })
+     .font('R').text(bookingCode || '—');
+  doc.font('RB').fontSize(10).text(`Khách hàng: `, { continued: true })
+     .font('R').text(customerName || '—');
+  doc.font('RB').fontSize(10).text(`Hãng tàu: `, { continued: true })
+     .font('R').text(shippingLine || '—');
+  doc.moveDown(0.5);
+}
+
+function drawSignatures(doc) {
+  const left = doc.page.margins.left;
+  const right = doc.page.width - doc.page.margins.right;
+  const usableW = right - left;
+  const pageH = doc.page.height;
+  const sigY = Math.max(doc.y + 8, pageH - 130);
+  const colGap = 12;
+  const sigW = (usableW - colGap) / 2;
+  // Box headers
+  doc.rect(left, sigY, sigW, 22).fillAndStroke('#f3f4f6', '#999');
+  doc.rect(left + sigW + colGap, sigY, sigW, 22).fillAndStroke('#f3f4f6', '#999');
+  doc.fillColor('#000').font('RB').fontSize(9)
+     .text('ĐẠI DIỆN SLB', left, sigY + 4, { width: sigW, align: 'center' });
+  doc.font('RI').fontSize(7).fillColor('#555')
+     .text('(SLB Representative)', left, sigY + 14, { width: sigW, align: 'center' });
+  doc.font('RB').fontSize(9).fillColor('#000')
+     .text('ĐẠI DIỆN NHẬN HÀNG', left + sigW + colGap, sigY + 4, { width: sigW, align: 'center' });
+  doc.font('RI').fontSize(7).fillColor('#555')
+     .text('(Receiver Representative)', left + sigW + colGap, sigY + 14, { width: sigW, align: 'center' });
+  doc.fillColor('#000');
+  // Sign area
+  const signAreaH = 60;
+  doc.rect(left, sigY + 22, sigW, signAreaH).stroke('#999');
+  doc.rect(left + sigW + colGap, sigY + 22, sigW, signAreaH).stroke('#999');
+  doc.font('RI').fontSize(8).fillColor('#888')
+     .text('Ký, ghi rõ họ tên', left, sigY + 22 + signAreaH - 14,
+       { width: sigW, align: 'center' });
+  doc.text('Ký, ghi rõ họ tên', left + sigW + colGap, sigY + 22 + signAreaH - 14,
+       { width: sigW, align: 'center' });
+  doc.fillColor('#000');
+}
+
+function drawPageFooter(doc, pageIdx, pageTotal, creatorName) {
+  const left = doc.page.margins.left;
+  const right = doc.page.width - doc.page.margins.right;
+  const usableW = right - left;
+  const footerY = doc.page.height - doc.page.margins.bottom - 12;
+  const stamp = new Date().toLocaleString('vi-VN', { hour12: false });
+  doc.font('RI').fontSize(7).fillColor('#666')
+     .text(`Generated ${stamp}   |   page ${pageIdx}/${pageTotal}   |   by ${creatorName || ''}`,
+       left, footerY, { width: usableW, align: 'center' });
+  doc.fillColor('#000');
+}
+
+// Public entry ───────────────────────────────────────────────────────────────
+
+async function generateMultiBookingBBBG({
+  jobId, transportCompanyId, bookingIds, invoiceInfo, creatorName,
+}) {
+  if (!Number.isFinite(jobId)) throw new Error('jobId không hợp lệ');
+  if (!Number.isFinite(transportCompanyId)) throw new Error('transportCompanyId không hợp lệ');
+  if (!Array.isArray(bookingIds) || bookingIds.length === 0) {
+    throw new Error('bookingIds rỗng');
+  }
+
+  // 1. Job
+  const { rows: [job] } = await db.query(
+    `SELECT id, job_code, customer_name, han_lenh, import_export,
+            NULL::text AS shipping_line
+       FROM jobs WHERE id = $1 AND deleted_at IS NULL`,
+    [jobId]
+  );
+  if (!job) throw new Error('Không tìm thấy job');
+
+  // 2. Transport company — name is the primary field; tax_code does not exist
+  // on the table today, so leave it null (rendered as '—').
+  const { rows: [tc] } = await db.query(
+    `SELECT id, name FROM transport_companies WHERE id = $1 AND deleted_at IS NULL`,
+    [transportCompanyId]
+  );
+  if (!tc) throw new Error('Không tìm thấy vận tải');
+
+  // 3. Bookings + containers (M:N per L20). Scope by both id list AND
+  // job_id + transport_company_id so a stray id from another job can't leak
+  // through.
+  const { rows: bookings } = await db.query(`
+    SELECT tb.id, tb.booking_code, tb.planned_datetime, tb.delivery_location,
+           tb.cost, tb.note, tb.notes, tb.vehicle_number,
+           tb.receiver_name, tb.receiver_phone, tb.bbbg_note,
+           COALESCE((
+             SELECT json_agg(json_build_object(
+               'id', jc.id,
+               'cont_number', jc.cont_number,
+               'cont_type', jc.cont_type,
+               'weight_tons', jc.weight_tons
+             ) ORDER BY jc.id)
+             FROM truck_booking_containers tbc
+             JOIN job_containers jc ON jc.id = tbc.container_id
+             WHERE tbc.booking_id = tb.id
+           ), '[]'::json) AS containers
+      FROM truck_bookings tb
+     WHERE tb.id = ANY($1::int[])
+       AND tb.job_id = $2
+       AND tb.transport_company_id = $3
+       AND tb.deleted_at IS NULL
+     ORDER BY tb.planned_datetime ASC NULLS LAST, tb.id ASC
+  `, [bookingIds, jobId, transportCompanyId]);
+
+  if (bookings.length === 0) {
+    throw new Error('Không tìm thấy booking nào khớp');
+  }
+
+  // 4. Render — collect into a Buffer.
+  return await new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ size: 'A4', margin: 36 });
+    registerFonts(doc);
+    const chunks = [];
+    doc.on('data', c => chunks.push(c));
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+
+    const today = new Date().toLocaleDateString('vi-VN');
+    const pageTotal = bookings.length;
+    const inv = invoiceInfo && invoiceInfo.company && invoiceInfo.tax && invoiceInfo.address
+      ? invoiceInfo : null;
+
+    bookings.forEach((b, idx) => {
+      if (idx > 0) doc.addPage({ size: 'A4', margin: 36 });
+
+      drawPageHeader(doc, job.job_code, b.booking_code,
+        job.customer_name, job.shipping_line, today);
+
+      const left = doc.page.margins.left;
+      const right = doc.page.width - doc.page.margins.right;
+      const usableW = right - left;
+
+      // Section 1 — Transport
+      let y = doc.y;
+      y = drawBoxedSection(doc, left, y, usableW,
+        'THÔNG TIN VẬN CHUYỂN', 'Transport Info', [
+          ['Vận tải', 'Carrier', tc.name || '—'],
+          ['Số xe', 'Vehicle No.', b.vehicle_number || '—'],
+          ['Cước chốt', 'Cost', fmtCostVn(b.cost)],
+        ]);
+      y += 8;
+
+      // Section 2 — Container (multi-cont per L20)
+      const conts = Array.isArray(b.containers) ? b.containers : [];
+      const contNumbers = conts.map(c => c.cont_number || '(chưa số)').join(', ') || '—';
+      const contTypes   = conts.map(c => c.cont_type).filter(Boolean).join(', ') || '—';
+      y = drawBoxedSection(doc, left, y, usableW,
+        'THÔNG TIN CONTAINER', 'Container Info', [
+          ['Số container', 'Container No.', contNumbers],
+          ['Loại', 'Type', contTypes],
+          ['Trọng lượng', 'Weight', fmtWeightsList(conts)],
+        ]);
+      y += 8;
+
+      // Section 3 — Delivery
+      y = drawBoxedSection(doc, left, y, usableW,
+        'THÔNG TIN GIAO HÀNG', 'Delivery Info', [
+          ['Ngày giờ giao', 'Delivery time', fmtDtVn(b.planned_datetime)],
+          ['Địa điểm giao', 'Delivery location', b.delivery_location || '—'],
+          ['Hạn lệnh / Cutoff', 'Deadline', fmtHanLenhVn(job.han_lenh, job.import_export)],
+          ['Người liên hệ tại kho', 'Warehouse contact', b.receiver_name || '—'],
+          ['SĐT', 'Phone', b.receiver_phone || '—'],
+        ]);
+      y += 8;
+
+      // Section 4 — Invoice (optional)
+      if (inv) {
+        y = drawBoxedSection(doc, left, y, usableW,
+          'THÔNG TIN XUẤT HÓA ĐƠN NÂNG HẠ', 'Lift/Drop Invoice', [
+            ['Tên công ty', 'Company', inv.company],
+            ['MST', 'Tax code', inv.tax],
+            ['Địa chỉ', 'Address', inv.address],
+          ]);
+        y += 8;
+      }
+
+      // Notes (free text), placed below the boxed sections.
+      doc.y = y;
+      if (b.note || b.notes) {
+        doc.font('RB').fontSize(9).fillColor('#000')
+           .text('Ghi chú: ', left, doc.y, { continued: true })
+           .font('R').text(String(b.note || b.notes));
+      }
+      if (b.bbbg_note) {
+        doc.font('RB').fontSize(9).fillColor('#d97706')
+           .text('⚠️ Lưu ý cho tài xế: ', { continued: true })
+           .font('R').fillColor('#b45309').text(String(b.bbbg_note));
+        doc.fillColor('#000');
+      }
+
+      // Signatures + footer
+      drawSignatures(doc);
+      drawPageFooter(doc, idx + 1, pageTotal, creatorName);
+    });
+
+    doc.end();
+  });
+}
+
+module.exports = { buildBbbgPdf, generateMultiBookingBBBG };

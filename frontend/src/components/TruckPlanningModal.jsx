@@ -4,7 +4,7 @@ import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import {
   getJob, getTruckBookings, updateTruckBooking,
-  sendPlanningEmail, previewPlanningEmail,
+  sendPlanningEmail, previewPlanningEmail, previewBBBGPdf,
 } from '../api';
 import TransportPicker from './TransportPicker';
 import InvoiceRecipientModal from './InvoiceRecipientModal';
@@ -54,6 +54,12 @@ export default function TruckPlanningModal({ jobId, jobCode, onClose }) {
   const [sendingGroupKey, setSendingGroupKey] = useState(null); // transport_company_id of the in-flight send
   // CP4.1 — which booking's receiver-info modal is open (null = closed).
   const [receiverModalBookingId, setReceiverModalBookingId] = useState(null);
+  // CP4.2 — BBBG preview pipeline. `pendingBbbgContext` mirrors
+  // pendingMailContext: opens the same InvoiceRecipientModal but on confirm
+  // fires firePreviewBbbg() instead of fireSend(). bbbgLoadingGroupKey tracks
+  // the in-flight transport_company_id for per-card loading text.
+  const [pendingBbbgContext, setPendingBbbgContext] = useState(null);
+  const [bbbgLoadingGroupKey, setBbbgLoadingGroupKey] = useState(null);
   // CP3.5b — invoice picker gates the send. pendingMailContext holds the
   // group + send args while the modal is open; on confirm we fire the
   // mutation with the chosen invoice_info.
@@ -62,6 +68,50 @@ export default function TruckPlanningModal({ jobId, jobCode, onClose }) {
   const sendMut = useMutation({
     mutationFn: (body) => sendPlanningEmail(body),
   });
+
+  // CP4.2 — Build the PDF on the backend, hand the resulting blob to the
+  // native browser PDF viewer in a new tab. We deliberately do NOT pre-check
+  // dirty state here — the dirty guard runs before the invoice modal opens
+  // (in the per-card onPreviewBbbg handler) so the user can't lose unsaved
+  // edits to a refetch triggered by anything else.
+  async function firePreviewBbbg(invoiceInfo) {
+    if (!pendingBbbgContext) return;
+    const ctx = pendingBbbgContext;
+    setPendingBbbgContext(null);
+    setBbbgLoadingGroupKey(ctx.group.transport_company_id);
+    try {
+      const blob = await previewBBBGPdf({
+        job_id: jobId,
+        transport_company_id: ctx.group.transport_company_id,
+        booking_ids: ctx.group.rows.map(r => r.booking_id).filter(Boolean),
+        invoice_info: invoiceInfo,
+      });
+      // Browsers sometimes hand us an axios-mangled blob with the wrong MIME.
+      // Force application/pdf so the new tab uses the PDF viewer plugin.
+      const pdfBlob = blob instanceof Blob
+        ? new Blob([blob], { type: 'application/pdf' })
+        : new Blob([blob], { type: 'application/pdf' });
+      const url = URL.createObjectURL(pdfBlob);
+      const win = window.open(url, '_blank');
+      if (!win) {
+        toast.error('Trình duyệt chặn popup — hãy cho phép popup và thử lại');
+      }
+      // Don't immediately revokeObjectURL — the new tab still needs the URL.
+      // Browsers garbage-collect blob URLs when the document holding them
+      // closes; this is the standard pattern.
+    } catch (err) {
+      // Blob errors arrive as the Blob itself; convert to text to surface
+      // the JSON error from the backend.
+      let msg = err?.error || err?.message || 'Lỗi tạo BBBG';
+      if (err?.response?.data instanceof Blob) {
+        try { msg = JSON.parse(await err.response.data.text()).error || msg; }
+        catch { /* keep msg */ }
+      }
+      toast.error(`Lỗi tạo BBBG: ${msg}`);
+    } finally {
+      setBbbgLoadingGroupKey(null);
+    }
+  }
 
   async function fireSend(invoiceInfo) {
     if (!pendingMailContext) return;
@@ -231,6 +281,7 @@ export default function TruckPlanningModal({ jobId, jobCode, onClose }) {
                   {groups.map(g => (
                     <TransportCard key={g.transport_company_id} group={g}
                       sending={sendingGroupKey === g.transport_company_id}
+                      loadingBbbg={bbbgLoadingGroupKey === g.transport_company_id}
                       onPreview={() => setPreviewGroup(g)}
                       onSend={() => {
                         // Open invoice picker first; actual mutation fires
@@ -238,6 +289,16 @@ export default function TruckPlanningModal({ jobId, jobCode, onClose }) {
                         setPendingMailContext({
                           group: g, mailType: 'new', isReplacement: false,
                         });
+                      }}
+                      onPreviewBbbg={() => {
+                        // CP4.2 — dirty guard runs HERE so we don't open the
+                        // invoice modal when the user still has unsaved edits
+                        // (which would render with stale DB state).
+                        if (rows.some(r => r.dirty)) {
+                          window.alert('Bạn có thay đổi chưa lưu. Vui lòng Lưu trước khi xem BBBG.');
+                          return;
+                        }
+                        setPendingBbbgContext({ group: g });
                       }} />
                   ))}
                 </div>
@@ -270,6 +331,19 @@ export default function TruckPlanningModal({ jobId, jobCode, onClose }) {
         } : null}
         onClose={() => setPendingMailContext(null)}
         onConfirm={(invoiceInfo) => fireSend(invoiceInfo)} />
+
+      {/* CP4.2 — Separate modal mount for the "Xem BBBG" flow. Same modal
+          component, different pending-context state + different onConfirm. */}
+      <InvoiceRecipientModal
+        isOpen={!!pendingBbbgContext}
+        customer={job ? {
+          name: job.customer_name,
+          invoice_company: job.invoice_company_name,
+          invoice_tax: job.invoice_tax_code,
+          invoice_address: job.invoice_address,
+        } : null}
+        onClose={() => setPendingBbbgContext(null)}
+        onConfirm={(invoiceInfo) => firePreviewBbbg(invoiceInfo)} />
 
       {/* CP4.1 — Receiver info per booking. Find the row matching the open
           booking id; pass through booking shape ReceiverInfoModal expects. */}
@@ -431,7 +505,7 @@ function Vung1Table({ rows, job, onUpdateRow, onOpenReceiver }) {
   );
 }
 
-function TransportCard({ group, sending, onPreview, onSend }) {
+function TransportCard({ group, sending, loadingBbbg, onPreview, onSend, onPreviewBbbg }) {
   // Status field is still MOCK "Chưa gửi" — real per-card status (Đã gửi /
   // Có thay đổi sau gửi / Cần gửi HỦY) lands in CP5 once email_history is
   // queried per (job, transport_company_id) and diffed against current state.
@@ -465,11 +539,14 @@ function TransportCard({ group, sending, onPreview, onSend }) {
         Trạng thái: <span style={{ color: 'var(--warning)', fontWeight: 600 }}>Chưa gửi</span>
       </div>
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-        <button className="btn btn-primary btn-sm" onClick={onSend} disabled={sending}>
+        <button className="btn btn-primary btn-sm" onClick={onSend} disabled={sending || loadingBbbg}>
           {sending ? '⏳ Đang gửi...' : '📧 Gửi mail kế hoạch'}
         </button>
-        <button className="btn btn-ghost btn-sm" onClick={onPreview} disabled={sending}>
+        <button className="btn btn-ghost btn-sm" onClick={onPreview} disabled={sending || loadingBbbg}>
           👁 Xem preview
+        </button>
+        <button className="btn btn-ghost btn-sm" onClick={onPreviewBbbg} disabled={sending || loadingBbbg}>
+          {loadingBbbg ? '⏳ Đang tạo...' : '👁 Xem BBBG'}
         </button>
       </div>
     </div>

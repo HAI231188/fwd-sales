@@ -171,6 +171,13 @@ export const getSlbInvoiceInfo = () => api.get('/email/slb-invoice-info');
 // { subject, body, recipient_email, cc, transport_name, has_invoice_info }.
 export const previewPlanningEmail = (body) => api.post('/email/preview-planning', body);
 
+// CP4.2 — BBBG PDF preview. Response is binary application/pdf, NOT JSON, so
+// we pass responseType: 'blob' to keep the axios pipeline from trying to
+// JSON.parse it. The response interceptor unwraps .data, so the resolved
+// value is the Blob itself.
+export const previewBBBGPdf = (body) =>
+  api.post('/email/preview-bbbg', body, { responseType: 'blob' });
+
 // Notifications
 export const getNotifications = () => api.get('/notifications');
 export const getUnreadCount = () => api.get('/notifications/unread-count');
