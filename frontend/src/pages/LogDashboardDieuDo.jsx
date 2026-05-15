@@ -17,7 +17,7 @@ import toast from 'react-hot-toast';
 // Phase 4.1: TransportPicker + InlineInput RE-introduced on DD main grid —
 // inline edits target the FIRST booking via updateTruckBooking (vs Phase 4's
 // updateJobTruck which is gone for good).
-import { getJobStats, getJobs, requestJobDelete, createJob,
+import { getJobStats, getJobs, updateJob, requestJobDelete, createJob,
          getTruckBookings, updateTruckBooking, deleteTruckBooking } from '../api';
 import {
   TRUCK_BOOKING_STATUS_LABELS, TRUCK_BOOKING_STATUS_SORT_RANK,
@@ -222,6 +222,28 @@ export default function LogDashboardDieuDo() {
       qc.invalidateQueries({ queryKey: ['jobStats'] });
     },
     onError: (err) => toast.error(err?.error || err?.message || 'Lỗi khi cập nhật'),
+  });
+
+  // CP4.5.1 — "TH ngày giờ" column in the DD main grid binds to jobs.completed_at
+  // (per-job, not per-booking). Backend guard returns 400 if the job isn't at
+  // 'du_xe_cho_giao' or 'hoan_thanh'. Success invalidates both tabs so the row
+  // hops from "Đang làm" to "Hoàn thành" without a manual refresh.
+  const completeJobMut = useMutation({
+    mutationFn: ({ jobId, completed_at }) => updateJob(jobId, { completed_at }),
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: ['jobs'] });
+      qc.invalidateQueries({ queryKey: ['jobStats'] });
+      toast.success(vars.completed_at
+        ? '✅ Job đã chuyển sang Hoàn thành'
+        : 'Đã hủy hoàn thành — job quay lại tab Đang làm');
+    },
+    onError: (err) => {
+      if (err?.code === 'JOB_NOT_READY_TO_COMPLETE') {
+        toast.error(err.error || 'Job chưa đủ thông tin để hoàn thành. Cần đặt KH/VT/Số xe trước.');
+      } else {
+        toast.error(err?.error || err?.message || 'Lỗi khi cập nhật');
+      }
+    },
   });
   const deleteReqMut = useMutation({
     mutationFn: ({ id, reason }) => requestJobDelete(id, reason),
@@ -560,10 +582,13 @@ export default function LogDashboardDieuDo() {
                           : dash}
                       </td>
                       <td style={{ ...cs, minWidth: 180 }} onClick={stop}>
-                        {hasBooking
-                          ? <DateTimeInput24h value={j.first_booking_actual}
-                              onChange={v => setField({ actual_datetime: v || null })} />
-                          : dash}
+                        {/* CP4.5.1 — TH ngày giờ now binds to jobs.completed_at
+                            (per job). DateTimeInput24h emits the picked value or
+                            null/empty to clear. Backend guard returns 400 if the
+                            job isn't ready (status must be 'du_xe_cho_giao' or
+                            'hoan_thanh') — toast surfaces the friendly error. */}
+                        <DateTimeInput24h value={j.completed_at}
+                          onChange={v => completeJobMut.mutate({ jobId: j.id, completed_at: v || null })} />
                       </td>
                       <td style={{ ...cs, minWidth: 100 }} onClick={stop}>
                         {hasBooking

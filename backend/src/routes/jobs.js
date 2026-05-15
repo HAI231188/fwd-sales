@@ -1529,8 +1529,62 @@ router.put('/:id', requireAuth, async (req, res) => {
     }
 
     const sets = []; const params = []; let idx = 1;
+    const handledByGuard = new Set();
+
+    // CP4.5.1 — completed_at guard. Setting jobs.completed_at to a non-null
+    // value is the canonical "mark job as done" gesture. Validate that the
+    // job has reached du_xe_cho_giao (all vehicles assigned) or is already
+    // hoan_thanh; otherwise return 400 with a friendly Vietnamese message.
+    // Setting completed_at to null is allowed (uncomplete) — status flips
+    // back to 'pending' so the job reappears on "Đang làm" tab.
+    if (req.body.completed_at !== undefined) {
+      const raw = req.body.completed_at;
+      const ts = (raw === '' || raw == null) ? null : raw;
+      if (ts !== null) {
+        const { rows: [s] } = await client.query(
+          `SELECT get_truck_booking_status($1) AS status`, [req.params.id]
+        );
+        if (!['du_xe_cho_giao', 'hoan_thanh'].includes(s.status)) {
+          await client.query('ROLLBACK');
+          const labels = {
+            chua_dat_kh:          'Chưa đặt KH',
+            dat_kh_1_phan:        'Đặt KH 1 phần',
+            du_kh_chua_chot_vt:   'Đủ KH, chưa chốt VT',
+            du_kh_chot_vt_1_phan: 'Đủ KH, chốt VT 1 phần',
+            du_vt_chua_co_xe:     'Đủ VT, chưa có xe',
+            du_vt_co_xe_1_phan:   'Đủ VT, có xe 1 phần',
+          };
+          const label = labels[s.status] || s.status;
+          return res.status(400).json({
+            error: `Không thể hoàn thành job. Trạng thái hiện tại: ${label}. ` +
+                   'Vui lòng đặt đủ kế hoạch, chốt vận tải, và nhập số xe trước.',
+            code: 'JOB_NOT_READY_TO_COMPLETE',
+            current_status: s.status,
+          });
+        }
+        sets.push(`completed_at = $${idx++}`); params.push(ts);
+        sets.push(`status = 'completed'`);
+        await recordHistory(client, req.params.id, req.user.id, 'completed_at', cur[0].completed_at, ts);
+        if (cur[0].status !== 'completed') {
+          await recordHistory(client, req.params.id, req.user.id, 'status', cur[0].status, 'completed');
+        }
+      } else {
+        // Uncomplete: clear timestamp AND flip status back to pending.
+        sets.push(`completed_at = NULL`);
+        sets.push(`status = 'pending'`);
+        await recordHistory(client, req.params.id, req.user.id, 'completed_at', cur[0].completed_at, null);
+        if (cur[0].status !== 'pending') {
+          await recordHistory(client, req.params.id, req.user.id, 'status', cur[0].status, 'pending');
+        }
+      }
+      // Both branches set status as part of the completed_at flow; skip it in
+      // the generic loop so we don't get two SET clauses on the same column.
+      handledByGuard.add('status');
+    }
+
     for (const f of FIELDS) {
       if (req.body[f] === undefined) continue;
+      if (handledByGuard.has(f)) continue;
       const val = f === 'other_services' ? JSON.stringify(req.body[f]) : req.body[f];
       sets.push(`${f} = $${idx++}`);
       params.push(val);

@@ -365,19 +365,6 @@ router.patch('/:id', requireAuth, async (req, res) => {
       }
     }
 
-    // CP4.5 — actual_datetime is the new completion driver. When it flips
-    // NULL → value (or value → NULL), the job's derived truck_booking_status
-    // may cross the 'hoan_thanh' threshold, so we run checkAndCompleteJob.
-    let actualDatetimeTransitioned = false;
-    if (req.body.actual_datetime !== undefined) {
-      const prev = cur.actual_datetime ? new Date(cur.actual_datetime).getTime() : null;
-      const rawNext = req.body.actual_datetime;
-      const nextNorm = (rawNext === '' || rawNext == null) ? null : new Date(rawNext).getTime();
-      if ((prev == null) !== (nextNorm == null) || prev !== nextNorm) {
-        actualDatetimeTransitioned = true;
-      }
-    }
-
     if (sets.length === 0) {
       await client.query('ROLLBACK');
       return res.json(await loadBookingById(db, id));
@@ -388,13 +375,13 @@ router.patch('/:id', requireAuth, async (req, res) => {
       `UPDATE truck_bookings SET ${sets.join(', ')} WHERE id = $${idx}`, params
     );
 
-    // Phase 5 CP4.5: both vehicle_number AND actual_datetime transitions may
-    // flip the derived truck_booking_status, so either one triggers
-    // checkAndCompleteJob. Auto-complete fires only on the new 'hoan_thanh'
-    // value (= every alive booking has actual_datetime). vehicle_number
-    // transitions kept in the trigger set because they affect the derived
-    // status, even though the new auto-complete signal is actual_datetime.
-    if (vehicleTransitioned || actualDatetimeTransitioned) {
+    // CP4.5.1: actual_datetime no longer drives job completion — that path is
+    // now explicit via PUT /api/jobs/:id with {completed_at}. vehicle_number
+    // transitions still call checkAndCompleteJob for the 'tk' / 'both' service
+    // types where TK completion is the live driver (truck side is a no-op
+    // under new logic but kept for shape parity with the multi-condition
+    // check inside the service helper).
+    if (vehicleTransitioned) {
       await checkAndCompleteJob(client, cur.job_id, req.user.id, null);
     }
 
