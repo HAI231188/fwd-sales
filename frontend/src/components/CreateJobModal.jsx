@@ -24,6 +24,8 @@ const INIT_FORM = {
   service_type: 'tk', other_services: {}, destination: '',
   // Loại lô — required; 'export' is the dominant case so it's the safe default.
   import_export: 'export',
+  // CP4.2.1 — BBBG shipping document fields (rendered on BBBG when filled).
+  shipper: '', vessel: '', voy: '', shipping_line: '', goods_description: '',
 };
 
 export default function CreateJobModal({ onClose, onCreated }) {
@@ -235,6 +237,14 @@ export default function CreateJobModal({ onClose, onCreated }) {
         si_number: form.si_number || null,
         mbl_no: form.mbl_no || null,
         hbl_no: form.hbl_no || null,
+        // CP4.2.1 — null-coerce blank shipping fields so the DB stays NULL
+        // (BBBG renders blank when filled with empty string OR null, but null
+        // is the canonical "not set" state for downstream consumers).
+        shipper: form.shipper || null,
+        vessel: form.vessel || null,
+        voy: form.voy || null,
+        shipping_line: form.shipping_line || null,
+        goods_description: form.goods_description || null,
         etd: form.etd || null,
         eta: form.eta || null,
         cargo_type: cargoType,
@@ -486,6 +496,48 @@ export default function CreateJobModal({ onClose, onCreated }) {
               <input className="form-input" value={form.hbl_no} onChange={e => set('hbl_no', e.target.value)} />
             </div>
           </div>
+
+          {/* CP4.2.1 — Thông tin lô hàng / Shipping info (rendered on BBBG). */}
+          <div style={{ marginTop: 16, padding: 12, background: 'var(--bg)',
+            border: '1px dashed var(--border)', borderRadius: 8 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-2)',
+              textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 8 }}>
+              Thông tin lô hàng (in trên BBBG)
+            </div>
+            <div className="grid-2" style={{ gap: 12 }}>
+              <div className="form-group" style={{ gridColumn: 'span 2' }}>
+                <label className="form-label">Người gửi <span style={{ color: 'var(--text-3)', fontStyle: 'italic', fontWeight: 400 }}>(Shipper)</span></label>
+                <input className="form-input" value={form.shipper}
+                  onChange={e => set('shipper', e.target.value)}
+                  placeholder="VD: ABC Trading Co., Ltd." />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Tàu <span style={{ color: 'var(--text-3)', fontStyle: 'italic', fontWeight: 400 }}>(Vessel)</span></label>
+                <input className="form-input" value={form.vessel}
+                  onChange={e => set('vessel', e.target.value)}
+                  placeholder="VD: MSC GAIA" />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Chuyến <span style={{ color: 'var(--text-3)', fontStyle: 'italic', fontWeight: 400 }}>(Voy)</span></label>
+                <input className="form-input" value={form.voy}
+                  onChange={e => set('voy', e.target.value)}
+                  placeholder="VD: 045E" />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Hãng tàu <span style={{ color: 'var(--text-3)', fontStyle: 'italic', fontWeight: 400 }}>(Shipping line)</span></label>
+                <input className="form-input" value={form.shipping_line}
+                  onChange={e => set('shipping_line', e.target.value)}
+                  placeholder="VD: ONE / MAERSK / CMA-CGM" />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Tên hàng hóa <span style={{ color: 'var(--text-3)', fontStyle: 'italic', fontWeight: 400 }}>(Description)</span></label>
+                <input className="form-input" value={form.goods_description}
+                  onChange={e => set('goods_description', e.target.value)}
+                  placeholder="AS PER BILL" />
+              </div>
+            </div>
+          </div>
+
           <div className="grid-2" style={{ gap: 12, marginTop: 12 }}>
             <div className="form-group">
               <label className="form-label">ETD</label>

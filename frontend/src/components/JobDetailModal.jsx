@@ -424,6 +424,12 @@ function buildDraft(job) {
     si_number: job.si_number || '',
     mbl_no: job.mbl_no || '',
     hbl_no: job.hbl_no || '',
+    // CP4.2.1 — BBBG shipping document fields (editable here too per L8).
+    shipper: job.shipper || '',
+    vessel: job.vessel || '',
+    voy: job.voy || '',
+    shipping_line: job.shipping_line || '',
+    goods_description: job.goods_description || '',
     ops_partner: job.ops_partner || '',
     sales_id: job.sales_id || '',
     deadline: toDatetimeLocal(job.deadline),
@@ -651,6 +657,27 @@ export default function JobDetailModal({ jobId, onClose }) {
                         <FRow label="HBL No">
                           <input style={INP} value={draft.hbl_no} onChange={e => setD('hbl_no', e.target.value)} />
                         </FRow>
+                        <FRow label="Người gửi (Shipper)">
+                          <input style={INP} value={draft.shipper}
+                            onChange={e => setD('shipper', e.target.value)} />
+                        </FRow>
+                        <FRow label="Tàu (Vessel)">
+                          <input style={INP} value={draft.vessel}
+                            onChange={e => setD('vessel', e.target.value)} />
+                        </FRow>
+                        <FRow label="Chuyến (Voy)">
+                          <input style={INP} value={draft.voy}
+                            onChange={e => setD('voy', e.target.value)} />
+                        </FRow>
+                        <FRow label="Hãng tàu (Shipping line)">
+                          <input style={INP} value={draft.shipping_line}
+                            onChange={e => setD('shipping_line', e.target.value)} />
+                        </FRow>
+                        <FRow label="Tên hàng hóa (Description)">
+                          <input style={INP} value={draft.goods_description}
+                            onChange={e => setD('goods_description', e.target.value)}
+                            placeholder="AS PER BILL" />
+                        </FRow>
                         <FRow label={job.import_export === 'import' ? 'Hạn lệnh' : 'Cutoff time'}>
                           {job.import_export === 'import' ? (
                             <input style={INP} type="date"
@@ -794,6 +821,11 @@ export default function JobDetailModal({ jobId, onClose }) {
                       <Row label="Mã SI" value={job.si_number || '—'} />
                       <Row label="MBL No" value={job.mbl_no || '—'} />
                       <Row label="HBL No" value={job.hbl_no || '—'} />
+                      <Row label="Người gửi (Shipper)" value={job.shipper || '—'} />
+                      <Row label="Tàu (Vessel)" value={job.vessel || '—'} />
+                      <Row label="Chuyến (Voy)" value={job.voy || '—'} />
+                      <Row label="Hãng tàu" value={job.shipping_line || '—'} />
+                      <Row label="Tên hàng hóa" value={job.goods_description || '—'} />
                       <Row label="Ngày tạo" value={fmtDt(job.created_at)} />
                       <Row label="Người tạo" value={job.created_by_name || '—'} />
                       <Row label={job.import_export === 'import' ? 'Hạn lệnh' : 'Cutoff time'}

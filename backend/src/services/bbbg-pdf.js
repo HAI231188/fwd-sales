@@ -286,6 +286,50 @@ function fmtWeightsList(containers) {
 
 // Drawing primitives ─────────────────────────────────────────────────────────
 
+// CP4.2.1 — compact 2-column variant for big info blocks (THÔNG TIN CHUNG /
+// HÀNG HÓA / GIAO HÀNG). `fields` is an array of {label, en, value}; rows are
+// paired into 2 columns left→right, top→bottom. Per-cell label+sublabel sit
+// stacked on the left, value on the right.
+function drawTwoColInfoBox(doc, x, y, w, titleVn, titleEn, fields) {
+  const titleH = 18;
+  doc.rect(x, y, w, titleH).fillAndStroke('#0066b3', '#0066b3');
+  doc.fillColor('#fff').font('RB').fontSize(9)
+     .text(titleVn, x + 8, y + 4, { width: w - 16, lineBreak: false });
+  doc.font('RI').fontSize(7).fillColor('#dbeafe')
+     .text(titleEn, x + 8, y + 4, { width: w - 16, align: 'right', lineBreak: false });
+  doc.fillColor('#000');
+
+  const cols = 2;
+  const colW = w / cols;
+  const labelW = 110;
+  const rowH = 19;
+  const visualRows = Math.ceil(fields.length / cols);
+  const bodyH = visualRows * rowH;
+  doc.rect(x, y + titleH, w, bodyH).stroke('#999');
+
+  fields.forEach((f, i) => {
+    const row = Math.floor(i / cols);
+    const col = i % cols;
+    const cx = x + col * colW;
+    const cy = y + titleH + row * rowH;
+    if (col > 0) {
+      doc.moveTo(cx, cy).lineTo(cx, cy + rowH).strokeColor('#d1d5db').stroke();
+    }
+    if (row > 0 && col === 0) {
+      doc.moveTo(x, cy).lineTo(x + w, cy).strokeColor('#d1d5db').stroke();
+    }
+    doc.strokeColor('#000');
+    doc.font('RB').fontSize(8).fillColor('#374151')
+       .text(f.label, cx + 6, cy + 2, { width: labelW - 8, lineBreak: false });
+    doc.font('RI').fontSize(6.5).fillColor('#6b7280')
+       .text(`(${f.en})`, cx + 6, cy + 11, { width: labelW - 8, lineBreak: false });
+    doc.font('R').fontSize(9).fillColor('#000')
+       .text(f.value || '—', cx + labelW, cy + 4, { width: colW - labelW - 6, lineBreak: false });
+  });
+  doc.fillColor('#000');
+  return y + titleH + bodyH;
+}
+
 function drawBoxedSection(doc, x, y, w, titleVn, titleEn, rows) {
   // Title strip
   const titleH = 18;
@@ -315,7 +359,11 @@ function drawBoxedSection(doc, x, y, w, titleVn, titleEn, rows) {
   return y + titleH + bodyH;
 }
 
-function drawPageHeader(doc, jobCode, bookingCode, customerName, shippingLine, todayDate) {
+function drawPageHeader(doc, bookingCode, todayDate) {
+  // CP4.2.1 — Slim header. Job code / customer name / shipping line moved
+  // into the "THÔNG TIN CHUNG" boxed section below so the page reads more
+  // like the legacy single-BBBG. The header carries only the SLB letterhead
+  // and the BBBG-level identifiers (booking code + issue date).
   const left = doc.page.margins.left;
   const right = doc.page.width - doc.page.margins.right;
   const usableW = right - left;
@@ -331,7 +379,7 @@ function drawPageHeader(doc, jobCode, bookingCode, customerName, shippingLine, t
   doc.font('R').fontSize(8).fillColor('#000');
   doc.text('Floor 5, SLB Building, Hanoi, Vietnam', txtX, doc.y + 1);
   doc.text('Tel: +84 24 1234 5678   |   Hotline: 0900 123 456', txtX, doc.y + 1);
-  // Right-side meta
+  // Right-side meta — booking code + date only.
   doc.font('RB').fontSize(9).text(`Mã KH: ${bookingCode || '—'}`,
     left, headerY, { width: usableW, align: 'right' });
   doc.font('R').fontSize(8).text(`Ngày: ${todayDate}`,
@@ -345,19 +393,7 @@ function drawPageHeader(doc, jobCode, bookingCode, customerName, shippingLine, t
   doc.font('RI').fontSize(9).fillColor('#444')
      .text('(Handover Record / Proof of Delivery)', { align: 'center' });
   doc.fillColor('#000');
-
-  // Job/customer meta block
-  doc.moveDown(0.4);
-  const my = doc.y;
-  doc.font('RB').fontSize(10).text(`Số job: `, left, my, { continued: true })
-     .font('R').text(jobCode || '—', { continued: true })
-     .font('RB').text('    Mã KH: ', { continued: true })
-     .font('R').text(bookingCode || '—');
-  doc.font('RB').fontSize(10).text(`Khách hàng: `, { continued: true })
-     .font('R').text(customerName || '—');
-  doc.font('RB').fontSize(10).text(`Hãng tàu: `, { continued: true })
-     .font('R').text(shippingLine || '—');
-  doc.moveDown(0.5);
+  doc.moveDown(0.3);
 }
 
 function drawSignatures(doc) {
@@ -372,9 +408,9 @@ function drawSignatures(doc) {
   doc.rect(left, sigY, sigW, 22).fillAndStroke('#f3f4f6', '#999');
   doc.rect(left + sigW + colGap, sigY, sigW, 22).fillAndStroke('#f3f4f6', '#999');
   doc.fillColor('#000').font('RB').fontSize(9)
-     .text('ĐẠI DIỆN SLB', left, sigY + 4, { width: sigW, align: 'center' });
+     .text('ĐẠI DIỆN GIAO', left, sigY + 4, { width: sigW, align: 'center' });
   doc.font('RI').fontSize(7).fillColor('#555')
-     .text('(SLB Representative)', left, sigY + 14, { width: sigW, align: 'center' });
+     .text('(Deliverer)', left, sigY + 14, { width: sigW, align: 'center' });
   doc.font('RB').fontSize(9).fillColor('#000')
      .text('ĐẠI DIỆN NHẬN HÀNG', left + sigW + colGap, sigY + 4, { width: sigW, align: 'center' });
   doc.font('RI').fontSize(7).fillColor('#555')
@@ -415,17 +451,25 @@ async function generateMultiBookingBBBG({
     throw new Error('bookingIds rỗng');
   }
 
-  // 1. Job
+  // 1. Job — CP4.2.1 pulls the full manifest/cargo set used by the redesigned
+  // BBBG layout. The 5 shipping-document columns (shipper/vessel/voy/
+  // shipping_line/goods_description) are nullable; the renderer falls back to
+  // an em-dash when they're blank.
   const { rows: [job] } = await db.query(
     `SELECT id, job_code, customer_name, han_lenh, import_export,
-            NULL::text AS shipping_line
+            pol, pod, hbl_no, mbl_no,
+            cargo_type, tons, kg, so_kien,
+            shipper, vessel, voy, shipping_line, goods_description
        FROM jobs WHERE id = $1 AND deleted_at IS NULL`,
     [jobId]
   );
   if (!job) throw new Error('Không tìm thấy job');
 
-  // 2. Transport company — name is the primary field; tax_code does not exist
-  // on the table today, so leave it null (rendered as '—').
+  // 2. Transport company — kept as a scoping check only. CP4.2.1 removes the
+  // "THÔNG TIN VẬN CHUYỂN" section because BBBG goes to the customer for
+  // signature and carrier identity is internal; tc.name is therefore NOT
+  // rendered on the page. The lookup still happens so a deleted/wrong carrier
+  // surfaces the right error before we waste time generating pages.
   const { rows: [tc] } = await db.query(
     `SELECT id, name FROM transport_companies WHERE id = $1 AND deleted_at IS NULL`,
     [transportCompanyId]
@@ -444,6 +488,7 @@ async function generateMultiBookingBBBG({
                'id', jc.id,
                'cont_number', jc.cont_number,
                'cont_type', jc.cont_type,
+               'seal_number', jc.seal_number,
                'weight_tons', jc.weight_tons
              ) ORDER BY jc.id)
              FROM truck_booking_containers tbc
@@ -476,61 +521,107 @@ async function generateMultiBookingBBBG({
     const inv = invoiceInfo && invoiceInfo.company && invoiceInfo.tax && invoiceInfo.address
       ? invoiceInfo : null;
 
+    // Cargo totals — FCL uses tons, LCL uses kg. Unit follows cargo_type.
+    const isFcl = (job.cargo_type || 'fcl') === 'fcl';
+    const totalWeight = isFcl ? job.tons : job.kg;
+    const weightUnit  = isFcl ? 'TONS' : 'KGS';
+    const totalWeightStr = (totalWeight != null && totalWeight !== '')
+      ? `${Number(totalWeight).toLocaleString('vi-VN')} ${weightUnit}`
+      : '—';
+
     bookings.forEach((b, idx) => {
       if (idx > 0) doc.addPage({ size: 'A4', margin: 36 });
 
-      drawPageHeader(doc, job.job_code, b.booking_code,
-        job.customer_name, job.shipping_line, today);
+      // CP4.2.1 — slim header (booking code + date only); manifest fields
+      // moved into the THÔNG TIN CHUNG boxed section.
+      drawPageHeader(doc, b.booking_code, today);
 
       const left = doc.page.margins.left;
       const right = doc.page.width - doc.page.margins.right;
       const usableW = right - left;
 
-      // Section 1 — Transport
+      // Section 1 — THÔNG TIN CHUNG (2-col compact). 12 manifest fields:
+      // Số lô hàng / Ngày / Shipper / Consignee / Vessel / Voy / From (POL) /
+      // Terminal (POD) / Shipping line / H-B/L / M-B/L / Hạn lệnh.
       let y = doc.y;
-      y = drawBoxedSection(doc, left, y, usableW,
-        'THÔNG TIN VẬN CHUYỂN', 'Transport Info', [
-          ['Vận tải', 'Carrier', tc.name || '—'],
-          ['Số xe', 'Vehicle No.', b.vehicle_number || '—'],
-          ['Cước chốt', 'Cost', fmtCostVn(b.cost)],
+      y = drawTwoColInfoBox(doc, left, y, usableW,
+        'THÔNG TIN CHUNG', 'General Info', [
+          { label: 'Số lô hàng',     en: 'Job ID',         value: job.job_code },
+          { label: 'Ngày phát hành', en: 'Date',           value: today },
+          { label: 'Người gửi',      en: 'Shipper',        value: job.shipper },
+          { label: 'Người nhận',     en: 'Consignee',      value: job.customer_name },
+          { label: 'Tàu',            en: 'Vessel',         value: job.vessel },
+          { label: 'Chuyến',         en: 'Voy.',           value: job.voy },
+          { label: 'Từ',             en: 'From',           value: job.pol },
+          { label: 'Đến cảng',       en: 'Terminal',       value: job.pod },
+          { label: 'Hãng tàu',       en: 'Shipping line',  value: job.shipping_line },
+          { label: 'Hạn lệnh',       en: 'Cutoff',         value: fmtHanLenhVn(job.han_lenh, job.import_export) },
+          { label: 'Vận đơn phụ',    en: 'H-B/L',          value: job.hbl_no },
+          { label: 'Vận đơn chính',  en: 'M-B/L',          value: job.mbl_no },
         ]);
-      y += 8;
+      y += 6;
 
-      // Section 2 — Container (multi-cont per L20)
+      // Section 2 — CONTAINER. Per-cont rows; legacy spec shows 1 cont but
+      // L20 allows multi. For 1 cont we emit 4 single-col rows; for 2+ we
+      // prefix each label with "Cont N — " so the user can tell them apart.
       const conts = Array.isArray(b.containers) ? b.containers : [];
-      const contNumbers = conts.map(c => c.cont_number || '(chưa số)').join(', ') || '—';
-      const contTypes   = conts.map(c => c.cont_type).filter(Boolean).join(', ') || '—';
+      const contRows = [];
+      if (conts.length === 0) {
+        contRows.push(['Số container', 'Container No.', '—']);
+        contRows.push(['Loại',         'Type',          '—']);
+        contRows.push(['Seal',         'Seal No.',      '—']);
+        contRows.push(['Trọng lượng',  'Weight',        '—']);
+      } else {
+        conts.forEach((c, i) => {
+          const prefix = conts.length > 1 ? `Cont ${i + 1} — ` : '';
+          contRows.push([prefix + 'Số container', 'Container No.', c.cont_number || '(chưa số)']);
+          contRows.push([prefix + 'Loại',         'Type',          c.cont_type   || '—']);
+          contRows.push([prefix + 'Seal',         'Seal No.',      c.seal_number || '—']);
+          const w = c.weight_tons;
+          const wStr = (w != null && w !== '')
+            ? `${Number(w).toLocaleString('vi-VN')} TONS`
+            : '—';
+          contRows.push([prefix + 'Trọng lượng',  'Weight',        wStr]);
+        });
+      }
       y = drawBoxedSection(doc, left, y, usableW,
-        'THÔNG TIN CONTAINER', 'Container Info', [
-          ['Số container', 'Container No.', contNumbers],
-          ['Loại', 'Type', contTypes],
-          ['Trọng lượng', 'Weight', fmtWeightsList(conts)],
-        ]);
-      y += 8;
+        'CONTAINER', 'Container Info', contRows);
+      y += 6;
 
-      // Section 3 — Delivery
-      y = drawBoxedSection(doc, left, y, usableW,
+      // Section 3 — HÀNG HÓA (job-level cargo totals). 2-col compact.
+      y = drawTwoColInfoBox(doc, left, y, usableW,
+        'HÀNG HÓA', 'Cargo Info', [
+          { label: 'Tên hàng hóa', en: 'Description', value: job.goods_description || 'AS PER BILL' },
+          { label: 'Trọng lượng', en: 'Weight',     value: totalWeightStr },
+          { label: 'Đơn vị',      en: 'Unit',       value: weightUnit },
+          { label: 'Số kiện',     en: 'Pieces',     value: job.so_kien != null ? String(job.so_kien) : '—' },
+        ]);
+      y += 6;
+
+      // Section 4 — THÔNG TIN GIAO HÀNG (booking-specific delivery + contact).
+      // 2-col compact.
+      y = drawTwoColInfoBox(doc, left, y, usableW,
         'THÔNG TIN GIAO HÀNG', 'Delivery Info', [
-          ['Ngày giờ giao', 'Delivery time', fmtDtVn(b.planned_datetime)],
-          ['Địa điểm giao', 'Delivery location', b.delivery_location || '—'],
-          ['Hạn lệnh / Cutoff', 'Deadline', fmtHanLenhVn(job.han_lenh, job.import_export)],
-          ['Người liên hệ tại kho', 'Warehouse contact', b.receiver_name || '—'],
-          ['SĐT', 'Phone', b.receiver_phone || '—'],
+          { label: 'Ngày giờ giao',          en: 'Delivery time',     value: fmtDtVn(b.planned_datetime) },
+          { label: 'Địa điểm giao',          en: 'Delivery location', value: b.delivery_location },
+          { label: 'Người liên hệ tại kho',  en: 'Warehouse contact', value: b.receiver_name },
+          { label: 'SĐT',                    en: 'Phone',             value: b.receiver_phone },
         ]);
-      y += 8;
+      y += 6;
 
-      // Section 4 — Invoice (optional)
+      // Section 5 — Invoice (optional, only when caller supplied a complete set).
       if (inv) {
         y = drawBoxedSection(doc, left, y, usableW,
           'THÔNG TIN XUẤT HÓA ĐƠN NÂNG HẠ', 'Lift/Drop Invoice', [
-            ['Tên công ty', 'Company', inv.company],
-            ['MST', 'Tax code', inv.tax],
-            ['Địa chỉ', 'Address', inv.address],
+            ['Tên công ty', 'Company',  inv.company],
+            ['MST',         'Tax code', inv.tax],
+            ['Địa chỉ',     'Address',  inv.address],
           ]);
-        y += 8;
+        y += 6;
       }
 
-      // Notes (free text), placed below the boxed sections.
+      // Notes + driver warning. bbbg_note is the only place bbbg_note flows
+      // into the PDF (per CP4.1 — never the mail body).
       doc.y = y;
       if (b.note || b.notes) {
         doc.font('RB').fontSize(9).fillColor('#000')
@@ -544,7 +635,9 @@ async function generateMultiBookingBBBG({
         doc.fillColor('#000');
       }
 
-      // Signatures + footer
+      // Signatures + footer. CP4.2.1: "ĐẠI DIỆN GIAO" (not "ĐẠI DIỆN SLB") —
+      // BBBG is signed in person at delivery so the giao/nhận pair is the
+      // accurate framing.
       drawSignatures(doc);
       drawPageFooter(doc, idx + 1, pageTotal, creatorName);
     });

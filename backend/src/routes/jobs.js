@@ -1131,6 +1131,9 @@ router.post('/', requireAuth, async (req, res) => {
     etd, eta, tons, cbm, deadline, service_type, other_services,
     is_new_customer, cargo_type, so_kien, kg, containers, destination, han_lenh,
     si_number, mbl_no, hbl_no,
+    // CP4.2.1 — BBBG shipping document fields. All optional; render as blank
+    // on BBBG when null.
+    shipper, vessel, voy, shipping_line, goods_description,
     // Invoice info (L15) — sent by CreateJobModal in "Khách mới" mode.
     company_full_name, invoice_address, invoice_tax_code,
     // Loại lô — required by the form; default 'export' as defensive fallback.
@@ -1185,8 +1188,9 @@ router.post('/', requireAuth, async (req, res) => {
         sales_id, pol, pod, cont_number, cont_type, seal_number,
         etd, eta, tons, cbm, deadline, service_type, other_services,
         cargo_type, so_kien, kg, destination, created_by, han_lenh,
-        si_number, mbl_no, hbl_no, import_export
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28)
+        si_number, mbl_no, hbl_no, import_export,
+        shipper, vessel, voy, shipping_line, goods_description
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33)
       RETURNING *
     `, [
       job_code || null, customer_id || null, customer_name,
@@ -1200,6 +1204,8 @@ router.post('/', requireAuth, async (req, res) => {
       destination || null, req.user.id, han_lenh || null,
       si_number || null, mbl_no || null, hbl_no || null,
       importExport,
+      shipper || null, vessel || null, voy || null,
+      shipping_line || null, goods_description || null,
     ]);
 
     const job = rows[0];
@@ -1493,7 +1499,9 @@ router.put('/:id', requireAuth, async (req, res) => {
     'pol','pod','cont_number','cont_type','seal_number',
     'etd','eta','tons','cbm','deadline','service_type','other_services','status',
     'cargo_type','so_kien','kg','destination','han_lenh','si_number','mbl_no','hbl_no',
-    'ops_partner','sales_id'];
+    'ops_partner','sales_id',
+    // CP4.2.1 — BBBG shipping document fields, editable post-create.
+    'shipper','vessel','voy','shipping_line','goods_description'];
 
   const client = await db.pool.connect();
   try {

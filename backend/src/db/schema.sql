@@ -557,6 +557,20 @@ ALTER TABLE transport_companies ADD COLUMN IF NOT EXISTS email_cc TEXT DEFAULT '
 -- (Postgres does not support `ADD CONSTRAINT ... IF NOT EXISTS`).
 -- ============================================================
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS import_export VARCHAR(10) NOT NULL DEFAULT 'export';
+
+-- Phase 5 Step 3 Part 2 CP4.2.1 — shipping document fields rendered on BBBG.
+-- Filled at job-create time by CUS/TPL (CreateJobModal). All nullable so
+-- existing jobs and not-yet-filled new jobs keep working; BBBG renders the
+-- blank cells as '—' rather than erroring out.
+--   • shipper / vessel / voy   — manifest header fields (BBBG "THÔNG TIN CHUNG")
+--   • shipping_line            — "Hãng tàu" line on BBBG
+--   • goods_description        — "Tên hàng hóa" (defaults to "AS PER BILL"
+--                                only in the UI form; column stays nullable).
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS shipper           VARCHAR(255);
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS vessel            VARCHAR(100);
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS voy               VARCHAR(50);
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS shipping_line     VARCHAR(100);
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS goods_description VARCHAR(255);
 ALTER TABLE jobs DROP CONSTRAINT IF EXISTS jobs_import_export_check;
 ALTER TABLE jobs ADD CONSTRAINT jobs_import_export_check
   CHECK (import_export IN ('export', 'import'));
