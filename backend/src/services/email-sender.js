@@ -18,7 +18,14 @@
 const nodemailer = require('nodemailer');
 const db = require('../db');
 const enc = require('../utils/encryption');
-const { generateSingleBookingBBBG } = require('./bbbg-pdf');
+// CP4.3 fix — generateSingleBookingBBBG is intentionally lazy-required inside
+// sendPlanningEmail (see the attachments loop). A top-level destructure here
+// caused a circular-dep bug: bbbg-pdf.js requires this file for
+// SLB_INVOICE_INFO_EN, so when bbbg-pdf loaded first (via routes/jobs.js →
+// buildBbbgPdf), email-sender's destructure ran while bbbg-pdf's
+// module.exports was still {}. The function ended up bound to undefined and
+// every BBBG send failed with "generateSingleBookingBBBG is not a function".
+// By call time both modules are fully loaded and cached.
 
 // Phase 5 Step 3 Part 2 CP3.5b — SLB's own legal info, exposed via
 // GET /api/email/slb-invoice-info so the frontend invoice modal can pick
@@ -340,6 +347,10 @@ async function sendPlanningEmail({
   const attachments = [];
   const bbbgErrors = [];
   if (mailType === 'new') {
+    // Lazy require — see note at the top of this file. Resolves to the fully
+    // populated bbbg-pdf module at request time, dodging the circular-load
+    // window that produced undefined at module-init time.
+    const { generateSingleBookingBBBG } = require('./bbbg-pdf');
     for (const booking of bookings) {
       try {
         const pdfBuffer = await generateSingleBookingBBBG({
