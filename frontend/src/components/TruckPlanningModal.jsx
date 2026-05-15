@@ -127,7 +127,18 @@ export default function TruckPlanningModal({ jobId, jobCode, onClose }) {
         is_replacement: !!ctx.isReplacement,
         invoice_info: invoiceInfo,
       });
-      toast.success(`✅ Đã gửi mail cho ${ctx.group.transport_name} (${result.recipient_email})`);
+      // CP4.3 — surface BBBG attachment count + partial-failure warnings.
+      const tn = ctx.group.transport_name;
+      const ac = Number(result?.attachmentCount) || 0;
+      if (ac > 0) {
+        toast.success(`✅ Đã gửi mail cho ${tn} — Đính kèm ${ac} file BBBG`);
+      } else {
+        toast.success(`✅ Đã gửi mail cho ${tn} (${result.recipient_email})`);
+      }
+      if (Array.isArray(result?.bbbgErrors) && result.bbbgErrors.length > 0) {
+        toast(`⚠️ Mail đã gửi nhưng ${result.bbbgErrors.length} file BBBG bị lỗi — vui lòng gửi BBBG riêng cho ${tn}`,
+          { icon: '⚠️', duration: 8000 });
+      }
       qc.invalidateQueries({ queryKey: ['email-history', jobId] });
     } catch (err) {
       const status = err?.response?.status ?? err?.status;

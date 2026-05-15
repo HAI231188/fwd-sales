@@ -454,6 +454,124 @@ function drawPageFooter(doc, pageIdx, pageTotal, creatorName) {
   doc.fillColor('#000');
 }
 
+// CP4.3 — Per-booking page renderer. Shared between the multi-booking and
+// single-booking entrypoints so layout stays in lockstep. ctx must carry
+// the job, the booking, the pre-computed invoice/cargo totals, and the
+// page index/total for the footer "page N/M" stamp.
+function renderBookingPage(doc, {
+  job, booking: b, today, inv, totalWeightStr, weightUnit,
+  pageIdx, pageTotal, creatorName,
+}) {
+  drawPageHeader(doc, b.booking_code, today);
+
+  const left = doc.page.margins.left;
+  const right = doc.page.width - doc.page.margins.right;
+  const usableW = right - left;
+
+  let y = doc.y;
+  y = drawTwoColInfoBox(doc, left, y, usableW,
+    'THÔNG TIN CHUNG', 'General Info', [
+      { label: 'Số lô hàng',     en: 'Job ID',         value: job.job_code },
+      { label: 'Ngày phát hành', en: 'Date',           value: today },
+      { label: 'Người gửi',      en: 'Shipper',        value: job.shipper },
+      { label: 'Người nhận',     en: 'Consignee',      value: job.customer_name },
+      { label: 'Tàu',            en: 'Vessel',         value: job.vessel },
+      { label: 'Chuyến',         en: 'Voy.',           value: job.voy },
+      { label: 'Từ',             en: 'From',           value: job.pol },
+      { label: 'Đến cảng',       en: 'Terminal',       value: job.pod },
+      { label: 'Hãng tàu',       en: 'Shipping line',  value: job.shipping_line },
+      { label: 'Hạn lệnh',       en: 'Cutoff',         value: fmtHanLenhVn(job.han_lenh, job.import_export) },
+      { label: 'Vận đơn phụ',    en: 'H-B/L',          value: job.hbl_no },
+      { label: 'Vận đơn chính',  en: 'M-B/L',          value: job.mbl_no },
+    ]);
+  y += 6;
+
+  const conts = Array.isArray(b.containers) ? b.containers : [];
+  const contRows = [];
+  if (conts.length === 0) {
+    contRows.push(['Số container', 'Container No.', '—']);
+    contRows.push(['Loại',         'Type',          '—']);
+    contRows.push(['Seal',         'Seal No.',      '—']);
+    contRows.push(['Trọng lượng',  'Weight',        '—']);
+  } else {
+    conts.forEach((c, i) => {
+      const prefix = conts.length > 1 ? `Cont ${i + 1} — ` : '';
+      contRows.push([prefix + 'Số container', 'Container No.', c.cont_number || '(chưa số)']);
+      contRows.push([prefix + 'Loại',         'Type',          c.cont_type   || '—']);
+      contRows.push([prefix + 'Seal',         'Seal No.',      c.seal_number || '—']);
+      const w = c.weight_tons;
+      const wStr = (w != null && w !== '')
+        ? `${Number(w).toLocaleString('vi-VN')} TONS`
+        : '—';
+      contRows.push([prefix + 'Trọng lượng',  'Weight',        wStr]);
+    });
+  }
+  y = drawBoxedSection(doc, left, y, usableW,
+    'CONTAINER', 'Container Info', contRows);
+  y += 6;
+
+  y = drawTwoColInfoBox(doc, left, y, usableW,
+    'HÀNG HÓA', 'Cargo Info', [
+      { label: 'Tên hàng hóa', en: 'Description', value: job.goods_description || 'AS PER BILL' },
+      { label: 'Trọng lượng', en: 'Weight',     value: totalWeightStr },
+      { label: 'Đơn vị',      en: 'Unit',       value: weightUnit },
+      { label: 'Số kiện',     en: 'Pieces',     value: job.so_kien != null ? String(job.so_kien) : '—' },
+    ]);
+  y += 6;
+
+  y = drawTwoColInfoBox(doc, left, y, usableW,
+    'THÔNG TIN GIAO HÀNG', 'Delivery Info', [
+      { label: 'Ngày giờ giao',          en: 'Delivery time',     value: fmtDtVn(b.planned_datetime) },
+      { label: 'Địa điểm giao',          en: 'Delivery location', value: b.delivery_location },
+      { label: 'Người liên hệ tại kho',  en: 'Warehouse contact', value: b.receiver_name },
+      { label: 'SĐT',                    en: 'Phone',             value: b.receiver_phone },
+    ]);
+  y += 6;
+
+  if (inv) {
+    y = drawBoxedSection(doc, left, y, usableW,
+      'THÔNG TIN XUẤT HÓA ĐƠN NÂNG HẠ', 'Lift/Drop Invoice', [
+        ['Tên công ty', 'Company',  inv.company],
+        ['MST',         'Tax code', inv.tax],
+        ['Địa chỉ',     'Address',  inv.address],
+      ]);
+    y += 6;
+  }
+
+  doc.y = y;
+  if (b.note || b.notes) {
+    doc.font('RB').fontSize(9).fillColor('#000')
+       .text('Ghi chú: ', left, doc.y, { continued: true })
+       .font('R').text(String(b.note || b.notes));
+  }
+  if (b.bbbg_note) {
+    doc.font('RB').fontSize(9).fillColor('#d97706')
+       .text('⚠️ Lưu ý cho tài xế: ', { continued: true })
+       .font('R').fillColor('#b45309').text(String(b.bbbg_note));
+    doc.fillColor('#000');
+  }
+
+  drawSignatures(doc);
+  drawPageFooter(doc, pageIdx, pageTotal, creatorName);
+}
+
+// Per-job context (invoice + cargo totals) — same for every page of a job.
+function buildPageCtx({ job, invoiceInfo }) {
+  const invSource = invoiceInfo?.type === 'slb'
+    ? { ...invoiceInfo, ...SLB_INVOICE_INFO_EN }
+    : invoiceInfo;
+  const inv = invSource && invSource.company && invSource.tax && invSource.address
+    ? invSource : null;
+  const isFcl = (job.cargo_type || 'fcl') === 'fcl';
+  const totalWeight = isFcl ? job.tons : job.kg;
+  const weightUnit  = isFcl ? 'TONS' : 'KGS';
+  const totalWeightStr = (totalWeight != null && totalWeight !== '')
+    ? `${Number(totalWeight).toLocaleString('vi-VN')} ${weightUnit}`
+    : '—';
+  const today = new Date().toLocaleDateString('vi-VN');
+  return { today, inv, totalWeightStr, weightUnit };
+}
+
 // Public entry ───────────────────────────────────────────────────────────────
 
 async function generateMultiBookingBBBG({
@@ -521,7 +639,8 @@ async function generateMultiBookingBBBG({
     throw new Error('Không tìm thấy booking nào khớp');
   }
 
-  // 4. Render — collect into a Buffer.
+  // 4. Render — collect into a Buffer. CP4.3: per-page rendering moved into
+  // renderBookingPage so the single-booking entrypoint can share it.
   return await new Promise((resolve, reject) => {
     const doc = new PDFDocument({ size: 'A4', margin: 36 });
     registerFonts(doc);
@@ -530,141 +649,90 @@ async function generateMultiBookingBBBG({
     doc.on('end', () => resolve(Buffer.concat(chunks)));
     doc.on('error', reject);
 
-    const today = new Date().toLocaleDateString('vi-VN');
+    const ctx = buildPageCtx({ job, invoiceInfo });
     const pageTotal = bookings.length;
-    // CP4.2.2 — when the caller picked SLB, swap the company/tax/address in
-    // for the EN variant before the renderer reads them. This keeps the
-    // override on the server so the frontend can't spoof a different name
-    // by sending type='slb' with arbitrary text.
-    const invSource = invoiceInfo?.type === 'slb'
-      ? { ...invoiceInfo, ...SLB_INVOICE_INFO_EN }
-      : invoiceInfo;
-    const inv = invSource && invSource.company && invSource.tax && invSource.address
-      ? invSource : null;
-
-    // Cargo totals — FCL uses tons, LCL uses kg. Unit follows cargo_type.
-    const isFcl = (job.cargo_type || 'fcl') === 'fcl';
-    const totalWeight = isFcl ? job.tons : job.kg;
-    const weightUnit  = isFcl ? 'TONS' : 'KGS';
-    const totalWeightStr = (totalWeight != null && totalWeight !== '')
-      ? `${Number(totalWeight).toLocaleString('vi-VN')} ${weightUnit}`
-      : '—';
-
     bookings.forEach((b, idx) => {
       if (idx > 0) doc.addPage({ size: 'A4', margin: 36 });
-
-      // CP4.2.1 — slim header (booking code + date only); manifest fields
-      // moved into the THÔNG TIN CHUNG boxed section.
-      drawPageHeader(doc, b.booking_code, today);
-
-      const left = doc.page.margins.left;
-      const right = doc.page.width - doc.page.margins.right;
-      const usableW = right - left;
-
-      // Section 1 — THÔNG TIN CHUNG (2-col compact). 12 manifest fields:
-      // Số lô hàng / Ngày / Shipper / Consignee / Vessel / Voy / From (POL) /
-      // Terminal (POD) / Shipping line / H-B/L / M-B/L / Hạn lệnh.
-      let y = doc.y;
-      y = drawTwoColInfoBox(doc, left, y, usableW,
-        'THÔNG TIN CHUNG', 'General Info', [
-          { label: 'Số lô hàng',     en: 'Job ID',         value: job.job_code },
-          { label: 'Ngày phát hành', en: 'Date',           value: today },
-          { label: 'Người gửi',      en: 'Shipper',        value: job.shipper },
-          { label: 'Người nhận',     en: 'Consignee',      value: job.customer_name },
-          { label: 'Tàu',            en: 'Vessel',         value: job.vessel },
-          { label: 'Chuyến',         en: 'Voy.',           value: job.voy },
-          { label: 'Từ',             en: 'From',           value: job.pol },
-          { label: 'Đến cảng',       en: 'Terminal',       value: job.pod },
-          { label: 'Hãng tàu',       en: 'Shipping line',  value: job.shipping_line },
-          { label: 'Hạn lệnh',       en: 'Cutoff',         value: fmtHanLenhVn(job.han_lenh, job.import_export) },
-          { label: 'Vận đơn phụ',    en: 'H-B/L',          value: job.hbl_no },
-          { label: 'Vận đơn chính',  en: 'M-B/L',          value: job.mbl_no },
-        ]);
-      y += 6;
-
-      // Section 2 — CONTAINER. Per-cont rows; legacy spec shows 1 cont but
-      // L20 allows multi. For 1 cont we emit 4 single-col rows; for 2+ we
-      // prefix each label with "Cont N — " so the user can tell them apart.
-      const conts = Array.isArray(b.containers) ? b.containers : [];
-      const contRows = [];
-      if (conts.length === 0) {
-        contRows.push(['Số container', 'Container No.', '—']);
-        contRows.push(['Loại',         'Type',          '—']);
-        contRows.push(['Seal',         'Seal No.',      '—']);
-        contRows.push(['Trọng lượng',  'Weight',        '—']);
-      } else {
-        conts.forEach((c, i) => {
-          const prefix = conts.length > 1 ? `Cont ${i + 1} — ` : '';
-          contRows.push([prefix + 'Số container', 'Container No.', c.cont_number || '(chưa số)']);
-          contRows.push([prefix + 'Loại',         'Type',          c.cont_type   || '—']);
-          contRows.push([prefix + 'Seal',         'Seal No.',      c.seal_number || '—']);
-          const w = c.weight_tons;
-          const wStr = (w != null && w !== '')
-            ? `${Number(w).toLocaleString('vi-VN')} TONS`
-            : '—';
-          contRows.push([prefix + 'Trọng lượng',  'Weight',        wStr]);
-        });
-      }
-      y = drawBoxedSection(doc, left, y, usableW,
-        'CONTAINER', 'Container Info', contRows);
-      y += 6;
-
-      // Section 3 — HÀNG HÓA (job-level cargo totals). 2-col compact.
-      y = drawTwoColInfoBox(doc, left, y, usableW,
-        'HÀNG HÓA', 'Cargo Info', [
-          { label: 'Tên hàng hóa', en: 'Description', value: job.goods_description || 'AS PER BILL' },
-          { label: 'Trọng lượng', en: 'Weight',     value: totalWeightStr },
-          { label: 'Đơn vị',      en: 'Unit',       value: weightUnit },
-          { label: 'Số kiện',     en: 'Pieces',     value: job.so_kien != null ? String(job.so_kien) : '—' },
-        ]);
-      y += 6;
-
-      // Section 4 — THÔNG TIN GIAO HÀNG (booking-specific delivery + contact).
-      // 2-col compact.
-      y = drawTwoColInfoBox(doc, left, y, usableW,
-        'THÔNG TIN GIAO HÀNG', 'Delivery Info', [
-          { label: 'Ngày giờ giao',          en: 'Delivery time',     value: fmtDtVn(b.planned_datetime) },
-          { label: 'Địa điểm giao',          en: 'Delivery location', value: b.delivery_location },
-          { label: 'Người liên hệ tại kho',  en: 'Warehouse contact', value: b.receiver_name },
-          { label: 'SĐT',                    en: 'Phone',             value: b.receiver_phone },
-        ]);
-      y += 6;
-
-      // Section 5 — Invoice (optional, only when caller supplied a complete set).
-      if (inv) {
-        y = drawBoxedSection(doc, left, y, usableW,
-          'THÔNG TIN XUẤT HÓA ĐƠN NÂNG HẠ', 'Lift/Drop Invoice', [
-            ['Tên công ty', 'Company',  inv.company],
-            ['MST',         'Tax code', inv.tax],
-            ['Địa chỉ',     'Address',  inv.address],
-          ]);
-        y += 6;
-      }
-
-      // Notes + driver warning. bbbg_note is the only place bbbg_note flows
-      // into the PDF (per CP4.1 — never the mail body).
-      doc.y = y;
-      if (b.note || b.notes) {
-        doc.font('RB').fontSize(9).fillColor('#000')
-           .text('Ghi chú: ', left, doc.y, { continued: true })
-           .font('R').text(String(b.note || b.notes));
-      }
-      if (b.bbbg_note) {
-        doc.font('RB').fontSize(9).fillColor('#d97706')
-           .text('⚠️ Lưu ý cho tài xế: ', { continued: true })
-           .font('R').fillColor('#b45309').text(String(b.bbbg_note));
-        doc.fillColor('#000');
-      }
-
-      // Signatures + footer. CP4.2.1: "ĐẠI DIỆN GIAO" (not "ĐẠI DIỆN SLB") —
-      // BBBG is signed in person at delivery so the giao/nhận pair is the
-      // accurate framing.
-      drawSignatures(doc);
-      drawPageFooter(doc, idx + 1, pageTotal, creatorName);
+      renderBookingPage(doc, {
+        ...ctx, job, booking: b,
+        pageIdx: idx + 1, pageTotal, creatorName,
+      });
     });
 
     doc.end();
   });
 }
 
-module.exports = { buildBbbgPdf, generateMultiBookingBBBG };
+// CP4.3 — Single-booking BBBG generator used by sendPlanningEmail to attach
+// one PDF per booking. Scope-validates that bookingId belongs to BOTH the
+// supplied job_id AND transport_company_id so a stray id from another job
+// can never leak into a transport's mail. Returns a 1-page PDF Buffer.
+async function generateSingleBookingBBBG({
+  jobId, transportCompanyId, bookingId, invoiceInfo, creatorName,
+}) {
+  if (!Number.isFinite(jobId))            throw new Error('jobId không hợp lệ');
+  if (!Number.isFinite(transportCompanyId)) throw new Error('transportCompanyId không hợp lệ');
+  if (!Number.isFinite(bookingId))        throw new Error('bookingId không hợp lệ');
+
+  const { rows: [job] } = await db.query(
+    `SELECT id, job_code, customer_name, han_lenh, import_export,
+            pol, pod, hbl_no, mbl_no,
+            cargo_type, tons, kg, so_kien,
+            shipper, vessel, voy, shipping_line, goods_description
+       FROM jobs WHERE id = $1 AND deleted_at IS NULL`,
+    [jobId]
+  );
+  if (!job) throw new Error('Không tìm thấy job');
+
+  const { rows: [tc] } = await db.query(
+    `SELECT id FROM transport_companies WHERE id = $1 AND deleted_at IS NULL`,
+    [transportCompanyId]
+  );
+  if (!tc) throw new Error('Không tìm thấy vận tải');
+
+  // Single booking scoped by (id, job_id, transport_company_id) so we catch
+  // cross-job and cross-transport mismatches at load time.
+  const { rows: bks } = await db.query(`
+    SELECT tb.id, tb.booking_code, tb.planned_datetime, tb.delivery_location,
+           tb.cost, tb.note, tb.notes, tb.vehicle_number,
+           tb.receiver_name, tb.receiver_phone, tb.bbbg_note,
+           COALESCE((
+             SELECT json_agg(json_build_object(
+               'id', jc.id,
+               'cont_number', jc.cont_number,
+               'cont_type', jc.cont_type,
+               'seal_number', jc.seal_number,
+               'weight_tons', jc.weight_tons
+             ) ORDER BY jc.id)
+             FROM truck_booking_containers tbc
+             JOIN job_containers jc ON jc.id = tbc.container_id
+             WHERE tbc.booking_id = tb.id
+           ), '[]'::json) AS containers
+      FROM truck_bookings tb
+     WHERE tb.id = $1 AND tb.job_id = $2 AND tb.transport_company_id = $3
+       AND tb.deleted_at IS NULL
+  `, [bookingId, jobId, transportCompanyId]);
+  if (bks.length === 0) {
+    throw new Error('Booking không thuộc job/vận tải này hoặc đã bị xóa');
+  }
+  const booking = bks[0];
+
+  return await new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ size: 'A4', margin: 36 });
+    registerFonts(doc);
+    const chunks = [];
+    doc.on('data', c => chunks.push(c));
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+
+    const ctx = buildPageCtx({ job, invoiceInfo });
+    renderBookingPage(doc, {
+      ...ctx, job, booking,
+      pageIdx: 1, pageTotal: 1, creatorName,
+    });
+
+    doc.end();
+  });
+}
+
+module.exports = { buildBbbgPdf, generateMultiBookingBBBG, generateSingleBookingBBBG };

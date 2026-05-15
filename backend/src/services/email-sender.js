@@ -18,6 +18,7 @@
 const nodemailer = require('nodemailer');
 const db = require('../db');
 const enc = require('../utils/encryption');
+const { generateSingleBookingBBBG } = require('./bbbg-pdf');
 
 // Phase 5 Step 3 Part 2 CP3.5b — SLB's own legal info, exposed via
 // GET /api/email/slb-invoice-info so the frontend invoice modal can pick
@@ -116,6 +117,10 @@ function renderBody({
   mailType, isReplacement,
   jobCode, customerName, shippingLine, hanLenh, importExport,
   invoiceInfo, bookings,
+  // CP4.3 — number of BBBG PDFs attached. The send path passes the actual
+  // generated count; the preview path passes bookings.length so the user
+  // sees the right line. mailType='cancel' ignores this (no attachments).
+  attachmentCount,
 }) {
   const lines = [];
   lines.push('Kính gửi anh/chị,');
@@ -194,7 +199,11 @@ function renderBody({
   });
   lines.push('Vui lòng xác nhận và báo SỐ XE sớm nhất có thể.');
   lines.push('');
-  lines.push('Đính kèm: Biên bản bàn giao (đang phát triển)');
+  // CP4.3 — BBBG PDFs are now auto-attached, one file per booking. The exact
+  // count is passed by the caller (send path = generated count, preview =
+  // bookings.length). Fall back to bookings.length so the line is never blank.
+  const nAttach = (attachmentCount != null) ? attachmentCount : bookings.length;
+  lines.push(`Đính kèm: ${nAttach} file Biên bản bàn giao (mỗi container 1 file PDF — vui lòng in và đưa từng tài xế)`);
   lines.push('');
   lines.push('Trân trọng,');
   lines.push('Điều vận - SLB Logistics');
@@ -322,6 +331,45 @@ async function sendPlanningEmail({
     throw new Error('Không tìm thấy booking nào khớp với booking_ids cho job này');
   }
 
+  // ─── 4b. CP4.3 — Generate BBBG PDF per booking (mailType='new' only). ─────
+  // Each booking gets its own one-page PDF so the carrier can hand each file
+  // to the driver of that container. Per-booking errors are logged but do
+  // NOT abort the send — the mail still goes out with whatever attachments
+  // succeeded; the caller surfaces a warning via the bbbgErrors return field.
+  // Cancel mails carry no attachments.
+  const attachments = [];
+  const bbbgErrors = [];
+  if (mailType === 'new') {
+    for (const booking of bookings) {
+      try {
+        const pdfBuffer = await generateSingleBookingBBBG({
+          jobId, transportCompanyId, bookingId: booking.id,
+          invoiceInfo: invoice,
+          creatorName: sender.gmail_display_name || '',
+        });
+        const bookingShort = (booking.booking_code || '').replace(/^KH-/, '')
+          || `BK${booking.id}`;
+        const contRaw = (booking.cont_number || 'NOCONT')
+          .replace(/[^A-Za-z0-9]+/g, '_')
+          .replace(/^_+|_+$/g, '')
+          .slice(0, 40) || 'NOCONT';
+        const filename = `BBBG_${bookingShort}_${contRaw}.pdf`;
+        attachments.push({
+          filename,
+          content: pdfBuffer,
+          contentType: 'application/pdf',
+        });
+      } catch (err) {
+        console.error(`[bbbg] gen failed booking #${booking.id}:`, err.message);
+        bbbgErrors.push({
+          booking_id: booking.id,
+          booking_code: booking.booking_code,
+          error: err.message,
+        });
+      }
+    }
+  }
+
   // ─── 5. Render ──────────────────────────────────────────────────────────
   // Earliest planned_datetime across the bookings → dd/MM subject suffix.
   const earliestPlanned = bookings
@@ -347,6 +395,10 @@ async function sendPlanningEmail({
     importExport: job.import_export,
     invoiceInfo: invoice,
     bookings,
+    // The body's "Đính kèm: N file..." line uses the ACTUAL generated count
+    // — if a per-booking PDF failed, the body honestly reflects what made it
+    // to the recipient. Cancel mails ignore this param.
+    attachmentCount: attachments.length,
   });
 
   // ─── 6. JSONB snapshot for "có thay đổi sau gửi" diff (CP5) ─────────────
@@ -396,10 +448,18 @@ async function sendPlanningEmail({
       cc: ccList.length ? ccList : undefined,
       subject,
       text: body,
+      attachments,
     });
   } catch (e) {
     status = 'failed';
     errorMessage = e?.message || String(e);
+  }
+
+  // CP4.3 — when the send itself succeeded but some BBBG PDFs failed to
+  // generate, surface that in error_message as a warning blob alongside any
+  // SMTP error. Always serializable JSON; never overwrites a real SMTP error.
+  if (status === 'sent' && bbbgErrors.length > 0) {
+    errorMessage = JSON.stringify({ bbbg_partial_failure: bbbgErrors });
   }
 
   // ─── 8. Log to email_history (both sent + failed paths) ────────────────
@@ -416,7 +476,7 @@ async function sendPlanningEmail({
     sender.id, sender.gmail_address, sender.gmail_display_name,
     tc.id, recipientEmail, JSON.stringify(ccList),
     job.id, bookingIds, mailType,
-    subject, body, false,
+    subject, body, attachments.length > 0,
     status, errorMessage, JSON.stringify(snapshot),
   ]);
 
@@ -433,6 +493,8 @@ async function sendPlanningEmail({
     recipient_email: recipientEmail,
     cc: ccList,
     subject,
+    attachmentCount: attachments.length,
+    bbbgErrors: bbbgErrors.length ? bbbgErrors : null,
   };
 }
 
@@ -553,6 +615,9 @@ async function previewPlanningEmail({
     importExport: job.import_export,
     invoiceInfo: normalizedInvoice,
     bookings,
+    // CP4.3 — preview mirrors the send-path body's "Đính kèm: N file..." line
+    // by passing bookings.length here. Preview doesn't actually generate PDFs.
+    attachmentCount: bookings.length,
   });
 
   return {
