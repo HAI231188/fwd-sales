@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useModalZIndex } from '../hooks/useModalZIndex';
 
@@ -26,12 +26,40 @@ const SLB = {
   address: '8th Floor, Diamond Building, No 7 Lot 8A Le Hong Phong, Ngo Quyen, Hai Phong, Viet Nam',
 };
 
-export default function InvoiceRecipientModal({ isOpen, customer, onClose, onConfirm }) {
+// CP4.3.1 — when `bookings` is supplied (mail-send flow from
+// TruckPlanningModal), the modal renders an "Đính kèm BBBG PDF" checkbox.
+// Smart default: ON when every booking has receiver_name + receiver_phone +
+// delivery_location + planned_datetime; OFF when any field is missing. The
+// BBBG-preview flow doesn't pass bookings → checkbox hidden.
+export default function InvoiceRecipientModal({ isOpen, customer, bookings, onClose, onConfirm }) {
   const zIndex = useModalZIndex();
   const [selected, setSelected] = useState('customer');
   const [customCompany, setCustomCompany] = useState('');
   const [customTax, setCustomTax] = useState('');
   const [customAddress, setCustomAddress] = useState('');
+  // attachBbbg lives in state because the user can override the smart default.
+  // userTouchedAttach tracks whether the user has clicked the checkbox; if
+  // not, re-opening the modal recomputes the smart default. Once clicked,
+  // the user's choice sticks for the rest of this modal session.
+  const [attachBbbg, setAttachBbbg] = useState(true);
+  const [userTouchedAttach, setUserTouchedAttach] = useState(false);
+
+  const showAttachToggle = Array.isArray(bookings) && bookings.length > 0;
+  const allComplete = useMemo(() => {
+    if (!showAttachToggle) return true;
+    return bookings.every(b =>
+      b.receiver_name && b.receiver_phone && b.delivery_location && b.planned_datetime
+    );
+  }, [showAttachToggle, bookings]);
+
+  // Reset attach decision when the modal opens (new send session).
+  useEffect(() => {
+    if (!isOpen) return;
+    if (showAttachToggle) {
+      setAttachBbbg(allComplete);
+      setUserTouchedAttach(false);
+    }
+  }, [isOpen, showAttachToggle, allComplete]);
 
   // Customer info from job (post-LATERAL JOIN to customer_pipeline).
   const cust = customer || {};
@@ -64,7 +92,10 @@ export default function InvoiceRecipientModal({ isOpen, customer, onClose, onCon
         address: customAddress.trim(),
       };
     }
-    onConfirm?.(payload);
+    // CP4.3.1 — onConfirm signature is (invoiceInfo, attachBbbg). Callers
+    // that don't pass `bookings` get attachBbbg=true here (backwards compat
+    // with the BBBG-preview flow, which ignores the second arg anyway).
+    onConfirm?.(payload, attachBbbg);
   }
 
   if (!isOpen) return null;
@@ -169,6 +200,33 @@ export default function InvoiceRecipientModal({ isOpen, customer, onClose, onCon
               </div>
             </div>
           </label>
+
+          {/* CP4.3.1 — BBBG attach toggle. Rendered only when the parent
+              passes a `bookings` array (mail-send flow). Smart default ON if
+              every booking has receiver_name + receiver_phone + delivery_location
+              + planned_datetime; OFF otherwise. User can override either way. */}
+          {showAttachToggle && (
+            <div style={{ marginTop: 16, padding: 12, background: '#f9fafb',
+              border: '1px solid var(--border)', borderRadius: 8 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8,
+                cursor: 'pointer', fontSize: 14, fontWeight: 500 }}>
+                <input type="checkbox" checked={attachBbbg}
+                  onChange={e => { setAttachBbbg(e.target.checked); setUserTouchedAttach(true); }} />
+                <span>📎 Đính kèm BBBG PDF ({bookings.length} file, mỗi container 1 file)</span>
+              </label>
+              {!allComplete && !attachBbbg && !userTouchedAttach && (
+                <div style={{ marginTop: 8, fontSize: 13, color: '#dc2626' }}>
+                  ⚠️ Một số container thiếu thông tin (người liên hệ tại kho, địa điểm).
+                  BBBG có thể không đầy đủ — đã tự động tắt đính kèm.
+                </div>
+              )}
+              {!allComplete && attachBbbg && (
+                <div style={{ marginTop: 8, fontSize: 13, color: '#ea580c' }}>
+                  ℹ️ Một số container thiếu thông tin nhưng vẫn đính kèm BBBG theo lựa chọn của bạn.
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="modal-footer">

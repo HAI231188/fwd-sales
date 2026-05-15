@@ -128,6 +128,10 @@ function renderBody({
   // generated count; the preview path passes bookings.length so the user
   // sees the right line. mailType='cancel' ignores this (no attachments).
   attachmentCount,
+  // CP4.3.1 — when false, the "Đính kèm: N file BBBG..." line is omitted
+  // entirely (no mention of attachments). Default true preserves CP4.3
+  // behavior for callers that don't pass it.
+  includeBbbgLine = true,
 }) {
   const lines = [];
   lines.push('Kính gửi anh/chị,');
@@ -209,9 +213,14 @@ function renderBody({
   // CP4.3 — BBBG PDFs are now auto-attached, one file per booking. The exact
   // count is passed by the caller (send path = generated count, preview =
   // bookings.length). Fall back to bookings.length so the line is never blank.
-  const nAttach = (attachmentCount != null) ? attachmentCount : bookings.length;
-  lines.push(`Đính kèm: ${nAttach} file Biên bản bàn giao (mỗi container 1 file PDF — vui lòng in và đưa từng tài xế)`);
-  lines.push('');
+  // CP4.3.1 — entirely omit the line when includeBbbgLine === false (DD
+  // chose not to attach BBBG this round — placeholder mail to lock the
+  // carrier before BBBG details are finalized).
+  if (includeBbbgLine) {
+    const nAttach = (attachmentCount != null) ? attachmentCount : bookings.length;
+    lines.push(`Đính kèm: ${nAttach} file Biên bản bàn giao (mỗi container 1 file PDF — vui lòng in và đưa từng tài xế)`);
+    lines.push('');
+  }
   lines.push('Trân trọng,');
   lines.push('Điều vận - SLB Logistics');
   return lines.join('\n');
@@ -234,6 +243,10 @@ function validateInvoiceInfo(info) {
 async function sendPlanningEmail({
   senderUserId, jobId, transportCompanyId, bookingIds, mailType,
   isReplacement = false, invoiceInfo,
+  // CP4.3.1 — DD toggle for "attach BBBG PDFs". Default true for backwards
+  // compat: existing callers + scripts keep the auto-attach behavior they
+  // expect; the InvoiceRecipientModal explicitly threads this through.
+  attachBbbg = true,
 }) {
   if (!['new', 'cancel'].includes(mailType)) {
     throw new Error('mailType phải là "new" hoặc "cancel"');
@@ -346,7 +359,10 @@ async function sendPlanningEmail({
   // Cancel mails carry no attachments.
   const attachments = [];
   const bbbgErrors = [];
-  if (mailType === 'new') {
+  // CP4.3.1 — gate the attachment loop on the DD's checkbox decision. When
+  // the user unticks "Đính kèm BBBG PDF", we skip generation entirely (no
+  // wasted CPU rendering PDFs that won't be sent) AND drop the body line.
+  if (mailType === 'new' && attachBbbg) {
     // Lazy require — see note at the top of this file. Resolves to the fully
     // populated bbbg-pdf module at request time, dodging the circular-load
     // window that produced undefined at module-init time.
@@ -410,6 +426,10 @@ async function sendPlanningEmail({
     // — if a per-booking PDF failed, the body honestly reflects what made it
     // to the recipient. Cancel mails ignore this param.
     attachmentCount: attachments.length,
+    // CP4.3.1 — track the DD's checkbox choice into the body. When the
+    // attach loop was skipped (attachBbbg=false), this is false too, so the
+    // body drops the "Đính kèm" line entirely.
+    includeBbbgLine: attachBbbg,
   });
 
   // ─── 6. JSONB snapshot for "có thay đổi sau gửi" diff (CP5) ─────────────
@@ -519,6 +539,10 @@ async function sendPlanningEmail({
 async function previewPlanningEmail({
   senderUserId, jobId, transportCompanyId, bookingIds, mailType,
   isReplacement = false, invoiceInfo,
+  // CP4.3.1 — preview defaults to attachBbbg=true so the user always sees
+  // the "Đính kèm" line in the preview pane. Frontend "Xem mail" button
+  // doesn't expose the toggle (decision: keep preview simple).
+  attachBbbg = true,
 }) {
   if (!['new', 'cancel'].includes(mailType)) {
     throw new Error('mailType phải là "new" hoặc "cancel"');
@@ -629,6 +653,10 @@ async function previewPlanningEmail({
     // CP4.3 — preview mirrors the send-path body's "Đính kèm: N file..." line
     // by passing bookings.length here. Preview doesn't actually generate PDFs.
     attachmentCount: bookings.length,
+    // CP4.3.1 — preview honors the attachBbbg flag, but the frontend
+    // "Xem mail" path doesn't pass one, so it defaults to true and the
+    // preview always shows the line.
+    includeBbbgLine: attachBbbg,
   });
 
   return {

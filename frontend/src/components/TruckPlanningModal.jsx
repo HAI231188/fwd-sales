@@ -113,7 +113,7 @@ export default function TruckPlanningModal({ jobId, jobCode, onClose }) {
     }
   }
 
-  async function fireSend(invoiceInfo) {
+  async function fireSend(invoiceInfo, attachBbbg = true) {
     if (!pendingMailContext) return;
     const ctx = pendingMailContext;
     setPendingMailContext(null);
@@ -126,11 +126,20 @@ export default function TruckPlanningModal({ jobId, jobCode, onClose }) {
         mail_type: ctx.mailType,
         is_replacement: !!ctx.isReplacement,
         invoice_info: invoiceInfo,
+        // CP4.3.1 — DD checkbox decision from InvoiceRecipientModal. When
+        // false, backend skips PDF generation entirely and drops the
+        // "Đính kèm" line from the mail body.
+        attach_bbbg: attachBbbg,
       });
       // CP4.3 — surface BBBG attachment count + partial-failure warnings.
+      // CP4.3.1 — third variant when DD explicitly unticked the attach
+      // checkbox: confirm the no-BBBG send explicitly so they know the mail
+      // went out without PDFs (placeholder/lock-the-carrier flow).
       const tn = ctx.group.transport_name;
       const ac = Number(result?.attachmentCount) || 0;
-      if (ac > 0) {
+      if (!attachBbbg) {
+        toast.success(`✅ Đã gửi mail cho ${tn} (không kèm BBBG)`);
+      } else if (ac > 0) {
         toast.success(`✅ Đã gửi mail cho ${tn} — Đính kèm ${ac} file BBBG`);
       } else {
         toast.success(`✅ Đã gửi mail cho ${tn} (${result.recipient_email})`);
@@ -340,8 +349,14 @@ export default function TruckPlanningModal({ jobId, jobCode, onClose }) {
           invoice_tax: job.invoice_tax_code,
           invoice_address: job.invoice_address,
         } : null}
+        // CP4.3.1 — surface the group's per-cont rows so InvoiceRecipientModal
+        // can compute the smart default for the BBBG attach checkbox. The
+        // BBBG-preview instance below intentionally doesn't pass `bookings`
+        // → checkbox hidden, attachBbbg stays at default true (irrelevant
+        // for that flow anyway since it's just rendering a preview PDF).
+        bookings={pendingMailContext?.group?.rows || null}
         onClose={() => setPendingMailContext(null)}
-        onConfirm={(invoiceInfo) => fireSend(invoiceInfo)} />
+        onConfirm={(invoiceInfo, attachBbbg) => fireSend(invoiceInfo, attachBbbg)} />
 
       {/* CP4.2 — Separate modal mount for the "Xem BBBG" flow. Same modal
           component, different pending-context state + different onConfirm. */}

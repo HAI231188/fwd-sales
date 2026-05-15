@@ -28,6 +28,10 @@ router.post('/send-planning', requireAuth, async (req, res) => {
   const {
     job_id, transport_company_id, booking_ids, mail_type,
     invoice_info, is_replacement,
+    // CP4.3.1 — DD checkbox decision threaded from InvoiceRecipientModal.
+    // Default true so older clients (and any direct API caller from before
+    // this CP shipped) keep the auto-attach behavior.
+    attach_bbbg,
   } = req.body || {};
 
   // Basic shape validation (the service does the heavier checks).
@@ -100,6 +104,8 @@ router.post('/send-planning', requireAuth, async (req, res) => {
         tax: invTax,
         address: invAddress,
       },
+      // CP4.3.1 — null/undefined → default true inside the service.
+      attachBbbg: attach_bbbg !== false,
     });
     res.json(result);
   } catch (err) {
@@ -158,7 +164,11 @@ router.post('/preview-planning', requireAuth, async (req, res) => {
   }
 
   const { job_id, transport_company_id, booking_ids, mail_type,
-          invoice_info, is_replacement } = req.body || {};
+          invoice_info, is_replacement,
+          // CP4.3.1 — optional, defaults true. The "Xem mail" UI doesn't
+          // pass this so the preview always shows the "Đính kèm" line.
+          attach_bbbg,
+        } = req.body || {};
 
   const jobId = parseInt(job_id, 10);
   const tcId = parseInt(transport_company_id, 10);
@@ -194,6 +204,7 @@ router.post('/preview-planning', requireAuth, async (req, res) => {
       bookingIds, mailType: mail_type,
       isReplacement: !!is_replacement,
       invoiceInfo: normalizedInvoice,
+      attachBbbg: attach_bbbg !== false,
     });
     res.json(result);
   } catch (err) {
