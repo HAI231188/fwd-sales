@@ -9,10 +9,20 @@ import { TRUCK_BOOKING_STATUS_LABELS, truckBookingPillStyle } from '../utils/tru
 // Phase 5 Step 1 add-on: 8 booking-level filterTypes share the same column set
 // + the same 3 tabs (Tất cả / Có vận tải / Chưa có vận tải). Date-bucket ones
 // also get a dynamic title.
+// CP6.2 adds 6 booking-level staff_dd_* keys here so the JobListModal renders
+// them with the booking column set (ticks, receiver, etc.) instead of the
+// legacy job-level columns. staff_dd_pending + staff_dd_quan_ly_dat_xe stay
+// job-level (handled by the prefix-match branch below).
 const BOOKING_LEVEL_FILTERS = [
   'dd_kh_da_dat_chi_tiet',
   'dd_kh_qua_han', 'dd_kh_today',
   'dd_kh_d1', 'dd_kh_d2', 'dd_kh_d3', 'dd_kh_d4', 'dd_kh_d5',
+  'staff_dd_no_plan',
+  'staff_dd_has_plan',
+  'staff_dd_booked',
+  'staff_dd_plan_no_truck',
+  'staff_dd_urgent_no_truck',
+  'staff_dd_overdue_delivery',
 ];
 
 function formatDayLabel(offset) {

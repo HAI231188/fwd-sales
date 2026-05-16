@@ -695,6 +695,108 @@ router.get('/filtered', requireAuth, async (req, res) => {
         (role === 'ops' && isOpsFilter);
       if (!allowed) return res.status(403).json({ error: 'Không có quyền' });
     }
+
+    // CP6.2 — booking-level staff_dd_* drilldowns. Each filter is keyed
+    // 1:1 to a column in the refactored queryDieuDoStaffStats SQL so the
+    // drilldown row set always matches the stat count (L5). Returns one
+    // row per booking; frontend JobListModal uses its BOOKING_LEVEL
+    // column set for these filter types.
+    const STAFF_DD_BOOKING_TYPES = new Set([
+      'staff_dd_no_plan',
+      'staff_dd_has_plan',
+      'staff_dd_booked',
+      'staff_dd_plan_no_truck',
+      'staff_dd_urgent_no_truck',
+      'staff_dd_overdue_delivery',
+    ]);
+    if (STAFF_DD_BOOKING_TYPES.has(type)) {
+      const staffId = parseInt(req.query.staff_id, 10);
+      // staff_id check already happened earlier in this block.
+      let where;
+      let order;
+      switch (type) {
+        case 'staff_dd_no_plan':
+          where = `AND (tb.planned_datetime IS NULL
+                    OR tb.delivery_location IS NULL OR tb.delivery_location = '')`;
+          order = `ORDER BY j.job_code ASC NULLS LAST, tb.booking_code ASC NULLS LAST`;
+          break;
+        case 'staff_dd_has_plan':
+          where = `AND tb.planned_datetime IS NOT NULL
+                   AND tb.delivery_location IS NOT NULL AND tb.delivery_location <> ''`;
+          order = `ORDER BY j.job_code ASC NULLS LAST, tb.booking_code ASC NULLS LAST`;
+          break;
+        case 'staff_dd_booked':
+          where = `AND tb.transport_company_id IS NOT NULL
+                   AND tb.vehicle_number IS NOT NULL AND tb.vehicle_number <> ''`;
+          order = `ORDER BY j.job_code ASC NULLS LAST, tb.booking_code ASC NULLS LAST`;
+          break;
+        case 'staff_dd_plan_no_truck':
+          where = `AND tb.planned_datetime IS NOT NULL
+                   AND tb.delivery_location IS NOT NULL AND tb.delivery_location <> ''
+                   AND (tb.vehicle_number IS NULL OR tb.vehicle_number = '')`;
+          order = `ORDER BY j.job_code ASC NULLS LAST, tb.booking_code ASC NULLS LAST`;
+          break;
+        case 'staff_dd_urgent_no_truck':
+          where = `AND tb.planned_datetime > NOW()
+                   AND tb.planned_datetime <= NOW() + INTERVAL '12 hours'
+                   AND tb.transport_company_id IS NULL`;
+          order = `ORDER BY tb.planned_datetime ASC`;
+          break;
+        case 'staff_dd_overdue_delivery':
+          // j.completed_at IS NULL here rather than j.status check —
+          // matches the CP6.1 stat-count formula one-to-one.
+          where = `AND tb.vehicle_number IS NOT NULL AND tb.vehicle_number <> ''
+                   AND (NOT tb.invoice_lifting_ticked OR NOT tb.cost_entered_ticked)
+                   AND j.completed_at IS NULL`;
+          order = `ORDER BY j.updated_at DESC`;
+          break;
+      }
+      try {
+        const { rows } = await db.query(`
+          SELECT
+            tb.id AS booking_id,
+            tb.booking_code,
+            tb.job_id AS id,
+            j.job_code,
+            j.customer_name,
+            j.import_export,
+            j.han_lenh,
+            tb.transport_company_id,
+            tb.transport_name,
+            tb.vehicle_number,
+            tb.planned_datetime,
+            tb.delivery_location AS truck_delivery_location,
+            tb.cost,
+            tb.receiver_name,
+            tb.receiver_phone,
+            tb.invoice_lifting_ticked,
+            tb.cost_entered_ticked,
+            get_truck_booking_status(j.id) AS booking_status,
+            COALESCE((
+              SELECT string_agg(
+                COALESCE(jc.cont_number, '?') || ' (' || jc.cont_type || ')',
+                ', ' ORDER BY jc.id
+              )
+              FROM truck_booking_containers tbc
+              JOIN job_containers jc ON jc.id = tbc.container_id
+              WHERE tbc.booking_id = tb.id
+            ), '') AS cont_info
+          FROM truck_bookings tb
+          JOIN jobs j ON j.id = tb.job_id
+          JOIN job_assignments ja ON ja.job_id = j.id
+          WHERE tb.deleted_at IS NULL
+            AND j.deleted_at IS NULL
+            AND j.status <> 'completed'
+            AND ja.dieu_do_id = $1
+            ${where}
+          ${order}
+        `, [staffId]);
+        return res.json(rows);
+      } catch (err) {
+        return res.status(500).json({ error: err.message });
+      }
+    }
+
     let staffField;
     switch (type) {
       case 'staff_cus_pending_tk':
@@ -731,35 +833,17 @@ router.get('/filtered', requireAuth, async (req, res) => {
           OR (ja.ops_id IS NULL AND (j.ops_partner IS NULL OR j.ops_partner = ''))
         )`;
         break;
-      // Phase 4: all staff_dd_* drilldowns mirror the new stat queries via
-      // get_truck_booking_status() so the row sets stay in sync with the
-      // count cells (L5).
+      // CP6.2 — staff_dd_* drilldowns split into two paths to match the
+      // refactored stat counts in queryDieuDoStaffStats (CP6.1):
+      //   • staff_dd_pending + staff_dd_quan_ly_dat_xe → job-level (handled
+      //     by the existing per-job SELECT below the switch).
+      //   • everything else → booking-level (handled by the early
+      //     STAFF_DD_BOOKING_TYPES branch added above).
+      // Note: staff_dd_quan_ly_dat_xe under CP4.5.1 — a completed job's
+      // derived status is always 'hoan_thanh', so the status='pending'
+      // restriction the global WHERE adds is harmless.
       case 'staff_dd_pending':
         staffField = 'dieu_do_id';
-        break;
-      case 'staff_dd_no_plan':
-        staffField = 'dieu_do_id';
-        extraWhere = `AND get_truck_booking_status(j.id) = 'chua_dat_kh'`;
-        break;
-      case 'staff_dd_has_plan':
-        staffField = 'dieu_do_id';
-        extraWhere = `AND get_truck_booking_status(j.id) NOT IN ('chua_dat_kh','hoan_thanh')`;
-        break;
-      case 'staff_dd_booked':
-        staffField = 'dieu_do_id';
-        extraWhere = `AND get_truck_booking_status(j.id) NOT IN ('chua_dat_kh','hoan_thanh')`;
-        break;
-      case 'staff_dd_plan_no_truck':
-        staffField = 'dieu_do_id';
-        extraWhere = `AND get_truck_booking_status(j.id) = 'dat_kh_1_phan'`;
-        break;
-      case 'staff_dd_urgent_no_truck':
-        staffField = 'dieu_do_id';
-        extraWhere = `AND get_truck_booking_status(j.id) = 'chua_dat_kh' AND j.han_lenh BETWEEN NOW() AND NOW() + INTERVAL '24 hours'`;
-        break;
-      case 'staff_dd_overdue_delivery':
-        staffField = 'dieu_do_id';
-        extraWhere = `AND get_truck_booking_status(j.id) = 'du_xe_cho_giao'`;
         break;
       case 'staff_dd_quan_ly_dat_xe':
         staffField = 'dieu_do_id';
