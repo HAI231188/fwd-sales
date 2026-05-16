@@ -112,6 +112,50 @@ function parseCcList(raw) {
   } catch { return []; }
 }
 
+// CP6.3 — retry transporter.sendMail on transient SMTP errors. 4xx codes are
+// retriable per RFC 5321 + Google's own guidance for 451 4.3.0 ("the message
+// will be re-tried"). Mainstream MTAs queue and retry automatically; the
+// previous code surfaced the first 4xx as a permanent failure to the user.
+// 5xx and non-network errors fail-fast.
+//
+// Backoff: 5s, then 10s (~15s total wait before the third attempt). Long
+// enough that Google's MX shard rotation likely picks a different node, short
+// enough that DD doesn't perceive it as a hang. Retry attempts are logged
+// to stdout so the Railway log retains an audit trail; the returned object
+// carries attemptCount so the caller can record it in email_history.
+async function sendWithRetry(transporter, mailOptions, maxRetries = 2) {
+  let lastErr;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const info = await transporter.sendMail(mailOptions);
+      if (attempt > 0) {
+        console.warn(`[sendWithRetry] Recovered on attempt ${attempt + 1}/${maxRetries + 1}`);
+      }
+      return { info, attemptCount: attempt + 1 };
+    } catch (e) {
+      lastErr = e;
+      const msg = String(e?.message || '');
+      const respCode = String(e?.responseCode || '');
+      const errCode = String(e?.code || '');
+      const isTransient =
+        /^4\d\d/.test(respCode) ||
+        /^Message failed: 4\d\d/.test(msg) ||
+        /temporarily/i.test(msg) ||
+        /^(ETIMEDOUT|ECONNRESET|ECONNREFUSED)$/.test(errCode);
+      if (!isTransient || attempt === maxRetries) {
+        if (attempt > 0) {
+          console.error(`[sendWithRetry] Final failure after ${attempt + 1} attempts: ${msg}`);
+        }
+        throw e;
+      }
+      const delayMs = 5000 + attempt * 5000; // 5s, 10s
+      console.warn(`[sendWithRetry] Transient error attempt ${attempt + 1}/${maxRetries + 1}: ${msg}. Retrying in ${delayMs / 1000}s...`);
+      await new Promise(r => setTimeout(r, delayMs));
+    }
+  }
+  throw lastErr;
+}
+
 function renderSubject({ mailType, jobCode, customerName, n, importExport, earliestPlanned }) {
   const customerShort = firstWord(customerName);
   const ieLabel = importExport === 'import' ? 'Nhập' : 'Xuất';
@@ -508,25 +552,36 @@ async function sendPlanningEmail({
 
   let status = 'sent';
   let errorMessage = null;
+  // CP6.3 — sendWithRetry handles transient 4xx + ETIMEDOUT/ECONNRESET/
+  // ECONNREFUSED with one or two short backoffs. Non-transient errors and
+  // exhausted retries throw and land us in the catch below (status='failed').
+  let attemptCount = 1;
   try {
-    await transporter.sendMail({
+    const r = await sendWithRetry(transporter, {
       from: fromAddress,
       to: recipientEmail,
       cc: ccList.length ? ccList : undefined,
       subject,
       text: body,
       attachments,
-    });
+    }, 2);
+    attemptCount = r.attemptCount;
   } catch (e) {
     status = 'failed';
     errorMessage = e?.message || String(e);
   }
 
-  // CP4.3 — when the send itself succeeded but some BBBG PDFs failed to
-  // generate, surface that in error_message as a warning blob alongside any
-  // SMTP error. Always serializable JSON; never overwrites a real SMTP error.
-  if (status === 'sent' && bbbgErrors.length > 0) {
-    errorMessage = JSON.stringify({ bbbg_partial_failure: bbbgErrors });
+  // CP4.3 + CP6.3 — build a single JSON audit blob for the error_message
+  // column when something noteworthy happened on a 'sent' row (partial BBBG
+  // failures and/or transient SMTP recovery). Real SMTP failures still
+  // override this with the raw error message.
+  if (status === 'sent') {
+    const meta = {};
+    if (attemptCount > 1) meta.retry_recovered = { attempts: attemptCount };
+    if (bbbgErrors.length > 0) meta.bbbg_partial_failure = bbbgErrors;
+    if (Object.keys(meta).length > 0) {
+      errorMessage = JSON.stringify(meta);
+    }
   }
 
   // ─── 8. Log to email_history (both sent + failed paths) ────────────────
