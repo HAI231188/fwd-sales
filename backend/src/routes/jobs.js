@@ -72,34 +72,67 @@ function queryCusStaffStats(scope) {
 function queryDieuDoStaffStats(scope) {
   const where = scope.userId ? `u.id = $1` : `u.role = 'dieu_do'`;
   const params = scope.userId ? [scope.userId] : [];
-  // Phase 4: all DD stats now sourced from get_truck_booking_status() — the
-  // legacy job_truck-derived counts (planned_datetime / transport_name /
-  // completed_at) are replaced by the canonical 5-state enum so the same
-  // logic powers stats + drilldowns + dashboard view (L19/L20).
+  // CP6.1 — refactored per spec table. The first + last column count
+  // jobs (DISTINCT); the middle six count BOOKINGS. The job→booking
+  // join is LEFT so a DD user with assignments but no bookings still
+  // appears (with booking counts = 0).
+  //
+  // "Sắp giao chưa đặt xe" semantic changed: was han_lenh-within-24h
+  // on chua_dat_kh jobs; now per-booking planned_datetime within 12h
+  // on bookings still missing a carrier (per spec).
+  //
+  // "Giao rồi chưa hoàn thành" also changed: now per-booking, gated on
+  // missing ticks (the CP6.1 sign-off gates) rather than the derived
+  // du_xe_cho_giao enum.
   return db.query(`
     SELECT u.id, u.name, u.role, u.code, u.avatar_color,
-      COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL) AS pending_dd,
-      COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL
-        AND get_truck_booking_status(j.id) = 'chua_dat_kh') AS no_plan,
-      COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL
-        AND get_truck_booking_status(j.id) NOT IN ('chua_dat_kh','hoan_thanh')) AS has_plan,
-      COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL
-        AND get_truck_booking_status(j.id) NOT IN ('chua_dat_kh','hoan_thanh')) AS booked,
-      COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL
-        AND get_truck_booking_status(j.id) = 'dat_kh_1_phan') AS plan_no_truck,
-      -- "Sắp giao chưa đặt xe" = chua_dat_kh AND earliest deadline (han_lenh) within 24h.
-      COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL
-        AND get_truck_booking_status(j.id) = 'chua_dat_kh'
-        AND j.han_lenh BETWEEN NOW() AND NOW() + INTERVAL '24 hours') AS urgent_no_truck,
-      -- "Giao rồi chưa hoàn thành" = trucks dispatched (vehicles assigned) but
-      -- actual_datetime not yet captured on every booking → status du_xe_cho_giao.
-      COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL
-        AND get_truck_booking_status(j.id) = 'du_xe_cho_giao') AS overdue_delivery,
-      COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL
-        AND get_truck_booking_status(j.id) <> 'hoan_thanh') AS quan_ly_dat_xe
+      COUNT(DISTINCT j.id) FILTER (
+        WHERE j.id IS NOT NULL AND j.status <> 'completed' AND j.deleted_at IS NULL
+      ) AS pending_dd,
+      COUNT(*) FILTER (
+        WHERE tb.id IS NOT NULL AND j.status <> 'completed' AND j.deleted_at IS NULL
+          AND (tb.planned_datetime IS NULL
+            OR tb.delivery_location IS NULL OR tb.delivery_location = '')
+      ) AS no_plan,
+      COUNT(*) FILTER (
+        WHERE tb.id IS NOT NULL AND j.status <> 'completed' AND j.deleted_at IS NULL
+          AND tb.planned_datetime IS NOT NULL
+          AND tb.delivery_location IS NOT NULL AND tb.delivery_location <> ''
+      ) AS has_plan,
+      COUNT(*) FILTER (
+        WHERE tb.id IS NOT NULL AND j.status <> 'completed' AND j.deleted_at IS NULL
+          AND tb.transport_company_id IS NOT NULL
+          AND tb.vehicle_number IS NOT NULL AND tb.vehicle_number <> ''
+      ) AS booked,
+      COUNT(*) FILTER (
+        WHERE tb.id IS NOT NULL AND j.status <> 'completed' AND j.deleted_at IS NULL
+          AND tb.planned_datetime IS NOT NULL
+          AND tb.delivery_location IS NOT NULL AND tb.delivery_location <> ''
+          AND (tb.vehicle_number IS NULL OR tb.vehicle_number = '')
+      ) AS plan_no_truck,
+      -- "Sắp giao chưa đặt xe" — per-booking planned_datetime within 12h
+      -- on bookings still missing a carrier (CP6.1 semantic).
+      COUNT(*) FILTER (
+        WHERE tb.id IS NOT NULL AND j.status <> 'completed' AND j.deleted_at IS NULL
+          AND tb.planned_datetime > NOW()
+          AND tb.planned_datetime <= NOW() + INTERVAL '12 hours'
+          AND tb.transport_company_id IS NULL
+      ) AS urgent_no_truck,
+      -- "Giao rồi chưa hoàn thành" — vehicles assigned but DD hasn't ticked
+      -- both sign-offs yet AND the job is still pending (CP6.1).
+      COUNT(*) FILTER (
+        WHERE tb.id IS NOT NULL AND j.completed_at IS NULL AND j.deleted_at IS NULL
+          AND tb.vehicle_number IS NOT NULL AND tb.vehicle_number <> ''
+          AND (NOT tb.invoice_lifting_ticked OR NOT tb.cost_entered_ticked)
+      ) AS overdue_delivery,
+      COUNT(DISTINCT j.id) FILTER (
+        WHERE j.id IS NOT NULL AND j.deleted_at IS NULL
+          AND get_truck_booking_status(j.id) <> 'hoan_thanh'
+      ) AS quan_ly_dat_xe
     FROM users u
     LEFT JOIN job_assignments ja ON ja.dieu_do_id = u.id
     LEFT JOIN jobs j ON j.id = ja.job_id
+    LEFT JOIN truck_bookings tb ON tb.job_id = j.id AND tb.deleted_at IS NULL
     WHERE ${where}
     GROUP BY u.id, u.name, u.role, u.code, u.avatar_color
     ORDER BY u.name
@@ -859,6 +892,8 @@ router.get('/filtered', requireAuth, async (req, res) => {
           tb.cost,
           tb.receiver_name,
           tb.receiver_phone,
+          tb.invoice_lifting_ticked,
+          tb.cost_entered_ticked,
           get_truck_booking_status(j.id) AS booking_status,
           COALESCE((
             SELECT string_agg(
@@ -1560,6 +1595,37 @@ router.put('/:id', requireAuth, async (req, res) => {
                    'Vui lòng đặt đủ kế hoạch, chốt vận tải, và nhập số xe trước.',
             code: 'JOB_NOT_READY_TO_COMPLETE',
             current_status: s.status,
+          });
+        }
+        // CP6.1 — secondary guard: every alive booking must have both
+        // sign-off ticks set. Surfaces 3 specific error codes so the
+        // frontend can show a precise toast.
+        const { rows: [tk] } = await client.query(`
+          SELECT
+            COUNT(*) FILTER (WHERE NOT invoice_lifting_ticked) AS missing_inv,
+            COUNT(*) FILTER (WHERE NOT cost_entered_ticked)    AS missing_cost
+          FROM truck_bookings
+          WHERE job_id = $1 AND deleted_at IS NULL
+        `, [req.params.id]);
+        const missingInv  = Number(tk.missing_inv)  > 0;
+        const missingCost = Number(tk.missing_cost) > 0;
+        if (missingInv || missingCost) {
+          await client.query('ROLLBACK');
+          if (missingInv && missingCost) {
+            return res.status(400).json({
+              error: "Vui lòng tick 'Nâng hạ' và 'Cost hệ thống' cho tất cả container trước khi hoàn thành",
+              code: 'MISSING_BOTH_TICKS',
+            });
+          }
+          if (missingInv) {
+            return res.status(400).json({
+              error: "Vui lòng tick 'Nâng hạ' cho tất cả container trước khi hoàn thành",
+              code: 'MISSING_INVOICE_LIFTING',
+            });
+          }
+          return res.status(400).json({
+            error: "Vui lòng tick 'Cost hệ thống' cho tất cả container trước khi hoàn thành",
+            code: 'MISSING_COST_ENTERED',
           });
         }
         sets.push(`completed_at = $${idx++}`); params.push(ts);

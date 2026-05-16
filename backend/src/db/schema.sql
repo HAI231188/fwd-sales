@@ -641,6 +641,17 @@ ALTER TABLE truck_bookings ADD COLUMN IF NOT EXISTS mail_group_id INTEGER;
 CREATE INDEX IF NOT EXISTS idx_truck_bookings_mail_group
   ON truck_bookings(mail_group_id) WHERE mail_group_id IS NOT NULL;
 
+-- Phase 5 CP6.1 — per-booking sign-off ticks that gate job completion.
+-- invoice_lifting_ticked = DD đã làm hóa đơn nâng hạ cho cont này.
+-- cost_entered_ticked    = DD đã nhập cost thực tế vào hệ thống nội bộ.
+-- Job-level completion (jobs.completed_at) is now blocked until BOTH ticks
+-- are TRUE on every alive booking — see the extended PUT /api/jobs/:id
+-- guard in routes/jobs.js.
+ALTER TABLE truck_bookings
+  ADD COLUMN IF NOT EXISTS invoice_lifting_ticked BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE truck_bookings
+  ADD COLUMN IF NOT EXISTS cost_entered_ticked    BOOLEAN NOT NULL DEFAULT FALSE;
+
 -- One-shot backfill: walk every 'sent new' email_history row, parse its
 -- booking_ids from last_sent_data (handles both CP5.1 new shape and legacy
 -- `bookings[].id`), and tag the referenced truck_bookings with that mail

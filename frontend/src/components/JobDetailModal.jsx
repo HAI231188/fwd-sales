@@ -208,6 +208,16 @@ function BookingsSection({ jobId, jobCode, customerName, truckBookingStatus, can
                             👤 {b.receiver_name}{b.receiver_phone ? ` — ${b.receiver_phone}` : ''}
                           </div>
                         )}
+                        {/* CP6.1 — sign-off ticks inline. */}
+                        <div style={{ fontSize: 10, color: 'var(--text-2)', marginTop: 2,
+                          display: 'flex', gap: 8 }}>
+                          <span title="Hóa đơn nâng hạ">
+                            📋 {b.invoice_lifting_ticked ? '✅' : '❌'}
+                          </span>
+                          <span title="Cost hệ thống nội bộ">
+                            💵 {b.cost_entered_ticked ? '✅' : '❌'}
+                          </span>
+                        </div>
                       </td>
                       <td style={td}>
                         {b.vehicle_number

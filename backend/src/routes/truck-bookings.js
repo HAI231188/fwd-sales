@@ -68,7 +68,7 @@ async function loadBookingsByJob(client, jobId) {
       tb.planned_datetime, tb.actual_datetime, tb.delivery_location,
       tb.pickup_location, tb.cost, tb.vehicle_number,
       tb.notes, tb.note, tb.receiver_name, tb.receiver_phone, tb.bbbg_note,
-      tb.mail_group_id,
+      tb.mail_group_id, tb.invoice_lifting_ticked, tb.cost_entered_ticked,
       tb.completed_at, tb.created_at, tb.updated_at,
       tc.name AS transport_current_name,
       COALESCE((
@@ -98,7 +98,7 @@ async function loadBookingById(client, id) {
       tb.planned_datetime, tb.actual_datetime, tb.delivery_location,
       tb.pickup_location, tb.cost, tb.vehicle_number,
       tb.notes, tb.note, tb.receiver_name, tb.receiver_phone, tb.bbbg_note,
-      tb.mail_group_id,
+      tb.mail_group_id, tb.invoice_lifting_ticked, tb.cost_entered_ticked,
       tb.completed_at, tb.created_at, tb.updated_at,
       tc.name AS transport_current_name,
       COALESCE((
@@ -148,6 +148,8 @@ router.post('/', requireAuth, async (req, res) => {
     cost, container_ids, notes, note,
     actual_datetime, pickup_location,
     receiver_name, receiver_phone, bbbg_note,
+    // CP6.1 — per-booking sign-off ticks. Default false at create time.
+    invoice_lifting_ticked, cost_entered_ticked,
   } = req.body || {};
 
   if (!Number.isFinite(parseInt(job_id, 10))) {
@@ -239,8 +241,9 @@ router.post('/', requireAuth, async (req, res) => {
           delivery_location, pickup_location,
           cost, notes, note,
           receiver_name, receiver_phone, bbbg_note,
+          invoice_lifting_ticked, cost_entered_ticked,
           created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
        RETURNING id`,
       [job_id, bookingCode, tcId, transport_name,
        planned_datetime,
@@ -252,6 +255,7 @@ router.post('/', requireAuth, async (req, res) => {
        (receiver_name  === '' || receiver_name  == null) ? null : receiver_name,
        (receiver_phone === '' || receiver_phone == null) ? null : receiver_phone,
        (bbbg_note      === '' || bbbg_note      == null) ? null : bbbg_note,
+       invoice_lifting_ticked === true, cost_entered_ticked === true,
        req.user.id]
     );
     const bookingId = bRows[0].id;
@@ -286,7 +290,9 @@ router.post('/', requireAuth, async (req, res) => {
 const PATCH_FIELDS = ['transport_company_id', 'planned_datetime', 'actual_datetime',
                       'delivery_location', 'pickup_location',
                       'cost', 'vehicle_number', 'notes', 'note',
-                      'receiver_name', 'receiver_phone', 'bbbg_note'];
+                      'receiver_name', 'receiver_phone', 'bbbg_note',
+                      // CP6.1 — sign-off ticks. Coerced to strict booleans below.
+                      'invoice_lifting_ticked', 'cost_entered_ticked'];
 
 router.patch('/:id', requireAuth, async (req, res) => {
   if (!canWrite(req)) return res.status(403).json({ error: 'Không có quyền' });
@@ -319,6 +325,10 @@ router.patch('/:id', requireAuth, async (req, res) => {
       if (['cost', 'vehicle_number', 'notes', 'note', 'actual_datetime', 'pickup_location',
            'receiver_name', 'receiver_phone', 'bbbg_note'].includes(f)
           && (v === '' || v == null)) v = null;
+      // CP6.1 — NOT NULL booleans: coerce truthy → true, everything else → false.
+      if (['invoice_lifting_ticked', 'cost_entered_ticked'].includes(f)) {
+        v = v === true || v === 'true' || v === 1;
+      }
       sets.push(`${f} = $${idx++}`); params.push(v);
     }
 
@@ -457,6 +467,9 @@ router.post('/batch', requireAuth, async (req, res) => {
       receiver_name:  (r.receiver_name  === '' || r.receiver_name  == null) ? null : String(r.receiver_name),
       receiver_phone: (r.receiver_phone === '' || r.receiver_phone == null) ? null : String(r.receiver_phone),
       bbbg_note:      (r.bbbg_note      === '' || r.bbbg_note      == null) ? null : String(r.bbbg_note),
+      // CP6.1 — sign-off ticks default false at batch-create time.
+      invoice_lifting_ticked: r.invoice_lifting_ticked === true,
+      cost_entered_ticked:    r.cost_entered_ticked === true,
     });
   }
 
@@ -517,11 +530,14 @@ router.post('/batch', requireAuth, async (req, res) => {
            (job_id, booking_code, transport_company_id, transport_name,
             planned_datetime, delivery_location, note,
             receiver_name, receiver_phone, bbbg_note,
+            invoice_lifting_ticked, cost_entered_ticked,
             created_by)
-         VALUES ($1, $2, NULL, NULL, $3, $4, $5, $6, $7, $8, $9)
+         VALUES ($1, $2, NULL, NULL, $3, $4, $5, $6, $7, $8, $9, $10, $11)
          RETURNING id`,
         [r.job_id, bookingCode, r.planned_datetime, r.delivery_location, r.note,
-         r.receiver_name, r.receiver_phone, r.bbbg_note, req.user.id]
+         r.receiver_name, r.receiver_phone, r.bbbg_note,
+         r.invoice_lifting_ticked, r.cost_entered_ticked,
+         req.user.id]
       );
       const bookingId = bRows[0].id;
       await client.query(

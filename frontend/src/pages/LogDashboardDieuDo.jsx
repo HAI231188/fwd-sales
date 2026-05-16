@@ -238,8 +238,19 @@ export default function LogDashboardDieuDo() {
         : 'Đã hủy hoàn thành — job quay lại tab Đang làm');
     },
     onError: (err) => {
-      if (err?.code === 'JOB_NOT_READY_TO_COMPLETE') {
+      const code = err?.code;
+      // CP6.1 — 3 new completion-guard codes from the backend; surface each
+      // with its precise Vietnamese message so DD knows exactly which ticks
+      // are missing.
+      const TICK_CODES = new Set([
+        'MISSING_INVOICE_LIFTING',
+        'MISSING_COST_ENTERED',
+        'MISSING_BOTH_TICKS',
+      ]);
+      if (code === 'JOB_NOT_READY_TO_COMPLETE') {
         toast.error(err.error || 'Job chưa đủ thông tin để hoàn thành. Cần đặt KH/VT/Số xe trước.');
+      } else if (TICK_CODES.has(code)) {
+        toast.error(err.error, { duration: 6000 });
       } else {
         toast.error(err?.error || err?.message || 'Lỗi khi cập nhật');
       }
@@ -894,6 +905,17 @@ function BookingRow({ j, isOpen, total, booked, ieBg, ieFg, imp,
                         {b.receiver_phone ? ` — ${b.receiver_phone}` : ''}
                       </div>
                     )}
+                    {/* CP6.1 — sign-off ticks display (read-only). */}
+                    <div style={{ gridColumn: '1 / -1', fontSize: 11, color: 'var(--text-2)',
+                      paddingTop: 4, borderTop: '1px dashed var(--border)' }}>
+                      📋 Nâng hạ: {b.invoice_lifting_ticked
+                        ? <span style={{ color: 'var(--primary)' }}>✅ Đã</span>
+                        : <span style={{ color: 'var(--warning)' }}>❌ Chưa</span>}
+                      {' | '}
+                      💵 Cost: {b.cost_entered_ticked
+                        ? <span style={{ color: 'var(--primary)' }}>✅ Đã</span>
+                        : <span style={{ color: 'var(--warning)' }}>❌ Chưa</span>}
+                    </div>
                   </div>
                 ))}
               </div>

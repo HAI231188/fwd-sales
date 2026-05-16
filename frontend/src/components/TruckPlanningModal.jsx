@@ -232,6 +232,11 @@ export default function TruckPlanningModal({ jobId, jobCode, onClose }) {
         receiver_name:  b?.receiver_name  || '',
         receiver_phone: b?.receiver_phone || '',
         bbbg_note:      b?.bbbg_note      || '',
+        // CP6.1 — sign-off ticks. Default false. Editable only when this row
+        // already has a carrier + vehicle (the gating logic lives in the
+        // Vùng1Table cell renderer).
+        invoice_lifting_ticked: !!b?.invoice_lifting_ticked,
+        cost_entered_ticked:    !!b?.cost_entered_ticked,
         dirty: false,
       };
     });
@@ -262,6 +267,9 @@ export default function TruckPlanningModal({ jobId, jobCode, onClose }) {
           receiver_name:  r.receiver_name  || null,
           receiver_phone: r.receiver_phone || null,
           bbbg_note:      r.bbbg_note      || null,
+          // CP6.1 — sign-off ticks ride the same batch save.
+          invoice_lifting_ticked: !!r.invoice_lifting_ticked,
+          cost_entered_ticked:    !!r.cost_entered_ticked,
         });
       }
       toast.success(`Đã lưu ${dirty.length} kế hoạch`);
@@ -391,7 +399,8 @@ export default function TruckPlanningModal({ jobId, jobCode, onClose }) {
             <>
               <SectionTitle>Vùng 1: Bảng kế hoạch theo container</SectionTitle>
               <Vung1Table rows={rows} job={job} onUpdateRow={updateRow}
-                onOpenReceiver={(bookingId) => setReceiverModalBookingId(bookingId)} />
+                onOpenReceiver={(bookingId) => setReceiverModalBookingId(bookingId)}
+                canEditTicks={user?.role === 'dieu_do'} />
 
               <div style={{ height: 16 }} />
               <SectionTitle>Vùng 2: Mail gửi vận tải (theo nhóm)</SectionTitle>
@@ -558,7 +567,7 @@ function SectionTitle({ children }) {
   );
 }
 
-function Vung1Table({ rows, job, onUpdateRow, onOpenReceiver }) {
+function Vung1Table({ rows, job, onUpdateRow, onOpenReceiver, canEditTicks }) {
   const impExp = job?.import_export;
   const inp = { padding: '4px 6px', border: '1px solid var(--border)', borderRadius: 4,
     fontSize: 12, width: '100%', minWidth: 0, boxSizing: 'border-box' };
@@ -582,6 +591,8 @@ function Vung1Table({ rows, job, onUpdateRow, onOpenReceiver }) {
             <th style={th}>👤 Người liên hệ</th>
             <th style={th}>Cước</th>
             <th style={th}>Số xe</th>
+            <th style={th} title="DD tick khi đã làm hóa đơn nâng hạ cho cont này">☑ Nâng hạ</th>
+            <th style={th} title="DD tick khi đã nhập cost thực tế vào hệ thống nội bộ">☑ Cost HT</th>
           </tr>
         </thead>
         <tbody>
@@ -666,6 +677,37 @@ function Vung1Table({ rows, job, onUpdateRow, onOpenReceiver }) {
                     value={r.vehicle_number}
                     onChange={e => onUpdateRow(idx, { vehicle_number: e.target.value })} />
                 </td>
+                {/* CP6.1 — sign-off ticks. Gated on transport + vehicle present
+                    AND user is DD. Otherwise show disabled checkbox with a
+                    tooltip explaining why. */}
+                {(() => {
+                  const hasTransport = !!r.transport_company_id;
+                  const hasVehicle = !!(r.vehicle_number && r.vehicle_number.trim());
+                  const tickEnabled = !noBooking && hasTransport && hasVehicle && canEditTicks;
+                  const tipMissing = !canEditTicks
+                    ? 'Chỉ DD mới được tick'
+                    : (!hasTransport || !hasVehicle)
+                      ? 'Cần chốt vận tải và số xe trước'
+                      : '';
+                  return (
+                    <>
+                      <td style={{ ...td, textAlign: 'center' }} title={tipMissing}>
+                        <input type="checkbox"
+                          checked={!!r.invoice_lifting_ticked}
+                          disabled={!tickEnabled}
+                          style={{ cursor: tickEnabled ? 'pointer' : 'not-allowed' }}
+                          onChange={e => onUpdateRow(idx, { invoice_lifting_ticked: e.target.checked })} />
+                      </td>
+                      <td style={{ ...td, textAlign: 'center' }} title={tipMissing}>
+                        <input type="checkbox"
+                          checked={!!r.cost_entered_ticked}
+                          disabled={!tickEnabled}
+                          style={{ cursor: tickEnabled ? 'pointer' : 'not-allowed' }}
+                          onChange={e => onUpdateRow(idx, { cost_entered_ticked: e.target.checked })} />
+                      </td>
+                    </>
+                  );
+                })()}
               </tr>
             );
           })}

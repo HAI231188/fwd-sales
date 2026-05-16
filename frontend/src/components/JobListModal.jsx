@@ -139,6 +139,8 @@ function getColumns(filterType) {
       { key: 'transport_name',          label: 'Vận tải' },
       { key: 'receiver',                label: 'Người liên hệ' },
       { key: 'vehicle_number',          label: 'Số xe' },
+      { key: 'invoice_lifting_ticked',  label: '📋 Nâng hạ' },
+      { key: 'cost_entered_ticked',     label: '💵 Cost HT' },
       { key: 'booking_status',          label: 'Trạng thái' },
     ];
   }
@@ -271,6 +273,14 @@ function renderCell(key, j, filterType) {
           )}
         </span>
       );
+    case 'invoice_lifting_ticked':
+      return <span style={{ fontSize: 14 }} title={j.invoice_lifting_ticked ? 'Đã làm hóa đơn nâng hạ' : 'Chưa làm hóa đơn nâng hạ'}>
+        {j.invoice_lifting_ticked ? '✅' : '❌'}
+      </span>;
+    case 'cost_entered_ticked':
+      return <span style={{ fontSize: 14 }} title={j.cost_entered_ticked ? 'Đã nhập cost hệ thống' : 'Chưa nhập cost hệ thống'}>
+        {j.cost_entered_ticked ? '✅' : '❌'}
+      </span>;
     case 'ops_tasks_pending':
       return <span style={{ fontSize: 12, color: j.ops_tasks_pending ? 'var(--text)' : 'var(--text-3)' }}>
         {j.ops_tasks_pending || '—'}
