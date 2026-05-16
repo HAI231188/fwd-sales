@@ -160,7 +160,7 @@ router.post('/:id/request-delete', requireAuth, async (req, res) => {
   if (req.user.role !== 'sales') return res.status(403).json({ error: 'Không có quyền' });
   try {
     const { rows: check } = await db.query(
-      `SELECT id FROM customer_pipeline WHERE id = $1 AND sales_id = $2`,
+      `SELECT id FROM customer_pipeline WHERE id = $1 AND sales_id = $2 AND deleted_at IS NULL`,
       [req.params.id, req.user.id]
     );
     if (!check[0]) return res.status(404).json({ error: 'Không tìm thấy' });
@@ -380,7 +380,7 @@ router.put('/:id', requireAuth, async (req, res) => {
 
   try {
     const { rows: current } = await db.query(
-      `SELECT stage FROM customer_pipeline WHERE id = $1 AND sales_id = $2`,
+      `SELECT stage FROM customer_pipeline WHERE id = $1 AND sales_id = $2 AND deleted_at IS NULL`,
       [req.params.id, req.user.id]
     );
     if (!current[0]) return res.status(404).json({ error: 'Không tìm thấy' });
@@ -586,7 +586,7 @@ router.patch('/customers/:customerId/follow-up-complete', requireAuth, async (re
 router.get('/:id/history', requireAuth, async (req, res) => {
   try {
     const { rows: owner } = await db.query(
-      `SELECT id FROM customer_pipeline WHERE id = $1 AND sales_id = $2`,
+      `SELECT id FROM customer_pipeline WHERE id = $1 AND sales_id = $2 AND deleted_at IS NULL`,
       [req.params.id, req.user.id]
     );
     if (!owner[0]) return res.status(404).json({ error: 'Không tìm thấy' });

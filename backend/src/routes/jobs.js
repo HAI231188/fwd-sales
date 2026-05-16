@@ -2275,7 +2275,13 @@ router.patch('/deadline-requests/:rid/review', requireAuth, async (req, res) => 
 
   // After commit: assign CUS if missing, then notify
   try {
+    // CP6.5 (M3) — shared so AI-assigned path and existing-CUS path use the
+    // exact same notification copy.
+    const notifMsg = action === 'approved'
+      ? 'Trưởng phòng đã duyệt yêu cầu điều chỉnh deadline'
+      : 'Trưởng phòng đã từ chối yêu cầu điều chỉnh deadline. Tiếp tục theo deadline ban đầu.';
     let notifyUserId = existingCusId;
+    let notifiedInAcTxn = false;  // when AI path commits, notification already shipped inside ac.
 
     if (!existingCusId) {
       const { rows: jobRows } = await db.query(`SELECT * FROM jobs WHERE id = $1`, [drJobId]);
@@ -2297,10 +2303,15 @@ router.patch('/deadline-requests/:rid/review', requireAuth, async (req, res) => 
             } else {
               await ac.query(`INSERT INTO job_tk (job_id, cus_id) VALUES ($1,$2)`, [drJobId, suggestion.user_id]);
             }
+            // CP6.5 (M3) — audit log + notification inside the same transaction
+            // as the assignment so they roll back together on failure.
+            await ac.query(`INSERT INTO ai_assignment_logs (job_id, assigned_user_id, role, reason, ai_cost_usd, fallback_used) VALUES ($1,$2,'cus',$3,$4,$5)`,
+              [drJobId, suggestion.user_id, suggestion.reason, suggestion.cost || 0, suggestion.fallback || false]);
+            await ac.query(`INSERT INTO notifications (user_id, type, title, message, job_id) VALUES ($1,'deadline_reviewed','Deadline được xem xét',$2,$3)`,
+              [suggestion.user_id, notifMsg, drJobId]);
             await ac.query('COMMIT');
             notifyUserId = suggestion.user_id;
-            await db.query(`INSERT INTO ai_assignment_logs (job_id, assigned_user_id, role, reason, ai_cost_usd, fallback_used) VALUES ($1,$2,'cus',$3,$4,$5)`,
-              [drJobId, suggestion.user_id, suggestion.reason, suggestion.cost || 0, suggestion.fallback || false]);
+            notifiedInAcTxn = true;
           } catch (e) {
             await ac.query('ROLLBACK');
             console.error('CUS auto-assign after review failed:', e.message);
@@ -2311,12 +2322,11 @@ router.patch('/deadline-requests/:rid/review', requireAuth, async (req, res) => 
       }
     }
 
-    if (notifyUserId) {
-      const msg = action === 'approved'
-        ? 'Trưởng phòng đã duyệt yêu cầu điều chỉnh deadline'
-        : 'Trưởng phòng đã từ chối yêu cầu điều chỉnh deadline. Tiếp tục theo deadline ban đầu.';
+    // Existing-CUS path: no transaction context here, notification stays
+    // standalone. AI path already inserted its notification inside ac.
+    if (notifyUserId && !notifiedInAcTxn) {
       await db.query(`INSERT INTO notifications (user_id, type, title, message, job_id) VALUES ($1,'deadline_reviewed','Deadline được xem xét',$2,$3)`,
-        [notifyUserId, msg, drJobId]);
+        [notifyUserId, notifMsg, drJobId]);
     }
 
     res.json({ ok: true });
@@ -2820,6 +2830,7 @@ router.get('/:id/bbbg-data', requireAuth, async (req, res) => {
           SELECT company_full_name, tax_code, invoice_address
           FROM customer_pipeline
           WHERE LOWER(company_name) = LOWER(j.customer_name)
+            AND deleted_at IS NULL
           ORDER BY id DESC LIMIT 1
         ) cp ON true
        WHERE j.id = $1 AND j.deleted_at IS NULL

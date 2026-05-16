@@ -805,6 +805,12 @@ BEGIN
   -- CP4.5.1 — short-circuit on the canonical completion signal.
   SELECT completed_at INTO job_completed_at
     FROM jobs WHERE id = p_job_id;
+  -- CP6.5 — fail loudly on bogus job_ids so callers don't silently get
+  -- 'chua_dat_kh' for non-existent jobs. Soft-deleted jobs still satisfy
+  -- FOUND because the row exists; only fully-missing rows raise here.
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'job_id % not found', p_job_id USING ERRCODE = 'P0002';
+  END IF;
   IF job_completed_at IS NOT NULL THEN
     RETURN 'hoan_thanh';
   END IF;

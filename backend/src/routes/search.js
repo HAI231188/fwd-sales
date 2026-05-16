@@ -77,7 +77,8 @@ router.get('/', requireAuth, async (req, res) => {
     // Hải Phòng — so OPS only sees customers they could actually work on.
     const opsCustClause = req.user.role === 'ops' ? `AND j.destination = 'hai_phong'` : '';
     const custWhere = `
-      WHERE (
+      WHERE cp.deleted_at IS NULL
+        AND (
             cp.company_name   ILIKE $1
          OR cp.contact_person ILIKE $1
          OR cp.phone          ILIKE $1
@@ -86,7 +87,7 @@ router.get('/', requireAuth, async (req, res) => {
               WHERE c.pipeline_id = cp.id
                 AND (c.tax_code ILIKE $1 OR c.phone ILIKE $1)
             )
-      )
+        )
       AND EXISTS (
         SELECT 1 FROM jobs j
         WHERE LOWER(j.customer_name) = LOWER(cp.company_name)

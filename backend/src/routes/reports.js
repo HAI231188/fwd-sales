@@ -232,7 +232,7 @@ router.post('/', requireAuth, async (req, res) => {
         // Auto-promote pipeline to 'booked' when quote is booked
         if (qRows[0]?.status === 'booked') {
           const { rows: prevStage } = await client.query(
-            `SELECT stage FROM customer_pipeline WHERE id = $1`,
+            `SELECT stage FROM customer_pipeline WHERE id = $1 AND deleted_at IS NULL`,
             [pipelineId]
           );
           if (prevStage[0] && prevStage[0].stage !== 'booked') {
@@ -396,7 +396,7 @@ router.post('/quick-customer', requireAuth, async (req, res) => {
 
       if (qRows[0]?.status === 'booked') {
         const { rows: prevStage } = await client.query(
-          `SELECT stage FROM customer_pipeline WHERE id = $1`, [pipelineId]
+          `SELECT stage FROM customer_pipeline WHERE id = $1 AND deleted_at IS NULL`, [pipelineId]
         );
         if (prevStage[0] && prevStage[0].stage !== 'booked') {
           await client.query(
