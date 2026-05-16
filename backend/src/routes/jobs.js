@@ -99,16 +99,21 @@ function queryDieuDoStaffStats(scope) {
           AND tb.planned_datetime IS NOT NULL
           AND tb.delivery_location IS NOT NULL AND tb.delivery_location <> ''
       ) AS has_plan,
+      -- CP6.2.1 — "Đặt xe" semantically means "chốt vận tải" (carrier picked),
+      -- NOT "số xe assigned". The vehicle_number tick lives in the separate
+      -- 'Đã có xe' / 'Chưa có xe' progression. So:
+      --   • booked            = transport_company_id IS NOT NULL (carrier set;
+      --                          vehicle may or may not be assigned yet)
+      --   • plan_no_truck     = has plan AND transport_company_id IS NULL
       COUNT(*) FILTER (
         WHERE tb.id IS NOT NULL AND j.status <> 'completed' AND j.deleted_at IS NULL
           AND tb.transport_company_id IS NOT NULL
-          AND tb.vehicle_number IS NOT NULL AND tb.vehicle_number <> ''
       ) AS booked,
       COUNT(*) FILTER (
         WHERE tb.id IS NOT NULL AND j.status <> 'completed' AND j.deleted_at IS NULL
           AND tb.planned_datetime IS NOT NULL
           AND tb.delivery_location IS NOT NULL AND tb.delivery_location <> ''
-          AND (tb.vehicle_number IS NULL OR tb.vehicle_number = '')
+          AND tb.transport_company_id IS NULL
       ) AS plan_no_truck,
       -- "Sắp giao chưa đặt xe" — per-booking planned_datetime within 12h
       -- on bookings still missing a carrier (CP6.1 semantic).
@@ -725,15 +730,15 @@ router.get('/filtered', requireAuth, async (req, res) => {
                    AND tb.delivery_location IS NOT NULL AND tb.delivery_location <> ''`;
           order = `ORDER BY j.job_code ASC NULLS LAST, tb.booking_code ASC NULLS LAST`;
           break;
+        // CP6.2.1 — match the corrected stat FILTER predicates exactly.
         case 'staff_dd_booked':
-          where = `AND tb.transport_company_id IS NOT NULL
-                   AND tb.vehicle_number IS NOT NULL AND tb.vehicle_number <> ''`;
+          where = `AND tb.transport_company_id IS NOT NULL`;
           order = `ORDER BY j.job_code ASC NULLS LAST, tb.booking_code ASC NULLS LAST`;
           break;
         case 'staff_dd_plan_no_truck':
           where = `AND tb.planned_datetime IS NOT NULL
                    AND tb.delivery_location IS NOT NULL AND tb.delivery_location <> ''
-                   AND (tb.vehicle_number IS NULL OR tb.vehicle_number = '')`;
+                   AND tb.transport_company_id IS NULL`;
           order = `ORDER BY j.job_code ASC NULLS LAST, tb.booking_code ASC NULLS LAST`;
           break;
         case 'staff_dd_urgent_no_truck':
