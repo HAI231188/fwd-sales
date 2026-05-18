@@ -37,3 +37,14 @@ ReactDOM.createRoot(document.getElementById('root')).render(
     </QueryClientProvider>
   </React.StrictMode>
 );
+
+// Phase 6 Phase C2 — register the no-op service worker so Chrome's PWA
+// installability check passes and the "Install app" banner appears on
+// Android. SW is network-passthrough (no caching) — see public/sw.js.
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch((err) => {
+      console.warn('[SW] registration failed:', err);
+    });
+  });
+}
