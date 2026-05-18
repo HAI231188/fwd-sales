@@ -773,6 +773,29 @@ CREATE INDEX IF NOT EXISTS idx_truck_booking_containers_booking
 -- IS NOT NULL — see services/job-completion.js). Idempotent.
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;
 
+-- Phase 7 M1 — Sales "Quản lý công việc" revenue-entered handoff.
+-- Sales ticks a job as "đã nhập thu" after entering revenue into the external
+-- accounting software; the app stores only the timestamp + acting user, no
+-- amount. Both columns nullable — NULL means "Sales has not yet ticked."
+-- These columns are NOT part of jobs.completed_at — completion is upstream of
+-- revenue entry: a job becomes `completed` first (LOG side), then Sales picks
+-- it up to tick `revenue_entered_at` later. M2-M5 will wire the read + write
+-- paths; for M1 both columns are pure storage and start NULL for every row.
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS revenue_entered_at TIMESTAMPTZ;
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS revenue_entered_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
+
+-- Composite partial index supporting the 3 Sales sub-tab queries off
+-- (sales_id, completed_at, revenue_entered_at). Partial WHERE deleted_at IS
+-- NULL aligns with the L17 soft-delete pattern + keeps the index small.
+-- Serves:
+--   * Sub-tab "pending":          WHERE sales_id=X AND completed_at IS NULL
+--   * Sub-tab "revenue_pending":  WHERE sales_id=X AND completed_at IS NOT NULL
+--                                                  AND revenue_entered_at IS NULL
+--   * Sub-tab "revenue_entered":  WHERE sales_id=X AND revenue_entered_at IS NOT NULL
+CREATE INDEX IF NOT EXISTS idx_jobs_revenue_status
+  ON jobs (sales_id, completed_at, revenue_entered_at)
+  WHERE deleted_at IS NULL;
+
 -- Job-level booking status — Phase 5 CP4.5.1.
 -- CP4.5.1: 'hoan_thanh' is now driven by jobs.completed_at IS NOT NULL (the
 -- per-job "TH ngày giờ" input in the DD grid). Per-booking actual_datetime
