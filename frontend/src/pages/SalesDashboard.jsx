@@ -1,13 +1,14 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { format } from 'date-fns';
 import Navbar from '../components/Navbar';
 import StatCard from '../components/StatCard';
 import DateFilter, { useDateFilter } from '../components/DateFilter';
+import DateRangeFilter from '../components/DateRangeFilter';
 import DrilldownModal from '../components/DrilldownModal';
 import PipelineView from '../components/PipelineView';
-import { getStats, getReports } from '../api';
+import { getStats, getReports, getJobs } from '../api';
 import { useAuth } from '../App';
 
 const TYPE_LABEL = { saved: 'Lưu liên hệ', contacted: 'Đã liên hệ', quoted: 'Đã báo giá' };
@@ -29,6 +30,50 @@ export default function SalesDashboard() {
     queryKey: ['reports', 'my', dateRange],
     queryFn: () => getReports({ ...dateRange, limit: 50 }),
     enabled: activeTab === 'overview',
+  });
+
+  // M3 — "Quản lý công việc" tab state + lazy-loaded sub-tab queries.
+  // Default sub-tab is 'pending' to mirror the LOG dashboards' convention.
+  const [subTab, setSubTab] = useState('pending');
+  const [revenueEnteredRange, setRevenueEnteredRange] = useState({});
+
+  // Visibility-aware polling — 5s when tab is visible, 30s when hidden.
+  // Mirrors LogDashboardTP:471-475.
+  const [isVisible, setIsVisible] = useState(() => !document.hidden);
+  useEffect(() => {
+    const handler = () => setIsVisible(!document.hidden);
+    document.addEventListener('visibilitychange', handler);
+    return () => document.removeEventListener('visibilitychange', handler);
+  }, []);
+  const pollInterval = isVisible ? 5000 : 30000;
+
+  // M3 — three lazy-loaded queries, one per sub-tab. Each fires only when
+  // the user is actually on that sub-tab to avoid unnecessary traffic on the
+  // default ("Báo cáo của tôi") landing.
+  // The 'sales_view' discriminator on the pending query's key prevents cache
+  // collision with LogDashboardTP's ['jobs','pending'] key — the two views
+  // hit the same endpoint but the backend role-scopes the result differently
+  // (sales sees only own jobs; TP sees everything).
+  const pendingJobsQ = useQuery({
+    queryKey: ['jobs', 'pending', 'sales_view'],
+    queryFn: () => getJobs({ tab: 'pending' }),
+    enabled: activeTab === 'job_management' && subTab === 'pending',
+    refetchInterval: pollInterval,
+  });
+
+  const revenuePendingQ = useQuery({
+    queryKey: ['jobs', 'revenue_pending'],
+    queryFn: () => getJobs({ tab: 'revenue_pending' }),
+    enabled: activeTab === 'job_management' && subTab === 'revenue_pending',
+    refetchInterval: pollInterval,
+  });
+
+  const revenueEnteredQ = useQuery({
+    queryKey: ['jobs', 'revenue_entered', revenueEnteredRange],
+    queryFn: () => getJobs({ tab: 'revenue_entered', ...revenueEnteredRange }),
+    enabled: activeTab === 'job_management' && subTab === 'revenue_entered',
+    // No refetchInterval — data is stable, refetches on date-range change
+    // or on user-triggered tick/un-tick (M4 will invalidate this key).
   });
 
   const stats = statsQ.data || {};
@@ -76,8 +121,9 @@ export default function SalesDashboard() {
           {/* Tabs */}
           <div className="tabs">
             {[
-              { key: 'overview',  label: '📋 Báo cáo của tôi' },
-              { key: 'pipeline',  label: '📊 Danh sách hoạt động' },
+              { key: 'overview',        label: '📋 Báo cáo của tôi' },
+              { key: 'pipeline',        label: '📊 Danh sách hoạt động' },
+              { key: 'job_management',  label: '🚛 Quản lý công việc' },
             ].map(t => (
               <button key={t.key} className={`tab ${activeTab === t.key ? 'active' : ''}`} onClick={() => setActiveTab(t.key)}>
                 {t.label}
@@ -153,6 +199,71 @@ export default function SalesDashboard() {
           {/* Pipeline */}
           {activeTab === 'pipeline' && <PipelineView />}
 
+          {/* M3 — Quản lý công việc (Sales-side job management) */}
+          {activeTab === 'job_management' && (() => {
+            const SUB_TABS = [
+              { key: 'pending',         label: '🔵 Job pending',     color: 'var(--info)',     bg: '#eff6ff', border: '#bfdbfe', q: pendingJobsQ },
+              { key: 'revenue_pending', label: '🟡 Yêu cầu nhập thu', color: 'var(--warning)', bg: '#fffbeb', border: '#fde68a', q: revenuePendingQ },
+              { key: 'revenue_entered', label: '🟢 Đã nhập thu',      color: 'var(--primary)', bg: '#f0fdf4', border: '#bbf7d0', q: revenueEnteredQ },
+            ];
+            const activeQ = SUB_TABS.find(s => s.key === subTab)?.q;
+            const activeData = activeQ?.data || [];
+            return (
+              <div>
+                {/* Sub-tab navigation — clickable pill cards with live count badges */}
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 16 }}>
+                  {SUB_TABS.map(s => {
+                    const isActive = subTab === s.key;
+                    const count = s.q.data?.length;
+                    return (
+                      <button
+                        key={s.key}
+                        type="button"
+                        onClick={() => setSubTab(s.key)}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 8,
+                          padding: '10px 16px',
+                          background: isActive ? s.bg : 'var(--bg-card)',
+                          border: `1.5px solid ${isActive ? s.color : 'var(--border)'}`,
+                          borderRadius: 'var(--radius)',
+                          color: isActive ? s.color : 'var(--text-2)',
+                          fontFamily: 'var(--font)',
+                          fontSize: 14, fontWeight: isActive ? 600 : 500,
+                          cursor: 'pointer',
+                          transition: 'all 0.15s',
+                        }}
+                      >
+                        <span>{s.label}</span>
+                        <span style={{ fontSize: 13, opacity: 0.8 }}>
+                          ({s.q.isLoading ? '…' : count ?? 0})
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Date range — only on Đã nhập thu sub-tab */}
+                {subTab === 'revenue_entered' && (
+                  <div style={{ marginBottom: 12 }}>
+                    <DateRangeFilter
+                      onChange={setRevenueEnteredRange}
+                      defaultPreset="7d"
+                    />
+                  </div>
+                )}
+
+                {/* Placeholder — M4 will swap for <FilteredTable> with the
+                    agreed column sets and tick / un-tick action buttons. */}
+                <div style={{ padding: '24px', textAlign: 'center', color: 'var(--text-3)' }}>
+                  {activeQ?.isLoading
+                    ? 'Đang tải...'
+                    : activeData.length === 0
+                      ? 'Không có job nào'
+                      : `${activeData.length} job(s) — M4 sẽ render bảng tại đây`}
+                </div>
+              </div>
+            );
+          })()}
 
         </div>
       </main>

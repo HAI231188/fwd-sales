@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 
 function localDate(d) {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
@@ -18,11 +18,24 @@ const PRESETS = [
   { key: 'custom', label: 'Tùy chọn', getDates: null },
 ];
 
-// onChange({ from_date?, to_date? }) — called whenever range changes
-export default function DateRangeFilter({ onChange }) {
-  const [preset, setPreset] = useState('3d');
+// onChange({ from_date?, to_date? }) — called whenever range changes.
+// defaultPreset — optional, defaults to '3d' (backend-default-7d/3d behavior).
+// When the caller passes a non-default preset that emits explicit dates, fire
+// onChange once on mount so the parent's queryKey reflects the chosen range
+// from the first render (instead of waiting for the backend-default fallback).
+export default function DateRangeFilter({ onChange, defaultPreset = '3d' }) {
+  const [preset, setPreset] = useState(defaultPreset);
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
+
+  useEffect(() => {
+    if (defaultPreset === '3d') return; // backend-default path; no onChange needed
+    const p = PRESETS.find(x => x.key === defaultPreset);
+    if (p?.getDates) onChange(p.getDates());
+    // Intentional: this effect runs once on mount to seed the parent's
+    // dateRange state with the requested default preset's explicit dates.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function selectPreset(p) {
     setPreset(p.key);
