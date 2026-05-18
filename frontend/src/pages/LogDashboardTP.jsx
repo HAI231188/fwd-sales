@@ -188,6 +188,42 @@ function InlineDeadline({ value, onSave }) {
   );
 }
 
+// Phase 6 Phase B3 — Mobile card shell. Mirrors OpsCard (LogDashboardOps:L97)
+// and CusCard (LogDashboardCus). Pure presentation: header (job_code + Loại
+// badge) + Khách line + dashed divider + per-row `body` + optional action
+// footer with click-propagation stopped. No closures; caller wires onOpen and
+// passes already-bound action buttons.
+function TPCard({ job: j, body, actions, onOpen, codeColor }) {
+  const imp = j.import_export === 'import';
+  return (
+    <div className="data-card" onClick={onOpen}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, marginBottom: 4 }}>
+        <div style={{ fontWeight: 700, fontSize: 15, color: codeColor || 'var(--info)', fontFamily: 'var(--font-display)' }}>
+          {j.job_code || `#${j.id}`}
+        </div>
+        <span style={{
+          background: imp ? 'rgba(217,119,6,0.12)' : 'rgba(34,197,94,0.12)',
+          color: imp ? '#d97706' : '#16a34a',
+          borderRadius: 6, padding: '2px 10px',
+          fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap',
+        }}>{imp ? 'Nhập' : 'Xuất'}</span>
+      </div>
+      <div style={{ fontSize: 13, color: 'var(--text)', marginBottom: 6 }}>
+        <span style={{ color: 'var(--text-2)', fontSize: 11 }}>Khách: </span>
+        <strong>{j.customer_name || '—'}</strong>
+      </div>
+      <div style={{ height: 1, background: 'var(--border)', margin: '6px 0 8px' }} />
+      {body}
+      {actions && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10, paddingTop: 8, borderTop: '1px dashed var(--border)', alignItems: 'center' }}
+             onClick={e => e.stopPropagation()}>
+          {actions}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Assign Modal ─────────────────────────────────────────────────────────────
 function AssignModal({ job, staff, onClose, onSave }) {
   const zIndex = useModalZIndex();
@@ -655,6 +691,163 @@ export default function LogDashboardTP() {
                 <FilteredTable
                   columns={ftColumns}
                   data={filteredJobs}
+                  renderMobileCard={(j) => {
+                    const isTk = j.service_type === 'tk' || j.service_type === 'both';
+                    const waitingAssign = (j.service_type === 'tk' || j.service_type === 'both') && !j.cus_id;
+                    const cusEligible = tab === 'pending' && !j.tk_completed_at;
+                    const opsEligible = tab === 'pending' && !j.ops_done;
+                    return (
+                      <TPCard key={j.id} job={j} onOpen={() => setDetailJobId(j.id)}
+                        codeColor={tab === 'completed' ? 'var(--primary)' : 'var(--info)'}
+                        body={
+                          <>
+                            <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 6, flexWrap: 'wrap', fontSize: 12 }}>
+                              <span className="badge badge-info" style={{ fontSize: 10 }}>{SVC_LABEL[j.service_type] || j.service_type}</span>
+                              <span><span style={{ color: 'var(--text-2)' }}>Ngày:</span> {fmtDate(j.created_at)}</span>
+                              <span><span style={{ color: 'var(--text-2)' }}>SI:</span> {j.si_number || '—'}</span>
+                            </div>
+
+                            <div style={{ fontSize: 12, marginBottom: 6 }}>
+                              <span style={{ color: 'var(--text-2)' }}>Hàng hóa:</span> {fmtCargo(j)}
+                            </div>
+
+                            <div style={{ fontSize: 12, marginBottom: 6 }}>
+                              <span style={{ color: 'var(--text-2)' }}>Hạn lệnh / Cutoff:</span>{' '}
+                              <span style={deadlineStyle(j.han_lenh)}>
+                                {j.han_lenh ? (j.import_export === 'import' ? fmtDate(j.han_lenh) : fmtDt(j.han_lenh)) : '—'}
+                              </span>
+                            </div>
+
+                            <div style={{ fontSize: 12, marginBottom: 8, display: 'flex', alignItems: 'flex-start', gap: 6 }}>
+                              <span style={{ color: 'var(--text-2)', whiteSpace: 'nowrap', paddingTop: 2 }}>Deadline:</span>
+                              <div style={{ flex: 1, minWidth: 0 }} onClick={e => e.stopPropagation()}>
+                                <InlineDeadline value={j.deadline}
+                                  onSave={v => setDlMut.mutate({ id: j.id, deadline: v })} />
+                              </div>
+                            </div>
+
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 12px', marginBottom: 8, fontSize: 12 }}>
+                              <div><span style={{ color: 'var(--text-2)' }}>ETD:</span> {fmtDate(j.etd)}</div>
+                              <div><span style={{ color: 'var(--text-2)' }}>ETA:</span> {fmtDate(j.eta)}</div>
+                            </div>
+
+                            {isTk && (
+                              <div style={{ padding: '8px 10px', background: 'var(--bg)', borderRadius: 8, marginBottom: 8 }}>
+                                <div style={{ fontSize: 11, color: 'var(--text-2)', fontWeight: 600, marginBottom: 6 }}>Tờ khai</div>
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 12px', fontSize: 12 }}>
+                                  <div><span style={{ color: 'var(--text-2)' }}>Số TK:</span> {j.tk_number || '—'}</div>
+                                  <div><span style={{ color: 'var(--text-2)' }}>Luồng:</span> {j.tk_flow || '—'}</div>
+                                </div>
+                                <div style={{ fontSize: 12, marginTop: 4 }}>
+                                  <span style={{ color: 'var(--text-2)' }}>Trạng thái:</span>{' '}
+                                  {j.tk_status
+                                    ? <span style={{ color: TK_STATUS_COLOR[j.tk_status], fontWeight: 500 }}>{TK_STATUS_LABEL[j.tk_status]}</span>
+                                    : <span style={{ color: 'var(--text-3)' }}>—</span>}
+                                </div>
+                                {(j.tk_datetime || j.tq_datetime) && (
+                                  <div style={{ marginTop: 4, fontSize: 11, color: 'var(--text-2)' }}>
+                                    {j.tk_datetime && <>Ngày TK: {fmtDt(j.tk_datetime)}</>}
+                                    {j.tk_datetime && j.tq_datetime && <span style={{ margin: '0 6px' }}>·</span>}
+                                    {j.tq_datetime && <>TQ: {fmtDt(j.tq_datetime)}</>}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+
+                            <div style={{ padding: '8px 10px', background: 'var(--bg)', borderRadius: 8, marginBottom: 8 }}>
+                              <div style={{ fontSize: 11, color: 'var(--text-2)', fontWeight: 600, marginBottom: 6 }}>Phân công</div>
+                              <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: 12 }} onClick={e => e.stopPropagation()}>
+                                <div>
+                                  <span style={{ color: 'var(--text-2)' }}>CUS:</span>{' '}
+                                  {!j.cus_name
+                                    ? (cusEligible
+                                        ? <span style={{ color: 'var(--warning)', fontWeight: 600, borderBottom: '1px dotted var(--warning)', cursor: 'pointer' }}
+                                            onClick={() => setReassignTarget({ type: 'cus', job: j })}>Chờ phân</span>
+                                        : <span style={{ color: 'var(--warning)', fontWeight: 600 }}>Chờ phân</span>)
+                                    : (cusEligible
+                                        ? <span style={{ color: 'var(--info)', cursor: 'pointer', borderBottom: '1px dotted var(--info)' }}
+                                            onClick={() => setReassignTarget({ type: 'cus', job: j })}>{j.cus_name}</span>
+                                        : <span style={{ color: 'var(--text-3)' }}>{j.cus_name}</span>)}
+                                </div>
+                                <div>
+                                  <span style={{ color: 'var(--text-2)' }}>OPS:</span>{' '}
+                                  {!j.ops_name
+                                    ? (opsEligible
+                                        ? <span style={{ color: 'var(--text-3)', cursor: 'pointer', borderBottom: '1px dotted var(--text-3)' }}
+                                            onClick={() => setReassignTarget({ type: 'ops', job: j })}>—</span>
+                                        : <span style={{ color: 'var(--text-3)' }}>—</span>)
+                                    : (opsEligible
+                                        ? <span style={{ color: 'var(--info)', cursor: 'pointer', borderBottom: '1px dotted var(--info)' }}
+                                            onClick={() => setReassignTarget({ type: 'ops', job: j })}>{j.ops_name}</span>
+                                        : <span style={{ color: 'var(--text-3)' }}>{j.ops_name}</span>)}
+                                </div>
+                              </div>
+                            </div>
+
+                            {j.first_booking_id && (
+                              <div style={{ padding: '8px 10px', background: 'rgba(124,58,237,0.06)', borderRadius: 8, marginBottom: 8, fontSize: 12 }}>
+                                <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginBottom: 3 }}>
+                                  <span style={{ color: 'var(--text-2)' }}>Vận tải:</span>
+                                  <strong>{j.first_booking_transport || '—'}</strong>
+                                  {j.truck_bookings_count > 1 && (
+                                    <span style={{ background: 'rgba(124,58,237,0.12)', color: '#7c3aed', borderRadius: 6, padding: '1px 6px', fontSize: 10, fontWeight: 600 }}>
+                                      +{j.truck_bookings_count - 1} KH khác
+                                    </span>
+                                  )}
+                                </div>
+                                <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                                  <span>
+                                    <span style={{ color: 'var(--text-2)' }}>Số xe:</span>{' '}
+                                    {j.first_booking_vehicle
+                                      ? <strong style={{ color: 'var(--primary)' }}>{j.first_booking_vehicle}</strong>
+                                      : <span style={{ color: 'var(--warning)' }}>⏳ Chờ</span>}
+                                  </span>
+                                  <span>
+                                    <span style={{ color: 'var(--text-2)' }}>KH:</span>{' '}
+                                    {j.first_booking_planned ? fmtDt(j.first_booking_planned) : '—'}
+                                  </span>
+                                </div>
+                              </div>
+                            )}
+
+                            {(j.delivery_datetime || j.delivery_location) && (
+                              <div style={{ fontSize: 12, marginBottom: 6 }}>
+                                <div><span style={{ color: 'var(--text-2)' }}>Ngày giao:</span> {j.delivery_datetime ? fmtDate(j.delivery_datetime) : '—'}</div>
+                                <div><span style={{ color: 'var(--text-2)' }}>Địa điểm:</span> {j.delivery_location || '—'}</div>
+                              </div>
+                            )}
+
+                            {j.tk_notes && (
+                              <div style={{ fontSize: 12, color: 'var(--text-2)', padding: '6px 8px', background: 'var(--bg)', borderRadius: 6 }}>
+                                {j.tk_notes}
+                              </div>
+                            )}
+                          </>
+                        }
+                        actions={<>
+                          {tab === 'pending' && (
+                            <button className="btn btn-ghost btn-sm" title={waitingAssign ? 'Phân công' : 'Sửa phân công'}
+                              onClick={() => setAssigningJob(j)}>
+                              {waitingAssign ? '⚡ Phân công' : '✏️ Phân công'}
+                            </button>
+                          )}
+                          {tab === 'pending' && (
+                            <button className="btn btn-ghost btn-sm btn-icon" title="Xóa job"
+                              style={{ color: 'var(--danger)' }}
+                              onClick={() => {
+                                if (window.confirm(`Xóa job ${j.job_code || '#' + j.id}?`)) {
+                                  deleteMut.mutate(j.id);
+                                }
+                              }}>🗑</button>
+                          )}
+                          <button className="btn btn-ghost btn-sm btn-icon" title="Đặt kế hoạch xe"
+                            onClick={() => setPlanModalJob({ jobId: j.id, jobCode: j.job_code })}>📅</button>
+                          <button className="btn btn-ghost btn-sm btn-icon" title="Chi tiết"
+                            onClick={() => setDetailJobId(j.id)}>🔍</button>
+                        </>}
+                      />
+                    );
+                  }}
                   emptyText="Không có job nào"
                   extraHeaderCells={<th style={{ padding: '10px 8px' }} />}
                   tableStyle={{ fontSize: 13 }}
