@@ -1137,18 +1137,35 @@ router.get('/filtered', requireAuth, async (req, res) => {
 router.get('/', requireAuth, async (req, res) => {
   const { role, id: userId } = req.user;
   const { tab, from_date, to_date } = req.query;
-  const isCompleted = tab === 'completed';
+  // M2 — 4 tab modes:
+  //   'pending'          (default) — pending jobs, role-scoped by assignment
+  //   'completed'        — LOG-completed jobs, date filter on j.updated_at
+  //   'revenue_pending'  — completed jobs awaiting Sales revenue-tick (FIFO,
+  //                        no date filter — entire queue must be visible)
+  //   'revenue_entered'  — Sales has ticked, date filter on j.completed_at
+  //                        (default last 7 days)
+  const isCompleted      = tab === 'completed';
+  const isRevenuePending = tab === 'revenue_pending';
+  const isRevenueEntered = tab === 'revenue_entered';
 
   const conditions = [];
   const params = [];
   let idx = 1;
 
   conditions.push(`j.deleted_at IS NULL`);
-  conditions.push(`j.status = $${idx++}`);
-  params.push(isCompleted ? 'completed' : 'pending');
+
+  // M2 — Sales role: ALWAYS filter by own sales_id across every tab. Fixes
+  // prior gap where tab='completed' had no role filter and exposed every
+  // sales' jobs to one sales user. Sales identity is the user's own id;
+  // LOG roles (truong_phong_log/dieu_do/cus*/ops) + 'lead' are unaffected.
+  if (role === 'sales') {
+    conditions.push(`j.sales_id = $${idx++}`);
+    params.push(userId);
+  }
 
   if (isCompleted) {
-    // Feature 2: date range — default last 3 days when no params supplied
+    conditions.push(`j.status = 'completed'`);
+    // Date filter on j.updated_at — default last 3 days when no params supplied.
     if (from_date) {
       conditions.push(`j.updated_at >= $${idx++}::date`);
       params.push(from_date.replace(/'/g, ''));
@@ -1160,8 +1177,31 @@ router.get('/', requireAuth, async (req, res) => {
     if (!from_date && !to_date) {
       conditions.push(`j.updated_at >= NOW() - INTERVAL '3 days'`);
     }
-    // Feature 1: no role filtering for completed tab — all LOG roles see all completed jobs
+    // LOG roles see all completed jobs. Sales filter applied above.
+  } else if (isRevenuePending) {
+    // M2 — completed jobs awaiting Sales revenue-tick. No date filter (FIFO queue).
+    conditions.push(`j.status = 'completed'`);
+    conditions.push(`j.revenue_entered_at IS NULL`);
+  } else if (isRevenueEntered) {
+    // M2 — Sales has already ticked. Date filter applies to j.completed_at
+    // (job-completion date, NOT updated_at and NOT revenue_entered_at) so
+    // Sales can review what they ticked for a given completion period.
+    // Default last 7 days when no params supplied.
+    conditions.push(`j.revenue_entered_at IS NOT NULL`);
+    if (from_date) {
+      conditions.push(`j.completed_at >= $${idx++}::date`);
+      params.push(from_date.replace(/'/g, ''));
+    }
+    if (to_date) {
+      conditions.push(`j.completed_at < $${idx++}::date + INTERVAL '1 day'`);
+      params.push(to_date.replace(/'/g, ''));
+    }
+    if (!from_date && !to_date) {
+      conditions.push(`j.completed_at >= NOW() - INTERVAL '7 days'`);
+    }
   } else {
+    // tab='pending' (default) — role-scoped by assignment for LOG roles.
+    conditions.push(`j.status = 'pending'`);
     if (role === 'dieu_do') {
       conditions.push(`ja.dieu_do_id = $${idx++}`);
       params.push(userId);
@@ -1171,11 +1211,18 @@ router.get('/', requireAuth, async (req, res) => {
     } else if (role === 'ops') {
       conditions.push(`ja.ops_id = $${idx++}`);
       params.push(userId);
-    } else if (role === 'sales') {
-      conditions.push(`j.sales_id = $${idx++}`);
-      params.push(userId);
     }
+    // role === 'sales' already handled by the unified guard above.
   }
+
+  // M2 — tab-aware ORDER BY. Pending/completed unchanged (latest job first);
+  // revenue_pending sorts oldest-first so Sales clears the FIFO queue; revenue
+  // _entered sorts newest tick first so recent activity sits on top.
+  const orderBy = isRevenuePending
+    ? 'j.completed_at ASC'
+    : isRevenueEntered
+      ? 'j.revenue_entered_at DESC'
+      : 'j.created_at DESC';
 
   const WHERE = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
 
@@ -1268,7 +1315,7 @@ router.get('/', requireAuth, async (req, res) => {
          LIMIT 1
       ) tb_first ON true
       ${WHERE}
-      ORDER BY j.created_at DESC
+      ORDER BY ${orderBy}
     `, params);
     res.json(rows);
   } catch (err) {
@@ -2802,6 +2849,122 @@ router.patch('/:id/complete', requireAuth, async (req, res) => {
     const completed = await checkAndCompleteJob(client, req.params.id, req.user.id);
     await client.query('COMMIT');
     res.json({ ok: true, job_completed: completed });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// ─── M2 — Sales revenue-tick endpoints ─────────────────────────────────────
+// Sales marks a LOG-completed job as "đã nhập thu" (revenue entered into the
+// external accounting software). Both endpoints share the same validation
+// chain: role=sales → job exists + alive → own job → tick-state precondition.
+// Each runs in its own transaction; on any failure ROLLBACK + JSON error.
+//
+// Validation order (matches M2 spec):
+//   1. req.user.role === 'sales'         → 403
+//   2. job exists AND deleted_at IS NULL → 404
+//   3. job.sales_id === req.user.id      → 403
+//   4. job.completed_at IS NOT NULL      → 400  (PATCH only — LOG must finish first)
+//   5. revenue_entered_at state          → 400  (already-ticked for PATCH, not-ticked for DELETE)
+//
+// Response shape: 200 with the bare jobs row (RETURNING *). Frontend should
+// invalidate the React Query cache to refetch the denormalized GET /api/jobs
+// shape (same pattern as PATCH /:id/tk, PATCH /:id/truck/complete, etc.).
+async function fetchJobForRevenue(client, id) {
+  const { rows } = await client.query(
+    `SELECT id, sales_id, completed_at, revenue_entered_at, deleted_at
+       FROM jobs WHERE id = $1`,
+    [id]
+  );
+  return rows[0] || null;
+}
+
+router.patch('/:id/revenue-tick', requireAuth, async (req, res) => {
+  if (req.user.role !== 'sales') {
+    return res.status(403).json({ error: 'Chỉ Sales mới có thể nhập thu' });
+  }
+  const client = await db.pool.connect();
+  try {
+    await client.query('BEGIN');
+    const job = await fetchJobForRevenue(client, req.params.id);
+    if (!job || job.deleted_at) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Job không tồn tại' });
+    }
+    if (job.sales_id !== req.user.id) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: 'Job này không thuộc về bạn' });
+    }
+    if (!job.completed_at) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Job chưa hoàn thành' });
+    }
+    if (job.revenue_entered_at) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Job đã được nhập thu trước đó' });
+    }
+    const { rows } = await client.query(
+      `UPDATE jobs
+          SET revenue_entered_at = NOW(),
+              revenue_entered_by = $1,
+              updated_at = NOW()
+        WHERE id = $2 AND deleted_at IS NULL
+        RETURNING *`,
+      [req.user.id, req.params.id]
+    );
+    await recordHistory(
+      client, req.params.id, req.user.id,
+      'revenue_entered_at', null, rows[0].revenue_entered_at?.toISOString?.() || 'NOW()'
+    );
+    await client.query('COMMIT');
+    res.json(rows[0]);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+router.delete('/:id/revenue-tick', requireAuth, async (req, res) => {
+  if (req.user.role !== 'sales') {
+    return res.status(403).json({ error: 'Chỉ Sales mới có thể bỏ tick' });
+  }
+  const client = await db.pool.connect();
+  try {
+    await client.query('BEGIN');
+    const job = await fetchJobForRevenue(client, req.params.id);
+    if (!job || job.deleted_at) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Job không tồn tại' });
+    }
+    if (job.sales_id !== req.user.id) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: 'Job này không thuộc về bạn' });
+    }
+    if (!job.revenue_entered_at) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Job chưa được nhập thu' });
+    }
+    const prevTs = job.revenue_entered_at?.toISOString?.() || String(job.revenue_entered_at);
+    const { rows } = await client.query(
+      `UPDATE jobs
+          SET revenue_entered_at = NULL,
+              revenue_entered_by = NULL,
+              updated_at = NOW()
+        WHERE id = $1 AND deleted_at IS NULL
+        RETURNING *`,
+      [req.params.id]
+    );
+    await recordHistory(
+      client, req.params.id, req.user.id,
+      'revenue_entered_at', prevTs, null
+    );
+    await client.query('COMMIT');
+    res.json(rows[0]);
   } catch (err) {
     await client.query('ROLLBACK');
     res.status(500).json({ error: err.message });
