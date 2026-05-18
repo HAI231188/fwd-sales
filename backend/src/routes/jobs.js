@@ -130,10 +130,26 @@ function queryDieuDoStaffStats(scope) {
           AND tb.vehicle_number IS NOT NULL AND tb.vehicle_number <> ''
           AND (NOT tb.invoice_lifting_ticked OR NOT tb.cost_entered_ticked)
       ) AS overdue_delivery,
-      COUNT(DISTINCT j.id) FILTER (
-        WHERE j.id IS NOT NULL AND j.deleted_at IS NULL
-          AND get_truck_booking_status(j.id) <> 'hoan_thanh'
-      ) AS quan_ly_dat_xe
+      -- CP6.6 — "Chậm Cost": bookings where carrier is locked in and the
+      -- planned delivery date is >3 days past, but the booking's paperwork
+      -- (nâng hạ tick, cost tick, actual_datetime) is still incomplete.
+      -- Counts BOOKINGS (not jobs) so a job with 2 carriers can register
+      -- as 2 separate "Chậm Cost" rows. Job completion is implicitly
+      -- excluded — completion requires all 3 ticks present.
+      COUNT(*) FILTER (
+        WHERE tb.id IS NOT NULL
+          AND tb.deleted_at IS NULL
+          AND j.status <> 'completed'
+          AND j.deleted_at IS NULL
+          AND tb.transport_company_id IS NOT NULL
+          AND tb.planned_datetime IS NOT NULL
+          AND tb.planned_datetime < NOW() - INTERVAL '3 days'
+          AND (
+            tb.invoice_lifting_ticked = FALSE
+            OR tb.cost_entered_ticked = FALSE
+            OR tb.actual_datetime IS NULL
+          )
+      ) AS cham_cost
     FROM users u
     LEFT JOIN job_assignments ja ON ja.dieu_do_id = u.id
     LEFT JOIN jobs j ON j.id = ja.job_id
@@ -713,6 +729,8 @@ router.get('/filtered', requireAuth, async (req, res) => {
       'staff_dd_plan_no_truck',
       'staff_dd_urgent_no_truck',
       'staff_dd_overdue_delivery',
+      // CP6.6 — replaces legacy 'staff_dd_quan_ly_dat_xe'. See switch below.
+      'staff_dd_cham_cost',
     ]);
     if (STAFF_DD_BOOKING_TYPES.has(type)) {
       const staffId = parseInt(req.query.staff_id, 10);
@@ -755,6 +773,19 @@ router.get('/filtered', requireAuth, async (req, res) => {
                    AND j.completed_at IS NULL`;
           order = `ORDER BY j.updated_at DESC`;
           break;
+        case 'staff_dd_cham_cost':
+          // CP6.6 — mirror the cham_cost FILTER in queryDieuDoStaffStats
+          // exactly. Earliest overdue first so the most-urgent rows sit on top.
+          where = `AND tb.transport_company_id IS NOT NULL
+                   AND tb.planned_datetime IS NOT NULL
+                   AND tb.planned_datetime < NOW() - INTERVAL '3 days'
+                   AND (
+                     tb.invoice_lifting_ticked = FALSE
+                     OR tb.cost_entered_ticked = FALSE
+                     OR tb.actual_datetime IS NULL
+                   )`;
+          order = `ORDER BY tb.planned_datetime ASC`;
+          break;
       }
       try {
         const { rows } = await db.query(`
@@ -776,6 +807,7 @@ router.get('/filtered', requireAuth, async (req, res) => {
             tb.receiver_phone,
             tb.invoice_lifting_ticked,
             tb.cost_entered_ticked,
+            tb.actual_datetime,
             get_truck_booking_status(j.id) AS booking_status,
             COALESCE((
               SELECT string_agg(
@@ -840,19 +872,14 @@ router.get('/filtered', requireAuth, async (req, res) => {
         break;
       // CP6.2 — staff_dd_* drilldowns split into two paths to match the
       // refactored stat counts in queryDieuDoStaffStats (CP6.1):
-      //   • staff_dd_pending + staff_dd_quan_ly_dat_xe → job-level (handled
-      //     by the existing per-job SELECT below the switch).
+      //   • staff_dd_pending → job-level (handled by the existing per-job
+      //     SELECT below the switch).
       //   • everything else → booking-level (handled by the early
       //     STAFF_DD_BOOKING_TYPES branch added above).
-      // Note: staff_dd_quan_ly_dat_xe under CP4.5.1 — a completed job's
-      // derived status is always 'hoan_thanh', so the status='pending'
-      // restriction the global WHERE adds is harmless.
+      // CP6.6 — legacy 'staff_dd_quan_ly_dat_xe' (job-level) was removed;
+      // its replacement 'staff_dd_cham_cost' is booking-level (in the Set above).
       case 'staff_dd_pending':
         staffField = 'dieu_do_id';
-        break;
-      case 'staff_dd_quan_ly_dat_xe':
-        staffField = 'dieu_do_id';
-        extraWhere = `AND get_truck_booking_status(j.id) <> 'hoan_thanh'`;
         break;
       case 'staff_ops_managing':
         staffField = 'ops_id';

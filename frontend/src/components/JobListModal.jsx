@@ -11,7 +11,8 @@ import { TRUCK_BOOKING_STATUS_LABELS, truckBookingPillStyle } from '../utils/tru
 // also get a dynamic title.
 // CP6.2 adds 6 booking-level staff_dd_* keys here so the JobListModal renders
 // them with the booking column set (ticks, receiver, etc.) instead of the
-// legacy job-level columns. staff_dd_pending + staff_dd_quan_ly_dat_xe stay
+// legacy job-level columns. CP6.6 retires staff_dd_quan_ly_dat_xe in favour
+// of staff_dd_cham_cost (still booking-level). Only staff_dd_pending stays
 // job-level (handled by the prefix-match branch below).
 const BOOKING_LEVEL_FILTERS = [
   'dd_kh_da_dat_chi_tiet',
@@ -23,6 +24,9 @@ const BOOKING_LEVEL_FILTERS = [
   'staff_dd_plan_no_truck',
   'staff_dd_urgent_no_truck',
   'staff_dd_overdue_delivery',
+  // CP6.6 — replaces legacy 'staff_dd_quan_ly_dat_xe' (which was job-level).
+  // Booking-level so the row set + columns match the new stat count exactly.
+  'staff_dd_cham_cost',
 ];
 
 function formatDayLabel(offset) {
@@ -100,6 +104,8 @@ const FILTER_TITLES = {
   staff_dd_plan_no_truck:      'Đã có KH chưa đặt xe',
   staff_dd_urgent_no_truck:    'Sắp giao chưa đặt xe (16h)',
   staff_dd_overdue_delivery:   'Giao hàng rồi chưa hoàn thành',
+  // CP6.6 — replaces legacy 'staff_dd_quan_ly_dat_xe' title.
+  staff_dd_cham_cost:          'Chậm Cost — KH > 3 ngày, chưa đủ tick',
   // Staff drill-down — OPS
   staff_ops_managing:          'Job quản lý',
   staff_ops_tq_doi_lenh:       'Chờ TQ + đổi lệnh',
@@ -151,6 +157,10 @@ function getColumns(filterType) {
       { key: 'vehicle_number',          label: 'Số xe' },
       { key: 'invoice_lifting_ticked',  label: '📋 Nâng hạ' },
       { key: 'cost_entered_ticked',     label: '💵 Cost HT' },
+      // CP6.6 — shown across every booking-level drilldown so "Chậm Cost"
+      // surfaces the missing actual_datetime explicitly; other drilldowns
+      // simply render the value (or "Chưa nhập") for free.
+      { key: 'actual_datetime',         label: 'TH ngày giờ' },
       { key: 'booking_status',          label: 'Trạng thái' },
     ];
   }
@@ -291,6 +301,12 @@ function renderCell(key, j, filterType) {
       return <span style={{ fontSize: 14 }} title={j.cost_entered_ticked ? 'Đã nhập cost hệ thống' : 'Chưa nhập cost hệ thống'}>
         {j.cost_entered_ticked ? '✅' : '❌'}
       </span>;
+    case 'actual_datetime':
+      // CP6.6 — explicit "Chưa nhập" so "Chậm Cost" rows show the missing
+      // value directly. Other booking-level drilldowns render the value.
+      return j.actual_datetime
+        ? <span style={{ fontSize: 12 }}>{fmtDt(j.actual_datetime)}</span>
+        : <span style={{ fontSize: 11, color: 'var(--danger)', fontWeight: 600 }}>❌ Chưa nhập</span>;
     case 'ops_tasks_pending':
       return <span style={{ fontSize: 12, color: j.ops_tasks_pending ? 'var(--text)' : 'var(--text-3)' }}>
         {j.ops_tasks_pending || '—'}
