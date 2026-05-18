@@ -73,6 +73,9 @@ export const markCustomerFollowUpComplete = (customerId, completed, resultNote) 
 export const getJobStats = () => api.get('/jobs/stats');
 export const getJobs = (params) => api.get('/jobs', { params });
 export const createJob = (data) => api.post('/jobs', data);
+// M4 — Sales revenue-tick: mark a LOG-completed job as "đã nhập thu" / un-mark.
+export const tickJobRevenue   = (id) => api.patch(`/jobs/${id}/revenue-tick`);
+export const untickJobRevenue = (id) => api.delete(`/jobs/${id}/revenue-tick`);
 export const getJob = (id) => api.get(`/jobs/${id}`);
 export const updateJob = (id, data) => api.put(`/jobs/${id}`, data);
 export const assignJob = (id, data) => api.post(`/jobs/${id}/assign`, data);

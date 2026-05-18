@@ -1231,6 +1231,7 @@ router.get('/', requireAuth, async (req, res) => {
       SELECT j.*,
         u_sales.name AS sales_name,
         u_created.name AS created_by_name,
+        u_revenue.name AS revenue_entered_by_name,
         ja.id AS assignment_id, ja.cus_id, ja.ops_id, ja.dieu_do_id,
         ja.cus_confirm_status, ja.assignment_mode AS ja_mode,
         ja.adjustment_reason, ja.adjustment_deadline_proposed,
@@ -1302,6 +1303,7 @@ router.get('/', requireAuth, async (req, res) => {
       LEFT JOIN users u_dd ON u_dd.id = ja.dieu_do_id
       LEFT JOIN users u_sales ON u_sales.id = j.sales_id
       LEFT JOIN users u_created ON u_created.id = j.created_by
+      LEFT JOIN users u_revenue ON u_revenue.id = j.revenue_entered_by
       LEFT JOIN job_tk jt ON jt.job_id = j.id
       LEFT JOIN job_truck jtr ON jtr.job_id = j.id
       LEFT JOIN transport_companies tc ON tc.id = jtr.transport_company_id
