@@ -95,6 +95,43 @@ function IeCell({ value }) {
   );
 }
 
+// Phase 6 Phase B1 — Mobile card shell shared across all 5 OPS tabs.
+// Mirrors the DD pilot at LogDashboardDieuDo:L394: job_code (left) + Loại badge
+// (right) + Khách line + dashed divider + per-tab `body` + optional action row.
+// The action row stops click propagation so action buttons don't double-fire as
+// "open detail". Caller passes onOpen so the whole card (outside actions) opens
+// JobDetailModal — same UX as desktop double-click.
+function OpsCard({ job: j, body, actions, onOpen, codeColor }) {
+  const imp = j.import_export === 'import';
+  return (
+    <div className="data-card" onClick={onOpen}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, marginBottom: 4 }}>
+        <div style={{ fontWeight: 700, fontSize: 15, color: codeColor || 'var(--info)', fontFamily: 'var(--font-display)' }}>
+          {j.job_code || `#${j.id}`}
+        </div>
+        <span style={{
+          background: imp ? 'rgba(217,119,6,0.12)' : 'rgba(34,197,94,0.12)',
+          color: imp ? '#d97706' : '#16a34a',
+          borderRadius: 6, padding: '2px 10px',
+          fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap',
+        }}>{imp ? 'Nhập' : 'Xuất'}</span>
+      </div>
+      <div style={{ fontSize: 13, color: 'var(--text)', marginBottom: 6 }}>
+        <span style={{ color: 'var(--text-2)', fontSize: 11 }}>Khách: </span>
+        <strong>{j.customer_name || '—'}</strong>
+      </div>
+      <div style={{ height: 1, background: 'var(--border)', margin: '6px 0 8px' }} />
+      {body}
+      {actions && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10, paddingTop: 8, borderTop: '1px dashed var(--border)', alignItems: 'center' }}
+             onClick={e => e.stopPropagation()}>
+          {actions}
+        </div>
+      )}
+    </div>
+  );
+}
+
 const TQ_COLS = [
   { key: 'created_at',    label: 'Ngày' },
   { key: 'job_code',      label: 'Job',           filterType: 'text' },
@@ -329,6 +366,49 @@ export default function LogDashboardOps() {
               <FilteredTable
                 columns={TQ_COLS}
                 data={tqJobs}
+                renderMobileCard={(j) => (
+                  <OpsCard key={j.id} job={j} onOpen={() => setDetailJobId(j.id)}
+                    body={
+                      <>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 12px', marginBottom: 6, fontSize: 12 }}>
+                          <div><span style={{ color: 'var(--text-2)' }}>Ngày:</span> {fmtDate(j.created_at)}</div>
+                          <div><span style={{ color: 'var(--text-2)' }}>Mã SI:</span> {j.si_number || '—'}</div>
+                        </div>
+                        <div style={{ fontSize: 12, marginBottom: 6 }}>
+                          <span style={{ color: 'var(--text-2)' }}>Hàng hóa:</span> {fmtCargo(j)}
+                        </div>
+                        <div style={{ fontSize: 12, marginBottom: 6 }}>
+                          <span style={{ color: 'var(--text-2)' }}>Hạn lệnh / Cutoff:</span>{' '}
+                          <span style={deadlineStyle(j.han_lenh)}>
+                            {j.han_lenh ? (j.import_export === 'import' ? fmtDate(j.han_lenh) : fmtDt(j.han_lenh)) : '—'}
+                          </span>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 8, fontSize: 12 }}>
+                          <span><span style={{ color: 'var(--text-2)' }}>Luồng:</span> {j.tk_flow || '—'}</span>
+                          <span><span style={{ color: 'var(--text-2)' }}>Ngày TQ:</span> {fmtDt(j.tq_datetime)}</span>
+                        </div>
+                        <div onClick={e => e.stopPropagation()}>
+                          <label style={{ fontSize: 11, color: 'var(--text-2)', display: 'block', marginBottom: 4 }}>Trạng thái TK</label>
+                          <select value={j.tk_status || 'chua_truyen'}
+                            style={{ fontSize: 13, padding: '6px 8px', borderRadius: 6, border: '1px solid var(--border)', color: TK_STATUS_COLOR[j.tk_status] || 'var(--text-2)', background: 'transparent', width: '100%' }}
+                            onChange={e => tkMut.mutate({ id: j.id, data: { tk_status: e.target.value } })}>
+                            {TK_STATUS_OPTS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                          </select>
+                        </div>
+                        {j.tk_notes && (
+                          <div style={{ fontSize: 12, color: 'var(--text-2)', marginTop: 6, padding: '6px 8px', background: 'var(--bg)', borderRadius: 6 }}>
+                            {j.tk_notes}
+                          </div>
+                        )}
+                      </>
+                    }
+                    actions={<>
+                      {opsDoneBtn(j)}
+                      {deleteBtn(j)}
+                      <button className="btn btn-ghost btn-sm btn-icon" onClick={e => { e.stopPropagation(); setDetailJobId(j.id); }}>🔍</button>
+                    </>}
+                  />
+                )}
                 emptyText="Không có job nào"
                 extraHeaderCells={<TH />}
                 tableStyle={{ fontSize: 13 }}
@@ -367,6 +447,36 @@ export default function LogDashboardOps() {
               <FilteredTable
                 columns={DL_COLS}
                 data={dlJobs}
+                renderMobileCard={(j) => (
+                  <OpsCard key={j.id} job={j} onOpen={() => setDetailJobId(j.id)}
+                    body={
+                      <>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 12px', marginBottom: 6, fontSize: 12 }}>
+                          <div><span style={{ color: 'var(--text-2)' }}>Ngày:</span> {fmtDate(j.created_at)}</div>
+                          <div><span style={{ color: 'var(--text-2)' }}>Mã SI:</span> {j.si_number || '—'}</div>
+                        </div>
+                        <div style={{ fontSize: 12, marginBottom: 6 }}>
+                          <span style={{ color: 'var(--text-2)' }}>Hàng hóa:</span> {fmtCargo(j)}
+                        </div>
+                        <div style={{ fontSize: 12, marginBottom: 6 }}>
+                          <span style={{ color: 'var(--text-2)' }}>Hạn lệnh / Cutoff:</span>{' '}
+                          <span style={deadlineStyle(j.han_lenh)}>
+                            {j.han_lenh ? (j.import_export === 'import' ? fmtDate(j.han_lenh) : fmtDt(j.han_lenh)) : '—'}
+                          </span>
+                        </div>
+                        <div style={{ fontSize: 12, marginTop: 4 }}>
+                          <div style={{ color: 'var(--text-2)', marginBottom: 2 }}>Cảng / Loại công việc:</div>
+                          {opsTaskInfo(j)}
+                        </div>
+                      </>
+                    }
+                    actions={<>
+                      {opsDoneBtn(j)}
+                      {deleteBtn(j)}
+                      <button className="btn btn-ghost btn-sm btn-icon" onClick={e => { e.stopPropagation(); setDetailJobId(j.id); }}>🔍</button>
+                    </>}
+                  />
+                )}
                 emptyText="Không có job nào"
                 extraHeaderCells={<TH />}
                 tableStyle={{ fontSize: 13 }}
@@ -392,6 +502,34 @@ export default function LogDashboardOps() {
               <FilteredTable
                 columns={TODAY_COLS}
                 data={todayJobs}
+                renderMobileCard={(j) => (
+                  <OpsCard key={j.id} job={j} onOpen={() => setDetailJobId(j.id)}
+                    body={
+                      <>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 12px', marginBottom: 6, fontSize: 12 }}>
+                          <div><span style={{ color: 'var(--text-2)' }}>Ngày:</span> {fmtDate(j.created_at)}</div>
+                          <div><span style={{ color: 'var(--text-2)' }}>Mã SI:</span> {j.si_number || '—'}</div>
+                        </div>
+                        <div style={{ fontSize: 12, marginBottom: 6 }}>
+                          <span style={{ color: 'var(--text-2)' }}>Hàng hóa:</span> {fmtCargo(j)}
+                        </div>
+                        <div style={{ fontSize: 12, marginBottom: 8 }}>
+                          <span style={{ color: 'var(--text-2)' }}>Hạn lệnh / Cutoff:</span>{' '}
+                          <span style={deadlineStyle(j.han_lenh)}>
+                            {j.han_lenh ? (j.import_export === 'import' ? fmtDate(j.han_lenh) : fmtDt(j.han_lenh)) : '—'}
+                          </span>
+                        </div>
+                        <div style={{ fontSize: 12, padding: '6px 10px', background: 'rgba(217,119,6,0.10)', borderRadius: 6, color: 'var(--warning)', fontWeight: 600 }}>
+                          KH giao xe: {fmtDt(j.planned_datetime)}
+                        </div>
+                      </>
+                    }
+                    actions={<>
+                      {deleteBtn(j)}
+                      <button className="btn btn-ghost btn-sm btn-icon" onClick={e => { e.stopPropagation(); setDetailJobId(j.id); }}>🔍</button>
+                    </>}
+                  />
+                )}
                 emptyText="Không có job nào cần đổi lệnh hôm nay"
                 extraHeaderCells={<TH />}
                 tableStyle={{ fontSize: 13 }}
@@ -416,6 +554,34 @@ export default function LogDashboardOps() {
               <FilteredTable
                 columns={DONE_COLS}
                 data={doneJobs}
+                renderMobileCard={(j) => (
+                  <OpsCard key={j.id} job={j} onOpen={() => setDetailJobId(j.id)} codeColor="var(--primary)"
+                    body={
+                      <>
+                        <div style={{ fontSize: 12, marginBottom: 6, color: 'var(--primary)', fontWeight: 600 }}>
+                          ✓ Xong: {fmtDt(j.ops_done_at)}
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 12px', marginBottom: 6, fontSize: 12 }}>
+                          <div><span style={{ color: 'var(--text-2)' }}>Mã SI:</span> {j.si_number || '—'}</div>
+                          <div><span style={{ color: 'var(--text-2)' }}>Hàng:</span> {fmtCargo(j)}</div>
+                        </div>
+                        <div style={{ fontSize: 12, marginBottom: 6 }}>
+                          <span style={{ color: 'var(--text-2)' }}>Trạng thái TK:</span>{' '}
+                          <span style={{ color: TK_STATUS_COLOR[j.tk_status] || 'var(--text-2)', fontWeight: 500 }}>
+                            {TK_STATUS_LABEL[j.tk_status] || '—'}
+                          </span>
+                        </div>
+                        <div style={{ fontSize: 12, marginTop: 4 }}>
+                          <div style={{ color: 'var(--text-2)', marginBottom: 2 }}>Yêu cầu công việc:</div>
+                          {opsTaskInfo(j)}
+                        </div>
+                      </>
+                    }
+                    actions={<>
+                      <button className="btn btn-ghost btn-sm btn-icon" onClick={e => { e.stopPropagation(); setDetailJobId(j.id); }}>🔍</button>
+                    </>}
+                  />
+                )}
                 emptyText="Không có job nào xong việc trong 3 ngày"
                 extraHeaderCells={<TH />}
                 tableStyle={{ fontSize: 13 }}
@@ -443,6 +609,35 @@ export default function LogDashboardOps() {
               <FilteredTable
                 columns={HT_COLS}
                 data={completedJobs}
+                renderMobileCard={(j) => (
+                  <OpsCard key={j.id} job={j} onOpen={() => setDetailJobId(j.id)} codeColor="var(--primary)"
+                    body={
+                      <>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 12px', marginBottom: 6, fontSize: 12 }}>
+                          <div><span style={{ color: 'var(--text-2)' }}>Ngày:</span> {fmtDate(j.created_at)}</div>
+                          <div><span style={{ color: 'var(--text-2)' }}>Mã SI:</span> {j.si_number || '—'}</div>
+                        </div>
+                        <div style={{ fontSize: 12, marginBottom: 6 }}>
+                          <span style={{ color: 'var(--text-2)' }}>Hàng hóa:</span> {fmtCargo(j)}
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 12px', marginBottom: 6, fontSize: 12 }}>
+                          <div><span style={{ color: 'var(--text-2)' }}>ETD:</span> {fmtDate(j.etd)}</div>
+                          <div><span style={{ color: 'var(--text-2)' }}>ETA:</span> {fmtDate(j.eta)}</div>
+                        </div>
+                        <div style={{ fontSize: 12 }}>
+                          <span style={{ color: 'var(--text-2)' }}>TK:</span>{' '}
+                          <span style={{ color: TK_STATUS_COLOR[j.tk_status] || 'var(--text-2)', fontWeight: 500 }}>
+                            {TK_STATUS_LABEL[j.tk_status] || '—'}
+                          </span>
+                          <span style={{ color: 'var(--text-3)', marginLeft: 8 }}>· TQ: {fmtDt(j.tq_datetime)}</span>
+                        </div>
+                      </>
+                    }
+                    actions={<>
+                      <button className="btn btn-ghost btn-sm btn-icon" onClick={e => { e.stopPropagation(); setDetailJobId(j.id); }}>🔍</button>
+                    </>}
+                  />
+                )}
                 emptyText="Không có job hoàn thành"
                 extraHeaderCells={<TH />}
                 tableStyle={{ fontSize: 13 }}
