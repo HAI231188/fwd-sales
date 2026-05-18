@@ -232,6 +232,43 @@ const CUS_FILTER_COLS = [
   { key: 'notes',            label: 'Ghi chú' },
 ];
 
+// Phase 6 Phase B2 — Mobile card shell. Mirrors OpsCard (LogDashboardOps:L97).
+// Header (job_code + Loại badge) + Khách line + dashed divider + per-tab `body`
+// + optional action footer with click-propagation stopped. The CUS dashboard
+// only has one FilteredTable (Đang làm / Hoàn thành share it), so this shell
+// is consumed once and the body branches on `tab` / `isConfirmPending` / `isTk`
+// the same way the desktop renderRow does.
+function CusCard({ job: j, body, actions, onOpen, codeColor }) {
+  const imp = j.import_export === 'import';
+  return (
+    <div className="data-card" onClick={onOpen}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, marginBottom: 4 }}>
+        <div style={{ fontWeight: 700, fontSize: 15, color: codeColor || 'var(--info)', fontFamily: 'var(--font-display)' }}>
+          {j.job_code || `#${j.id}`}
+        </div>
+        <span style={{
+          background: imp ? 'rgba(217,119,6,0.12)' : 'rgba(34,197,94,0.12)',
+          color: imp ? '#d97706' : '#16a34a',
+          borderRadius: 6, padding: '2px 10px',
+          fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap',
+        }}>{imp ? 'Nhập' : 'Xuất'}</span>
+      </div>
+      <div style={{ fontSize: 13, color: 'var(--text)', marginBottom: 6 }}>
+        <span style={{ color: 'var(--text-2)', fontSize: 11 }}>Khách: </span>
+        <strong>{j.customer_name || '—'}</strong>
+      </div>
+      <div style={{ height: 1, background: 'var(--border)', margin: '6px 0 8px' }} />
+      {body}
+      {actions && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10, paddingTop: 8, borderTop: '1px dashed var(--border)', alignItems: 'center' }}
+             onClick={e => e.stopPropagation()}>
+          {actions}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function DeadlineRequestModal({ job, onClose, onSubmit }) {
   const zIndex = useModalZIndex();
   const [proposed, setProposed] = useState('');
@@ -416,6 +453,146 @@ export default function LogDashboardCus() {
               <FilteredTable
                 columns={CUS_FILTER_COLS}
                 data={jobs}
+                renderMobileCard={(j) => {
+                  const isTk = j.service_type === 'tk' || j.service_type === 'both';
+                  const isConfirmPending = j.cus_confirm_status === 'pending';
+                  const missing = getMissingFields(j);
+                  const flow = TK_FLOW_OPTIONS.find(o => o.value === j.tk_flow);
+                  const fmtDt = (val) => val
+                    ? new Date(val).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+                    : '—';
+                  return (
+                    <CusCard key={j.id} job={j} onOpen={() => setDetailJobId(j.id)}
+                      codeColor={tab === 'completed' ? 'var(--primary)' : 'var(--info)'}
+                      body={
+                        <>
+                          <div style={{ fontSize: 12, marginBottom: 6 }}>
+                            <span style={{ color: 'var(--text-2)' }}>OPS:</span>{' '}
+                            <strong>{j.ops_name || j.ops_partner || <span style={{ color: 'var(--text-3)' }}>—</span>}</strong>
+                          </div>
+
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 12px', marginBottom: 6, fontSize: 12 }}>
+                            <div><span style={{ color: 'var(--text-2)' }}>ETD:</span> {fmtDate(j.etd)}</div>
+                            <div><span style={{ color: 'var(--text-2)' }}>ETA:</span> {fmtDate(j.eta)}</div>
+                          </div>
+
+                          <div style={{ fontSize: 12, marginBottom: 6 }}>
+                            <span style={{ color: 'var(--text-2)' }}>Deadline:</span>{' '}
+                            <span style={deadlineStyle(j.deadline)}>{fmtDt(j.deadline)}</span>
+                          </div>
+
+                          {isConfirmPending && tab === 'pending' && (
+                            <div style={{ display: 'flex', gap: 6, marginBottom: 8, flexWrap: 'wrap' }} onClick={e => e.stopPropagation()}>
+                              <button className="btn btn-primary btn-sm"
+                                onClick={() => confirmMut.mutate(j.id)}>Xác nhận</button>
+                              <button className="btn btn-ghost btn-sm"
+                                onClick={() => setDeadlineReqJob(j)}>Điều chỉnh deadline</button>
+                            </div>
+                          )}
+
+                          {isTk && (
+                            <div style={{ padding: '8px 10px', background: 'var(--bg)', borderRadius: 8, marginBottom: 8 }}>
+                              <div style={{ fontSize: 11, color: 'var(--text-2)', fontWeight: 600, marginBottom: 6 }}>Tờ khai</div>
+                              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px 12px', fontSize: 12, marginBottom: 6 }}>
+                                <div><span style={{ color: 'var(--text-2)' }}>Số TK:</span> {j.tk_number || '—'}</div>
+                                <div>
+                                  <span style={{ color: 'var(--text-2)' }}>Luồng:</span>{' '}
+                                  {flow
+                                    ? <span style={{ background: flow.bg, color: flow.color, padding: '1px 8px', borderRadius: 10, fontSize: 11, fontWeight: 600 }}>{flow.label}</span>
+                                    : <span style={{ color: 'var(--text-3)' }}>—</span>}
+                                </div>
+                              </div>
+                              <div onClick={e => e.stopPropagation()}>
+                                <label style={{ fontSize: 11, color: 'var(--text-2)', display: 'block', marginBottom: 4 }}>Trạng thái TK</label>
+                                <select value={j.tk_status || 'chua_truyen'}
+                                  style={{ fontSize: 13, padding: '6px 8px', borderRadius: 6, border: '1px solid var(--border)', color: TK_STATUS_COLOR[j.tk_status] || 'var(--text-2)', background: 'transparent', width: '100%' }}
+                                  onChange={e => tkMut.mutate({ jobId: j.id, data: { tk_status: e.target.value } })}>
+                                  {TK_STATUS_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                                </select>
+                              </div>
+                              {(j.tk_datetime || j.tq_datetime) && (
+                                <div style={{ marginTop: 6, fontSize: 11, color: 'var(--text-2)' }}>
+                                  {j.tk_datetime && <>Ngày TK: {fmtDt(j.tk_datetime)}</>}
+                                  {j.tk_datetime && j.tq_datetime && <span style={{ margin: '0 6px' }}>·</span>}
+                                  {j.tq_datetime && <>TQ: {fmtDt(j.tq_datetime)}</>}
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          <div style={{ fontSize: 12, marginBottom: 6 }}>
+                            <div><span style={{ color: 'var(--text-2)' }}>Giao hàng:</span> {fmtDt(j.delivery_datetime)}</div>
+                            <div><span style={{ color: 'var(--text-2)' }}>Địa điểm:</span> {j.delivery_location || '—'}</div>
+                          </div>
+
+                          {tab === 'pending' && missing.length > 0 && (
+                            <div style={{ fontSize: 11, color: 'var(--danger)', padding: '6px 8px', background: 'rgba(239,68,68,0.08)', borderRadius: 6, marginBottom: 8 }}>
+                              ⚠️ Thiếu: {missing.join(', ')}
+                            </div>
+                          )}
+
+                          <div style={{ display: 'flex', gap: 14, alignItems: 'center', flexWrap: 'wrap', fontSize: 12 }}>
+                            <span>
+                              <span style={{ color: 'var(--text-2)' }}>Đặt xe:</span>{' '}
+                              {j.truck_booked
+                                ? <span style={{ color: 'var(--primary)', fontWeight: 600 }}>✓</span>
+                                : <span style={{ color: 'var(--text-3)' }}>—</span>}
+                            </span>
+                            <span>
+                              <span style={{ color: 'var(--text-2)' }}>HT:</span>{' '}
+                              {tab === 'completed'
+                                ? <span style={{ color: 'var(--primary)', fontWeight: 600 }}>✓</span>
+                                : j.tk_completed_at
+                                  ? <span style={{ color: 'var(--primary)', fontWeight: 600, background: 'rgba(34,197,94,0.12)', padding: '2px 6px', borderRadius: 6 }}>✓ TK xong</span>
+                                  : <span style={{ color: 'var(--text-3)' }}>—</span>}
+                            </span>
+                          </div>
+
+                          {tab === 'pending' && !j.tk_completed_at && (() => {
+                            const ok = canComplete(j);
+                            return (
+                              <div style={{ marginTop: 10 }} onClick={e => e.stopPropagation()}>
+                                <button
+                                  className={`btn btn-sm ${ok ? 'btn-primary' : 'btn-ghost'}`}
+                                  style={{ width: '100%', ...(ok ? {} : { color: 'var(--danger)', borderColor: 'var(--danger)' }) }}
+                                  disabled={!ok}
+                                  title={htTooltip(j)}
+                                  onClick={() => completeMut.mutate(j.id)}>
+                                  {ok
+                                    ? '✓ Hoàn thành phần CUS'
+                                    : (missing.length
+                                        ? `Thiếu: ${missing.slice(0, 2).join(', ')}${missing.length > 2 ? '…' : ''}`
+                                        : 'Chưa đủ điều kiện')}
+                                </button>
+                              </div>
+                            );
+                          })()}
+
+                          {j.tk_notes && (
+                            <div style={{ fontSize: 12, color: 'var(--text-2)', marginTop: 8, padding: '6px 8px', background: 'var(--bg)', borderRadius: 6 }}>
+                              {j.tk_notes}
+                            </div>
+                          )}
+                        </>
+                      }
+                      actions={<>
+                        {tab === 'pending' && (
+                          <button className="btn btn-ghost btn-sm btn-icon" title="Yêu cầu xóa job"
+                            style={{ color: 'var(--danger)' }}
+                            onClick={() => {
+                              if (window.confirm(`Gửi yêu cầu xóa job ${j.job_code || '#' + j.id}?`)) {
+                                deleteReqMut.mutate({ id: j.id, reason: null });
+                              }
+                            }}>🗑</button>
+                        )}
+                        <button className="btn btn-ghost btn-sm btn-icon" title="Đặt kế hoạch xe"
+                          onClick={() => setPlanModalJob({ jobId: j.id, jobCode: j.job_code })}>📅</button>
+                        <button className="btn btn-ghost btn-sm btn-icon" title="Chi tiết"
+                          onClick={() => setDetailJobId(j.id)}>🔍</button>
+                      </>}
+                    />
+                  );
+                }}
                 emptyText="Không có job nào"
                 tableStyle={{ fontSize: 13 }}
                 renderRow={(j, i) => {
