@@ -211,6 +211,20 @@ export default function SalesDashboard() {
     // or on user-triggered tick/un-tick (mutations invalidate ['jobs']).
   });
 
+  // M5 — header stat card #7: always-on count of awaiting-revenue jobs so
+  // Sales sees a pile-up the moment they open the dashboard (without having
+  // to click into Tab 3 / Sub-tab 2). 30s polling is calm for a header signal.
+  // Separate cache key ('count_only' discriminator) from revenuePendingQ so
+  // each can keep its own refetch cadence — accepted minor double-fetch on
+  // Sub-tab 2 view in exchange for clear separation of concerns.
+  const revenuePendingCountQ = useQuery({
+    queryKey: ['jobs', 'revenue_pending', 'count_only'],
+    queryFn: () => getJobs({ tab: 'revenue_pending' }),
+    refetchInterval: 30000,
+    enabled: user?.role === 'sales',
+  });
+  const revenuePendingCount = revenuePendingCountQ.data?.length ?? 0;
+
   // M4 — JobDetailModal trigger from any sub-tab.
   const [detailJobId, setDetailJobId] = useState(null);
 
@@ -365,8 +379,11 @@ export default function SalesDashboard() {
           {/* Date filter */}
           <DateFilter {...dateFilter} />
 
-          {/* Stats */}
-          <div className="grid-6" style={{ marginBottom: 32 }}>
+          {/* Stats — M5: switched grid-6 → stat-grid so the 7th card flows
+              cleanly on every screen width (auto-fit, minmax(180px, 1fr)).
+              Mobile collapse rule on .stat-grid matches what .grid-6 used to
+              do (1 column at ≤768px per Phase 1 L21), so no regression. */}
+          <div className="stat-grid" style={{ marginBottom: 32 }}>
             <StatCard label="Đã Booking" value={stats.booked} icon="✅" color="var(--primary)" loading={statsQ.isLoading} onClick={() => setDrilldown('booked')} />
             <StatCard label="Báo giá follow" value={stats.follow_up} icon="🔄" color="var(--warning)" loading={statsQ.isLoading} onClick={() => setDrilldown('follow_up')} />
             <StatCard label="Sắp Chốt" value={stats.closing_soon} icon="⚡" color="#ff6b35" loading={statsQ.isLoading} onClick={() => setDrilldown('closing_soon')} />
@@ -382,6 +399,24 @@ export default function SalesDashboard() {
                 { label: '7 ngày tới',  value: stats.follow_upcoming, color: '#3b82f6' },
                 { label: 'Quá hạn',  value: stats.overdue,         color: '#ef4444' },
               ]}
+            />
+            {/* M5 — Sales revenue-tick header card. Urgency cue follows the
+                existing "Chờ Follow > Quá hạn" pattern: muted at 0, amber at
+                1-5, danger red at >5. Click jumps directly into Tab 3 /
+                Sub-tab 2 so Sales can clear the pile-up without navigation. */}
+            <StatCard
+              label="Yêu cầu nhập thu"
+              value={revenuePendingCount}
+              icon="💰"
+              color={
+                revenuePendingCount === 0
+                  ? 'var(--text-3)'
+                  : revenuePendingCount > 5
+                    ? 'var(--danger)'
+                    : 'var(--warning)'
+              }
+              loading={revenuePendingCountQ.isLoading}
+              onClick={() => { setActiveTab('job_management'); setSubTab('revenue_pending'); }}
             />
           </div>
 

@@ -93,6 +93,7 @@ fwd-sales/
 | TRUCK_BOOKINGS | `/api/truck-bookings/*` + `/api/jobs/:id/truck-booking-status` + `/api/jobs/:id/available-containers` + `/api/jobs/:id/past-delivery-locations` | `routes/truck-bookings.js`, `services/job-completion.js`, `BookingModal.jsx`, `utils/truckBookingStatus.js`, "Quản lý đặt xe" section + summary main grid in `LogDashboardDieuDo.jsx`. **Phase 4**: DD dashboard fully migrated — main tabs filter by `truck_booking_status`, main grid is read-only (booking edits via Quản lý đặt xe), `queryDieuDoStaffStats` + all `staff_dd_*` / `dd_*` drilldown filters source from `get_truck_booking_status()`, BBBG endpoint reads from `truck_bookings` (earliest by planned_datetime), `checkAndCompleteJob` lives in `services/job-completion.js` and is called from `PATCH /api/truck-bookings/:id` on vehicle_number transitions. **Removed**: `PATCH /api/jobs/:id/truck` route, `truck_booked` sync block in `PATCH /:id/tk`, `updateJobTruck` API client, inline truckMut on DD dashboard + JobDetailModal. `job_truck` table still in schema but no longer written by app code — drop deferred to a future phase. `schema.sql` (`truck_bookings`, `truck_booking_containers`, `get_truck_booking_status()`) — multi-truck booking system. One job → N bookings → M containers via the link table (UNIQUE container_id enforces 1 cont = 1 active booking). **Endpoints:** `GET /api/truck-bookings?job_id=N` (any auth) → list with `containers[]`; `POST /api/truck-bookings` (DD + TP) → create with `{job_id, transport_company_id, planned_datetime, delivery_location, cost?, container_ids[], notes?}`, snapshots `transport_name` from `transport_companies` (L13), validates carrier live + containers belong to job + no double-booking; `PATCH /api/truck-bookings/:id` (DD + TP) → updates editable fields, re-snapshots transport_name on carrier change, `vehicle_number` NULL→value sets `completed_at = NOW()` (reverse clears it); `DELETE /api/truck-bookings/:id` (DD + TP) → **Option B**: soft-deletes the booking row + HARD-deletes the link rows (containers become available because `UNIQUE(container_id)` on the link is unconditional). `GET /api/jobs/:id/truck-booking-status` returns `{status}` from the plpgsql function; `GET /api/jobs/:id/available-containers` (DD + TP) returns containers of this job not in any live booking. **`job_truck` is deprecated** (POST `/api/jobs` no longer seeds it; PATCH `/:id/truck` + PATCH `/:id/tk` truck_booked sync block carry deprecation comments). Removal in a later phase once Phase 3 UI migrates. See **L20**. |
 | CUSTOMER_PIPELINE | `/api/customer-pipeline/*` | `routes/customer-pipeline.js`, `CustomerEditModal.jsx`, `CustomerDataPage.jsx` (route `/customers`) — Data khách hàng. Admin (TP + lead) management page: list, edit (company_name + invoice fields + sales_id), soft-delete (TP only). GET returns sales JOIN + job_count (LOWER(j.customer_name)=LOWER(cp.company_name)). PATCH detects sales_id change → applies L14 transfer pattern (DELETE old pipeline + children, UPSERT under new sales, notifications, audit). Mounted at `/api/customer-pipeline` not `/api/customers` to avoid collision with `routes/customers.js` PUT/DELETE on the `customers` (interaction) table. Navbar link visible only to `truong_phong_log` + `lead`. Soft delete via `customer_pipeline.deleted_at` — partial unique index `idx_pipeline_sales_company_active WHERE deleted_at IS NULL` lets the same (sales, company) be re-created post-delete; the L14 UPSERT in `routes/jobs.js` POST `/` matches via `ON CONFLICT (sales_id, LOWER(company_name)) WHERE deleted_at IS NULL`. |
 | EMAIL_SYSTEM | `/api/email/*` + `/api/users/me/gmail-setup` | `schema.sql` (`users.gmail_address`, `users.gmail_app_password_encrypted`, `users.gmail_display_name`, `email_history` table), `utils/encryption.js` (AES-256-GCM, key from `GMAIL_ENCRYPTION_KEY` env var = 64 hex chars), `services/email-sender.js`, `routes/email.js`, `routes/users.js`, `ChangePassword.jsx` Gmail card, `TruckPlanningModal.jsx` Vùng 2 send wiring. **CP1**: DB columns + `email_history` audit table (soft-deletable, JSONB `last_sent_data` snapshot for "có thay đổi" diff). **CP2**: AES-256-GCM helper + `/api/users/me/gmail-setup` GET/PUT/DELETE + extended `/change-password` page. **CP3**: nodemailer Gmail SMTP send via `POST /api/email/send-planning` (DD+TPL), `GET /api/email/history` (DD+TPL+lead), rendered Vietnamese subject + body for `mail_type ∈ ('new','cancel')`. **Domain whitelist**: `@gmail.com`, `@googlemail.com`, `@slbglobal.com` (Google Workspace). `email_cc` parsed via L16. SMTP creds AES-256-GCM at rest; transcript/log never see plaintext. **Deferred**: BBBG PDF attachment (CP4), per-card real status logic + HỦY workflow trigger UI + edit-after-send notifications (CP5). |
+| SALES_REVENUE_TICK | `GET /api/jobs?tab=revenue_pending` + `GET /api/jobs?tab=revenue_entered` + `PATCH /api/jobs/:id/revenue-tick` + `DELETE /api/jobs/:id/revenue-tick` | `schema.sql` (`jobs.revenue_entered_at TIMESTAMPTZ NULL`, `jobs.revenue_entered_by INTEGER NULL FK users(id) ON DELETE SET NULL`, partial composite index `idx_jobs_revenue_status` on `(sales_id, completed_at, revenue_entered_at) WHERE deleted_at IS NULL`), `routes/jobs.js` (4 tab modes in `GET /` — `pending`/`completed`/`revenue_pending`/`revenue_entered` — plus 2 tick endpoints; unified Sales role guard scopes `j.sales_id = req.user.id` on every tab), `pages/SalesDashboard.jsx` Tab 3 "Quản lý công việc" with 3 sub-tabs (🔵 Job pending / 🟡 Yêu cầu nhập thu / 🟢 Đã nhập thu), `SalesCard` mobile card frame (Phase B3 style), header stat card #7 "💰 Yêu cầu nhập thu" with 30s polling + amber→red urgency cue at count >5. **M1**: schema. **M2**: backend endpoints + Sales filter promotion + closes prior `tab=completed` cross-sales exposure gap. **M3**: frontend skeleton + sub-tab nav + lazy queries. **M4**: 12/9/9 column sets + tick/un-tick action buttons + 3 mobile card variants + `revenue_entered_by_name` JOIN on `GET /api/jobs`. **M5**: header stat card #7 + this documentation. Sales ticks completed LOG jobs as "đã nhập thu" after entering revenue into external accounting software — no amount stored, just a timestamp + acting user. Un-tick allowed anytime (no time limit). See L22 + Note below. |
 
 ### Future modules (do not build yet)
 
@@ -477,6 +478,36 @@ Applies to: `truck_bookings` + `truck_booking_containers` (current). Future cand
 - `QuoteForm` 4-col PA option rows
 - Touch-friendly replacement for `title="..."` tooltips on `CustomerDataPage`
 
+### L22 — Tab modes on a polymorphic GET endpoint demand role-scoping consistency across ALL modes
+
+**Root cause pattern:** When `GET /api/jobs` was built, it had two tabs (`pending` / `completed`). The `pending` branch role-scoped every consumer (`role==='sales'` → filter `j.sales_id`; LOG roles → filter by assignment). The `completed` branch deliberately skipped role-scoping with the comment *"Feature 1: no role filtering for completed tab — all LOG roles see all completed jobs"*. That comment was correct for the LOG team — TP/CUS/OPS/DD should all see every completed job — but it silently violated Sales role-scoping: a `role='sales'` user hitting `tab=completed` saw every sales' jobs, not just their own. This sat as a latent data-exposure bug until M2 introduced two NEW tab modes (`revenue_pending` / `revenue_entered`) and forced an audit.
+
+**Pattern:** When adding a new tab mode to a polymorphic GET endpoint, audit ALL existing tab branches for role-scoping consistency BEFORE adding the new branch. If any role's filter is conditional on which tab is active, ask whether that conditional is intentional (different audiences per tab) or accidental (the original author only thought about one tab). Sales filtering is almost always wanted-on-every-tab; LOG role filtering is sometimes per-tab (e.g., TP sees all on completed but CUS sees only their own on pending).
+
+**Concrete shape** (used by `routes/jobs.js` `GET /` after M2):
+1. Hoist role-based scoping ABOVE the per-tab `if/else if` chain when it applies to every tab. Pattern:
+   ```js
+   conditions.push('j.deleted_at IS NULL');
+   if (role === 'sales') {
+     conditions.push(`j.sales_id = $${idx++}`);  // ALWAYS scope sales
+     params.push(userId);
+   }
+   if (isCompleted) { /* date filter, no further role filter */ }
+   else if (isRevenuePending) { /* etc */ }
+   ...
+   else { /* pending — LOG-role assignment filter goes here, sales already handled */ }
+   ```
+2. The unified guard fires on every tab; per-tab branches only add tab-specific predicates (date range, status, revenue_entered_at IS NULL, etc.). LOG roles still see all completed jobs by *intentional omission* — but the absence is now visible at the top of the handler, not hidden inside an `else` branch.
+3. Tab-aware `ORDER BY` lives next to the per-tab predicates (`isRevenuePending` → `j.completed_at ASC` for FIFO; `isRevenueEntered` → `j.revenue_entered_at DESC` for newest tick first).
+
+**Rules:**
+1. When adding a new tab mode, audit ALL existing tab branches for the role you're targeting. Don't assume previous authors closed every role-scope hole.
+2. If a role's filter applies to every tab (Sales scoping is the canonical example), hoist it ABOVE the tab branching. This makes the intent visible to future readers and eliminates the risk of the next tab-mode addition forgetting to re-apply it.
+3. If a role's filter intentionally applies to *only some* tabs (LOG team sees-all on completed by design), document why in a code comment AT the omission site so a future audit doesn't accidentally "fix" it.
+4. The same pattern applies to drilldown endpoints, search endpoints, and any other polymorphic SELECT that branches on a query param.
+
+Applies to: `routes/jobs.js GET /` (current). Future candidates: any new tab-mode addition on any polymorphic endpoint (`/api/reports`, `/api/customers`, `/api/quotes` if they grow tab modes).
+
 ### Note — `jobs.import_export` (Loại lô)
 
 Two-value enum on `jobs`: `'export'` (Hàng xuất, default) or `'import'` (Hàng nhập). Selected at create time in `CreateJobModal` — pill segment in the TOP-ROW grid alongside Mã Job / Mã SI / Loại dịch vụ / Điểm đến (the earlier placement below the FCL/LCL toggle was easy to miss; do not move it back). CHECK constraint enforces values; column is `NOT NULL DEFAULT 'export'` so legacy rows auto-fill on `ADD COLUMN`. **Not editable post-create** — `PUT /api/jobs/:id` does not list it in `FIELDS`. Frontend displays a tiny badge (Xuất green / Nhập amber) in all 4 LOG dashboards' job lists, and a readonly Row in `JobDetailModal` "Thông tin chung" section.
@@ -499,6 +530,40 @@ The old "+ Thêm cont / ✕ Xóa cont" UX in `CreateJobModal` was replaced with 
 **Backend contract unchanged.** POST `/api/jobs` still reads `containers` as `Array<{cont_type, cont_number, seal_number}>` and the row-by-row INSERT in `routes/jobs.js:1006-1013` still skips rows with empty `cont_type`. The wire format is preserved; only the in-modal authoring UX changed.
 
 **Out of scope (not touched in this commit):** `JobDetailModal` edit UI still uses the old per-row `cont_type` dropdown + manual add/remove. If we adopt the matrix UX there too, copy the `contQty` + `setQty` pattern verbatim and reset matrix from `job.containers` group-by-type counts in `buildDraft`.
+
+### Note — Sales "Quản lý công việc" tab (revenue-tick handoff)
+
+3rd tab on `/my-dashboard` (after "📋 Báo cáo của tôi" + "📊 Danh sách hoạt động"). Tracks LOG-completed jobs through the revenue-recognition lifecycle so Sales has a visible queue of "jobs the LOG team finished — I owe Accounting a debit note for these." Crucially, **the revenue amount is NOT entered in this app** — it's entered in external accounting software. The in-app tick is just a flag (`revenue_entered_at` timestamp + `revenue_entered_by` user id) so Accounting can pull the queue without chasing Sales.
+
+**Schema** (added M1):
+- `jobs.revenue_entered_at TIMESTAMPTZ NULL` — timestamp when Sales ticked. NULL = not yet ticked.
+- `jobs.revenue_entered_by INTEGER NULL REFERENCES users(id) ON DELETE SET NULL` — acting sales user.
+- `idx_jobs_revenue_status` — partial composite index on `(sales_id, completed_at, revenue_entered_at) WHERE deleted_at IS NULL`. Serves all 3 sub-tab queries plus the always-on header count query.
+
+**Sub-tab queries** (all SCOPE BY `j.sales_id = current_user.id`; see L22):
+
+| Sub-tab | Backend `tab` | WHERE | ORDER BY | Polling |
+|---|---|---|---|---|
+| 🔵 Job pending | `pending` | `status='pending' AND sales_id=$user` | `j.created_at DESC` | 5s visible / 30s hidden |
+| 🟡 Yêu cầu nhập thu | `revenue_pending` | `status='completed' AND revenue_entered_at IS NULL` | `j.completed_at ASC` (FIFO) | 5s visible / 30s hidden |
+| 🟢 Đã nhập thu | `revenue_entered` | `revenue_entered_at IS NOT NULL` + date filter on `j.completed_at` (default last 7d) | `j.revenue_entered_at DESC` | none (date-bound) |
+
+**Mutating endpoints**:
+- `PATCH /api/jobs/:id/revenue-tick` (sales-only, own job, completed, not yet ticked). UPDATE sets `revenue_entered_at = NOW(), revenue_entered_by = $user`. Audit row via `recordHistory('revenue_entered_at', null, NOW)`.
+- `DELETE /api/jobs/:id/revenue-tick` (sales-only, own job, currently ticked). **No time limit** on un-tick — the column flips back to NULL whenever Sales notices an error. Audit row via `recordHistory('revenue_entered_at', prevTs, null)`.
+
+Both endpoints return the bare `jobs.*` row (RETURNING `*`). Frontend invalidates `queryKey: ['jobs']` on success so all 3 sub-tab counts + header card refetch atomically.
+
+**Header stat card #7** (added M5): `<StatCard label="Yêu cầu nhập thu" icon="💰" />` reads from a separate `useQuery({ queryKey: ['jobs','revenue_pending','count_only'], refetchInterval: 30000, enabled: user?.role === 'sales' })`. Color urgency cue: muted at 0, amber at 1-5, danger red at >5. Click → `setActiveTab('job_management') + setSubTab('revenue_pending')` so Sales jumps directly to the queue. The `'count_only'` discriminator keeps this query separate from the in-tab Sub-tab 2 query (different polling cadences).
+
+**Mobile**: `SalesCard` helper (mirror of `TPCard`/`CusCard`/`OpsCard` from Phase B1-B3) + 3 `renderMobileCard` variants per sub-tab — Phase B3-style card list at ≤768px with the same tick/un-tick actions as desktop.
+
+**Rules to honour going forward**:
+1. The revenue-tick lifecycle is Sales-only by design. Don't add LOG-role write paths; if Accounting needs visibility, expose a read-only endpoint scoped to `lead` (Trưởng Phòng Sales) or a future ACCOUNTING role.
+2. Don't store revenue amounts in the app — the spec is deliberately minimal. If an amount is ever required, it belongs in a new `job_revenue` child table, not on the `jobs` row.
+3. The un-tick path has NO time limit on purpose. Don't add a 24h or 7d cap; Sales need to correct errors whenever they're spotted, and Accounting reverses debit notes the same way.
+4. Audit trail for ticks lives in `job_history` rows under `field_name = 'revenue_entered_at'`. Don't create a parallel `revenue_history` table.
+5. When the team needs an aggregated view across all sales (e.g. "how many jobs are awaiting revenue this quarter"), TP/lead role can hit `GET /api/jobs?tab=revenue_pending` without a `sales_id` filter — the unified Sales guard at L22 only applies to `role='sales'`, so a TP request sees everyone's queue.
 
 ### L15 — Invoice info on customer_pipeline (snapshot semantics, preserve-on-conflict)
 
