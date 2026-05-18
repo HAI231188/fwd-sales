@@ -128,7 +128,8 @@ export default function FilteredTable({
                     <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
                       <span>{col.label}</span>
                       {col.filterType && (
-                        <button onClick={e => { e.stopPropagation(); setOpenFilter(isOpen ? null : col.key); }}
+                        <button className="filter-dot-btn"
+                          onClick={e => { e.stopPropagation(); setOpenFilter(isOpen ? null : col.key); }}
                           style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '1px 3px', display: 'flex', alignItems: 'center' }}>
                           <span style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', background: active ? 'var(--primary)' : '#d1d5db', flexShrink: 0 }} />
                         </button>

@@ -378,6 +378,24 @@ h1, h2, h3, h4 { font-family: var(--font-display); font-weight: 600; color: var(
   /* Phase 2 — table → card-list swap */
   .data-table-desktop-only   { display: none; }
   .data-card-list-mobile-only { display: flex; }
+
+  /* Phase A — touch target quick wins (mobile only) */
+  .btn-sm {
+    padding: 10px 14px !important;
+    font-size: 13px !important;
+    min-height: 36px !important;
+  }
+  .btn-icon {
+    min-width: 36px !important;
+    min-height: 36px !important;
+  }
+  .filter-dot-btn {
+    min-width: 36px !important;
+    min-height: 36px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+  }
 }
 
 @media (max-width: 480px) {
