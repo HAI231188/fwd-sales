@@ -186,10 +186,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_pipeline_delete_requests_pending
 -- LOG Module
 -- ============================================================
 
--- Expand role check to include LOG roles
+-- Expand role check to include LOG roles + KT (Accounting, added KT1).
+-- 'ke_toan' is a standalone role family — NOT part of LOG_ROLES arrays in
+-- code; the KT dashboard is its own route at /accounting-dashboard.
 ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check;
 ALTER TABLE users ADD CONSTRAINT users_role_check
-  CHECK (role IN ('sales', 'lead', 'truong_phong_log', 'dieu_do', 'cus', 'cus1', 'cus2', 'cus3', 'ops'));
+  CHECK (role IN ('sales', 'lead', 'truong_phong_log', 'dieu_do', 'cus', 'cus1', 'cus2', 'cus3', 'ops', 'ke_toan'));
 
 CREATE TABLE IF NOT EXISTS jobs (
   id                SERIAL PRIMARY KEY,
@@ -795,6 +797,60 @@ ALTER TABLE jobs ADD COLUMN IF NOT EXISTS revenue_entered_by INTEGER REFERENCES 
 CREATE INDEX IF NOT EXISTS idx_jobs_revenue_status
   ON jobs (sales_id, completed_at, revenue_entered_at)
   WHERE deleted_at IS NULL;
+
+-- KT1 (Accounting / Kế toán công nợ) — lifecycle columns on jobs.
+-- Sales ticks `revenue_entered_at` (M1-M5 feature) → KT picks up the job and
+-- walks it through 3 stages: kiểm tra → gửi debit note → nhận thanh toán.
+-- Plus a "trả về" return-path (returned_to + returned_reason) so KT can bounce
+-- a job back to LOG or Sales when paperwork is wrong. All columns nullable —
+-- NULL means "this stage hasn't happened yet." Existing job rows stay NULL.
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS accounting_checked_at TIMESTAMPTZ;
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS accounting_checked_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS debit_sent_at         TIMESTAMPTZ;
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS debit_sent_by         INTEGER REFERENCES users(id) ON DELETE SET NULL;
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS payment_received_at   TIMESTAMPTZ;
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS payment_amount        NUMERIC(15,2);
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS payment_received_by   INTEGER REFERENCES users(id) ON DELETE SET NULL;
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS accounting_note       TEXT;
+-- returned_to + returned_reason drive the "🟠 Trả về" orange row tint.
+-- returned_to ∈ ('log','sales') — VARCHAR(10) leaves room for a future
+-- 'cus' return target if needed.
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS returned_to           VARCHAR(10);
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS returned_reason       TEXT;
+
+-- Composite partial index — supports the KT 4-tab dashboard queries off
+-- (accounting_checked_at, debit_sent_at, payment_received_at). Partial WHERE
+-- deleted_at IS NULL aligns with L17 + keeps the index small.
+-- Serves:
+--   * "Chờ kiểm tra"  WHERE accounting_checked_at IS NULL
+--   * "Chờ gửi debit" WHERE accounting_checked_at IS NOT NULL AND debit_sent_at IS NULL
+--   * "Chờ TT"        WHERE debit_sent_at IS NOT NULL AND payment_received_at IS NULL
+--   * "Đã TT"         WHERE payment_received_at IS NOT NULL
+CREATE INDEX IF NOT EXISTS idx_jobs_accounting_status
+  ON jobs (accounting_checked_at, debit_sent_at, payment_received_at)
+  WHERE deleted_at IS NULL;
+
+-- Partial index for the orange-tag lookup: rows where KT has bounced the job
+-- back to LOG or Sales. Tiny index (only non-null rows participate).
+CREATE INDEX IF NOT EXISTS idx_jobs_returned_to
+  ON jobs (returned_to)
+  WHERE deleted_at IS NULL AND returned_to IS NOT NULL;
+
+-- ROLLBACK (KT1):
+-- DROP INDEX IF EXISTS idx_jobs_returned_to;
+-- DROP INDEX IF EXISTS idx_jobs_accounting_status;
+-- ALTER TABLE jobs DROP COLUMN IF EXISTS returned_reason;
+-- ALTER TABLE jobs DROP COLUMN IF EXISTS returned_to;
+-- ALTER TABLE jobs DROP COLUMN IF EXISTS accounting_note;
+-- ALTER TABLE jobs DROP COLUMN IF EXISTS payment_received_by;
+-- ALTER TABLE jobs DROP COLUMN IF EXISTS payment_amount;
+-- ALTER TABLE jobs DROP COLUMN IF EXISTS payment_received_at;
+-- ALTER TABLE jobs DROP COLUMN IF EXISTS debit_sent_by;
+-- ALTER TABLE jobs DROP COLUMN IF EXISTS debit_sent_at;
+-- ALTER TABLE jobs DROP COLUMN IF EXISTS accounting_checked_by;
+-- ALTER TABLE jobs DROP COLUMN IF EXISTS accounting_checked_at;
+-- (To remove the role: re-issue users_role_check without 'ke_toan' after
+--  ensuring no rows have that role.)
 
 -- Job-level booking status — Phase 5 CP4.5.1.
 -- CP4.5.1: 'hoan_thanh' is now driven by jobs.completed_at IS NOT NULL (the
