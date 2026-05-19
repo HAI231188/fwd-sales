@@ -76,6 +76,10 @@ export const createJob = (data) => api.post('/jobs', data);
 // M4 — Sales revenue-tick: mark a LOG-completed job as "đã nhập thu" / un-mark.
 export const tickJobRevenue   = (id) => api.patch(`/jobs/${id}/revenue-tick`);
 export const untickJobRevenue = (id) => api.delete(`/jobs/${id}/revenue-tick`);
+
+// KT3 — Accounting dashboard data (role 'ke_toan' only — backend enforces).
+export const getAccountingStats = () => api.get('/accounting/stats');
+export const getAccountingJobs  = (params) => api.get('/accounting/jobs', { params });
 export const getJob = (id) => api.get(`/jobs/${id}`);
 export const updateJob = (id, data) => api.put(`/jobs/${id}`, data);
 export const assignJob = (id, data) => api.post(`/jobs/${id}/assign`, data);

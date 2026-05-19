@@ -16,6 +16,9 @@ const ROLE_LABEL = {
   cus2: { icon: '📋', text: 'Nhân Viên CUS', color: '#0891b2' },
   cus3: { icon: '📋', text: 'Nhân Viên CUS', color: '#0891b2' },
   ops: { icon: '⚙️', text: 'Nhân Viên OPS', color: '#16a34a' },
+  // KT3 — Accounting role pill. Teal #0891b2 matches the seed_ke_toan
+  // default avatar color. '💼' (briefcase) signals back-office finance role.
+  ke_toan: { icon: '💼', text: 'Kế Toán', color: '#0891b2' },
 };
 
 export default function Navbar() {
@@ -51,6 +54,9 @@ export default function Navbar() {
   const goLogoHome = () => {
     setMenuOpen(false);
     if (user?.role === 'lead') navigate('/dashboard');
+    // KT3 — 'ke_toan' is its own role family (not LOG_ROLES). Check before
+    // the LOG fallback so the logo link sends KT to /accounting-dashboard.
+    else if (user?.role === 'ke_toan') navigate('/accounting-dashboard');
     else if (LOG_ROLES.includes(user?.role)) navigate('/log-dashboard');
     else navigate('/my-dashboard');
   };

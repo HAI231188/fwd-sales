@@ -11,6 +11,7 @@ import LogDashboardCus from './pages/LogDashboardCus';
 import LogDashboardOps from './pages/LogDashboardOps';
 import TransportCompaniesPage from './pages/TransportCompaniesPage';
 import CustomerDataPage from './pages/CustomerDataPage';
+import AccountingDashboard from './pages/AccountingDashboard';
 
 const LOG_ROLES = ['truong_phong_log', 'dieu_do', 'cus', 'cus1', 'cus2', 'cus3', 'ops'];
 
@@ -39,6 +40,9 @@ function RootRedirect() {
   const { user } = useAuth();
   if (!user) return <Navigate to="/login" replace />;
   if (user.role === 'lead') return <Navigate to="/dashboard" replace />;
+  // KT3 — 'ke_toan' is its own standalone role (NOT part of LOG_ROLES);
+  // check before the LOG fallback so it routes to the accounting dashboard.
+  if (user.role === 'ke_toan') return <Navigate to="/accounting-dashboard" replace />;
   if (LOG_ROLES.includes(user.role)) return <Navigate to="/log-dashboard" replace />;
   return <Navigate to="/my-dashboard" replace />;
 }
@@ -99,6 +103,11 @@ export default function App() {
           <Route path="/customers" element={
             <ProtectedRoute roles={['truong_phong_log', 'lead']}>
               <CustomerDataPage />
+            </ProtectedRoute>
+          } />
+          <Route path="/accounting-dashboard" element={
+            <ProtectedRoute roles={['ke_toan']}>
+              <AccountingDashboard />
             </ProtectedRoute>
           } />
           <Route path="*" element={<Navigate to="/" replace />} />

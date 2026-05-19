@@ -144,6 +144,75 @@ router.get('/jobs', async (req, res) => {
   }
 });
 
+// ─── GET /api/accounting/stats ─────────────────────────────────────────────
+// KT3 — header KPIs + 30-day completion histogram for the dashboard.
+// Single FILTER-COUNT query for the 5 buckets keeps it cheap (one scan of
+// the jobs table); the 30-day histogram is a separate GROUP BY day. JS
+// gap-fills missing days so the frontend always gets exactly 30 entries.
+router.get('/stats', async (req, res) => {
+  try {
+    const [counts, hist] = await Promise.all([
+      db.query(`
+        SELECT
+          COUNT(*) FILTER (
+            WHERE j.completed_at IS NOT NULL
+              AND j.revenue_entered_at IS NOT NULL
+              AND j.accounting_checked_at IS NULL
+          )::int AS pending_check,
+          COUNT(*) FILTER (
+            WHERE j.accounting_checked_at IS NOT NULL
+              AND j.debit_sent_at IS NULL
+          )::int AS checked,
+          COUNT(*) FILTER (
+            WHERE j.debit_sent_at IS NOT NULL
+              AND j.payment_received_at IS NULL
+          )::int AS debit_sent,
+          COUNT(*) FILTER (
+            WHERE j.debit_sent_at IS NOT NULL
+              AND j.payment_received_at IS NULL
+              AND j.debit_sent_at < NOW() - INTERVAL '${OVERDUE_DAYS} days'
+          )::int AS debit_sent_overdue,
+          COUNT(*) FILTER (
+            WHERE j.payment_received_at IS NOT NULL
+          )::int AS paid
+        FROM jobs j
+        WHERE j.deleted_at IS NULL
+      `),
+      db.query(`
+        SELECT
+          TO_CHAR(DATE_TRUNC('day', j.completed_at), 'YYYY-MM-DD') AS date,
+          COUNT(*)::int AS count
+        FROM jobs j
+        WHERE j.deleted_at IS NULL
+          AND j.completed_at IS NOT NULL
+          AND j.completed_at >= NOW() - INTERVAL '30 days'
+        GROUP BY DATE_TRUNC('day', j.completed_at)
+        ORDER BY date ASC
+      `),
+    ]);
+
+    // Gap-fill: produce exactly 30 entries from (today - 29) through today,
+    // substituting count=0 for days the SQL didn't return. Done in JS rather
+    // than SQL (generate_series) for portability + clearer intent.
+    const map = new Map(hist.rows.map(r => [r.date, r.count]));
+    const completed_per_day_30d = [];
+    const today = new Date();
+    for (let i = 29; i >= 0; i--) {
+      const d = new Date(today);
+      d.setDate(d.getDate() - i);
+      const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      completed_per_day_30d.push({ date: dateStr, count: map.get(dateStr) || 0 });
+    }
+
+    res.json({
+      counts: counts.rows[0],
+      completed_per_day_30d,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── PATCH /api/jobs/:id/accounting-check ──────────────────────────────────
 // KT marks the job as reviewed. SIDE EFFECT: clears returned_to + reason
 // (implicit "issue resolved" path — see KT2 spec PART C2 note).
