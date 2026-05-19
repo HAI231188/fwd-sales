@@ -58,6 +58,82 @@ export default function CreateJobModal({ onClose, onCreated }) {
   const toggleOs = k => setForm(f => ({ ...f, other_services: { ...f.other_services, [k]: !f.other_services[k] } }));
   const locked = !!selectedCustomer;
 
+  // ─── Unsaved-data guard for accidental closes ──────────────────────────
+  // Returns true when the user has typed/picked anything past the form's
+  // factory defaults. Used by `requestClose` (overlay-click + Esc) to ask
+  // for confirmation. The explicit close paths (X button, Hủy button,
+  // success-after-save) bypass this and call onClose directly.
+  //
+  // Default-equals-empty rule: a field counts as "user input" only if its
+  // current value diverges from INIT_FORM[key]. For text fields we additionally
+  // require trim length >= 3, so a 1-2 char typo doesn't lock the user out.
+  const hasUserInput = () => {
+    // Plain text fields (all start empty in INIT_FORM). Includes date-string
+    // fields (etd/eta/deadline/han_lenh) which are 'YYYY-MM-DD' → 10 chars
+    // when picked, so they'll naturally pass the >=3 check.
+    const STRING_FIELDS = [
+      'job_code', 'si_number',
+      'customer_name', 'customer_address', 'customer_tax_code',
+      'company_full_name', 'invoice_address', 'invoice_tax_code',
+      'pol', 'pod', 'mbl_no', 'hbl_no',
+      'etd', 'eta', 'tons', 'cbm', 'kg', 'so_kien',
+      'deadline', 'han_lenh', 'destination',
+      'shipper', 'vessel', 'voy', 'shipping_line', 'goods_description',
+    ];
+    if (STRING_FIELDS.some(k => String(form[k] ?? '').trim().length >= 3)) return true;
+
+    // Dropdowns / radios — only count as input when actively changed from default.
+    if (form.service_type   !== INIT_FORM.service_type)   return true;
+    if (form.import_export  !== INIT_FORM.import_export)  return true;
+    if (form.sales_id && form.sales_id !== INIT_FORM.sales_id) return true;
+    if (cargoType !== 'fcl') return true;
+
+    // Customer picker — picking a customer or switching to "Khách mới" tab.
+    if (selectedCustomer) return true;
+    if (searchMode !== 'search') return true;
+
+    // Other-services checkbox set — any ticked.
+    if (Object.values(form.other_services || {}).some(Boolean)) return true;
+
+    // FCL container quantity matrix — any non-zero count.
+    if (Object.values(contQty || {}).some(n => Number(n) > 0)) return true;
+
+    // Container detail rows with cont_number or seal typed in.
+    if (containers.some(c =>
+      String(c.cont_number || '').trim() || String(c.seal_number || '').trim()
+    )) return true;
+
+    return false;
+  };
+
+  // Confirm-on-accidental-close. Bound to overlay click + Esc key only —
+  // NOT the X / Hủy buttons (explicit user intent).
+  const requestClose = () => {
+    if (hasUserInput()) {
+      const ok = window.confirm(
+        'Bạn đang nhập dở. Đóng modal sẽ mất dữ liệu đã nhập.\n\nVẫn muốn đóng?'
+      );
+      if (ok) onClose();
+    } else {
+      onClose();
+    }
+  };
+
+  // Keep requestClose accessible from the document-level keydown listener
+  // without re-attaching on every render. The ref always points at the
+  // latest closure so it sees the current form/cargoType/etc state.
+  const requestCloseRef = useRef(requestClose);
+  requestCloseRef.current = requestClose;
+
+  // Esc key — call requestClose. The modal previously had no Esc handler,
+  // so this is opt-in: pressing Esc on a dirty form now prompts instead of
+  // silently losing data; pressing Esc on a clean form closes immediately.
+  useEffect(() => {
+    const handler = (e) => { if (e.key === 'Escape') requestCloseRef.current?.(); };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, []);
+
   // Switching Loại lô also rewrites han_lenh so the value survives across the
   // date ↔ datetime-local input switch:
   //   xuất → nhập: 'YYYY-MM-DDTHH:MM' → 'YYYY-MM-DD'   (drop time per spec)
@@ -256,7 +332,7 @@ export default function CreateJobModal({ onClose, onCreated }) {
   }
 
   return createPortal((
-    <div className="modal-overlay" style={{ zIndex }} onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+    <div className="modal-overlay" style={{ zIndex }} onClick={e => { if (e.target === e.currentTarget) requestClose(); }}>
       <div className="modal modal-lg" style={{ maxHeight: '92vh' }}>
         <div className="modal-header">
           <h3>Tạo Job Mới</h3>
