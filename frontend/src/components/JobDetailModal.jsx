@@ -471,8 +471,15 @@ export default function JobDetailModal({ jobId, onClose }) {
   const canEditTk = ['cus','cus1','cus2','cus3'].includes(user?.role);
   const canEditStatus = user?.role === 'ops';
   const canEditTruck = user?.role === 'dieu_do';
-  const canEditJob = user?.role !== 'ops';
+  // KT4 — ke_toan added to the read-only allow-list. The KT dashboard
+  // opens this modal from clickable Số job cells; KT should see all info
+  // but never trigger LOG-side edits. The "Chỉnh sửa" / "Xóa" buttons in
+  // the modal header (lines ~590-591) are gated on canEditJob and will
+  // therefore hide for KT users. KT5 will add KT-specific action buttons
+  // (Đã kiểm tra / Trả về LOG / Trả về Sales) in their place.
+  const canEditJob = user?.role !== 'ops' && user?.role !== 'ke_toan';
   const isTP = user?.role === 'truong_phong_log';
+  const isKT = user?.role === 'ke_toan';
 
   const [editMode, setEditMode] = useState(false);
   const [draft, setDraft] = useState(null);

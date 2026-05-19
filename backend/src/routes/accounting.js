@@ -68,7 +68,7 @@ async function fetchJobForKt(client, id) {
 // fields KT actually needs — no containers / ops_tasks / first_booking
 // blobs (the KT page doesn't manage those).
 router.get('/jobs', async (req, res) => {
-  const { tab: rawTab, overdue } = req.query;
+  const { tab: rawTab, overdue, from_date, to_date } = req.query;
   const tab = rawTab || 'pending_check';
   const ALLOWED_TABS = ['pending_check', 'checked', 'debit_sent', 'paid'];
   if (!ALLOWED_TABS.includes(tab)) {
@@ -100,6 +100,18 @@ router.get('/jobs', async (req, res) => {
       break;
     case 'paid':
       conditions.push('j.payment_received_at IS NOT NULL');
+      // KT4 — date filter applies to j.payment_received_at on the paid tab.
+      // Default last 30 days if neither bound supplied. Sanitize the date
+      // strings the same way jobs.js does for completed-tab dates.
+      if (from_date) {
+        conditions.push(`j.payment_received_at >= '${from_date.replace(/'/g, '')}'::date`);
+      }
+      if (to_date) {
+        conditions.push(`j.payment_received_at < '${to_date.replace(/'/g, '')}'::date + INTERVAL '1 day'`);
+      }
+      if (!from_date && !to_date) {
+        conditions.push(`j.payment_received_at >= NOW() - INTERVAL '30 days'`);
+      }
       orderBy = 'j.payment_received_at DESC';
       break;
   }
