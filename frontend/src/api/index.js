@@ -80,6 +80,16 @@ export const untickJobRevenue = (id) => api.delete(`/jobs/${id}/revenue-tick`);
 // KT3 — Accounting dashboard data (role 'ke_toan' only — backend enforces).
 export const getAccountingStats = () => api.get('/accounting/stats');
 export const getAccountingJobs  = (params) => api.get('/accounting/jobs', { params });
+
+// KT5 — 5 KT mutation endpoints. Backend lives in routes/accounting.js
+// (jobActionsRouter), mounted at /api/jobs. PATCH for the 3 lifecycle
+// transitions; POST for the 2 return-back paths (set returned_to +
+// returned_reason on the job rather than transitioning a status).
+export const accountingCheck           = (id)         => api.patch(`/jobs/${id}/accounting-check`);
+export const accountingDebitSent       = (id, sentAt) => api.patch(`/jobs/${id}/debit-sent`,       { sent_at: sentAt });
+export const accountingPaymentReceived = (id, recvAt) => api.patch(`/jobs/${id}/payment-received`, { received_at: recvAt });
+export const accountingReturnToLog     = (id, reason) => api.post (`/jobs/${id}/return-to-log`,    { reason });
+export const accountingReturnToSales   = (id, reason) => api.post (`/jobs/${id}/return-to-sales`,  { reason });
 export const getJob = (id) => api.get(`/jobs/${id}`);
 export const updateJob = (id, data) => api.put(`/jobs/${id}`, data);
 export const assignJob = (id, data) => api.post(`/jobs/${id}/assign`, data);

@@ -195,8 +195,21 @@ function InlineDeadline({ value, onSave }) {
 // passes already-bound action buttons.
 function TPCard({ job: j, body, actions, onOpen, codeColor }) {
   const imp = j.import_export === 'import';
+  // KT5 — KT bounced this job back to LOG. Paint left border + show a chip
+  // header so the TP sees it without scrolling into row internals.
+  const isReturned = j.returned_to === 'log';
   return (
-    <div className="data-card" onClick={onOpen}>
+    <div className="data-card" onClick={onOpen}
+      style={isReturned ? { borderLeft: '4px solid #ea580c' } : undefined}>
+      {isReturned && (
+        <div style={{
+          background: 'rgba(249,115,22,0.10)',
+          padding: '6px 8px', borderRadius: 4, marginBottom: 8,
+          fontSize: 11, color: '#9a3412', fontWeight: 500,
+        }}>
+          🟠 KT trả về — Lý do: {j.returned_reason || '(không có)'}
+        </div>
+      )}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, marginBottom: 4 }}>
         <div style={{ fontWeight: 700, fontSize: 15, color: codeColor || 'var(--info)', fontFamily: 'var(--font-display)' }}>
           {j.job_code || `#${j.id}`}
@@ -853,18 +866,29 @@ export default function LogDashboardTP() {
                   tableStyle={{ fontSize: 13 }}
                   renderRow={(j, i) => {
                     const waitingAssign = (j.service_type === 'tk' || j.service_type === 'both') && !j.cus_id;
+                    // KT5 — highest-priority row tint: KT has returned this job
+                    // to LOG (returned_to='log' on the job). Overrides tk_flow
+                    // and waiting-assign tints because the action item now is
+                    // "fix what KT flagged" not "fill in TK info".
+                    const ktReturnedBg = j.returned_to === 'log' ? 'rgba(249,115,22,0.10)' : '';
                     const tkBg = j.tk_flow === 'xanh' ? 'rgba(34,197,94,0.06)' :
                                  j.tk_flow === 'vang' ? 'rgba(217,119,6,0.06)' :
                                  j.tk_flow === 'do'   ? 'rgba(239,68,68,0.06)' :
                                  j.tk_status === 'chua_truyen' ? 'rgba(239,68,68,0.04)' : '';
-                    const rowBg = tkBg || (waitingAssign ? 'rgba(217,119,6,0.04)'
+                    const rowBg = ktReturnedBg || tkBg || (waitingAssign ? 'rgba(217,119,6,0.04)'
                       : j.deadline && new Date(j.deadline) < Date.now() ? 'rgba(239,68,68,0.04)' : '');
                     const cs = { padding: '8px 8px' };
 
                     const cell = (key) => {
                       switch (key) {
                         case 'stt':         return <td key={key} style={{ ...cs, color: 'var(--text-3)' }}>{i + 1}</td>;
-                        case 'job_code':    return <td key={key} style={{ ...cs, whiteSpace: 'nowrap', fontSize: 12, color: 'var(--info)' }}>{j.job_code || '—'}</td>;
+                        case 'job_code':    return <td key={key} style={{ ...cs, whiteSpace: 'nowrap', fontSize: 12, color: 'var(--info)' }}>
+                          {j.returned_to === 'log' && (
+                            <span style={{ marginRight: 4, cursor: 'help' }}
+                              title={`🟠 KT trả về\nLý do: ${j.returned_reason || '(không có)'}`}>🟠</span>
+                          )}
+                          {j.job_code || '—'}
+                        </td>;
                         case 'si_number':   return <td key={key} style={{ ...cs, whiteSpace: 'nowrap', fontSize: 12, color: 'var(--text-2)' }}>{j.si_number || '—'}</td>;
                         case 'import_export': {
                           const imp = j.import_export === 'import';

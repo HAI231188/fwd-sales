@@ -103,8 +103,20 @@ function IeCell({ value }) {
 // JobDetailModal — same UX as desktop double-click.
 function OpsCard({ job: j, body, actions, onOpen, codeColor }) {
   const imp = j.import_export === 'import';
+  // KT5 — orange chip + left border when KT bounced job back to LOG.
+  const isReturned = j.returned_to === 'log';
   return (
-    <div className="data-card" onClick={onOpen}>
+    <div className="data-card" onClick={onOpen}
+      style={isReturned ? { borderLeft: '4px solid #ea580c' } : undefined}>
+      {isReturned && (
+        <div style={{
+          background: 'rgba(249,115,22,0.10)',
+          padding: '6px 8px', borderRadius: 4, marginBottom: 8,
+          fontSize: 11, color: '#9a3412', fontWeight: 500,
+        }}>
+          🟠 KT trả về — Lý do: {j.returned_reason || '(không có)'}
+        </div>
+      )}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, marginBottom: 4 }}>
         <div style={{ fontWeight: 700, fontSize: 15, color: codeColor || 'var(--info)', fontFamily: 'var(--font-display)' }}>
           {j.job_code || `#${j.id}`}
@@ -263,6 +275,8 @@ export default function LogDashboardOps() {
   );
 
   function rowBg(j) {
+    // KT5 — KT-returned-to-log overrides tk_flow + deadline tints.
+    if (j.returned_to === 'log') return 'rgba(249,115,22,0.10)';
     if (j.tk_flow === 'xanh') return 'rgba(34,197,94,0.06)';
     if (j.tk_flow === 'vang') return 'rgba(217,119,6,0.06)';
     if (j.tk_flow === 'do') return 'rgba(239,68,68,0.06)';
@@ -415,7 +429,13 @@ export default function LogDashboardOps() {
                 renderRow={j => (
                   <tr key={j.id} style={{ background: rowBg(j), cursor: 'pointer' }} onDoubleClick={() => setDetailJobId(j.id)}>
                     <TD style={{ whiteSpace: 'nowrap', fontSize: 12 }}>{fmtDate(j.created_at)}</TD>
-                    <TD style={{ fontWeight: 600, color: 'var(--info)', whiteSpace: 'nowrap' }}>{j.job_code || `#${j.id}`}</TD>
+                    <TD style={{ fontWeight: 600, color: 'var(--info)', whiteSpace: 'nowrap' }}>
+                      {j.returned_to === 'log' && (
+                        <span style={{ marginRight: 4, cursor: 'help' }}
+                          title={`🟠 KT trả về\nLý do: ${j.returned_reason || '(không có)'}`}>🟠</span>
+                      )}
+                      {j.job_code || `#${j.id}`}
+                    </TD>
                     <TD style={{ whiteSpace: 'nowrap', fontSize: 12, color: 'var(--text-2)' }}>{j.si_number || '—'}</TD>
                     <IeCell value={j.import_export} />
                     <TD style={{ maxWidth: 140 }}>{j.customer_name}</TD>
@@ -483,7 +503,13 @@ export default function LogDashboardOps() {
                 renderRow={j => (
                   <tr key={j.id} style={{ background: rowBg(j), cursor: 'pointer' }} onDoubleClick={() => setDetailJobId(j.id)}>
                     <TD style={{ whiteSpace: 'nowrap', fontSize: 12 }}>{fmtDate(j.created_at)}</TD>
-                    <TD style={{ fontWeight: 600, color: 'var(--info)', whiteSpace: 'nowrap' }}>{j.job_code || `#${j.id}`}</TD>
+                    <TD style={{ fontWeight: 600, color: 'var(--info)', whiteSpace: 'nowrap' }}>
+                      {j.returned_to === 'log' && (
+                        <span style={{ marginRight: 4, cursor: 'help' }}
+                          title={`🟠 KT trả về\nLý do: ${j.returned_reason || '(không có)'}`}>🟠</span>
+                      )}
+                      {j.job_code || `#${j.id}`}
+                    </TD>
                     <TD style={{ whiteSpace: 'nowrap', fontSize: 12, color: 'var(--text-2)' }}>{j.si_number || '—'}</TD>
                     <IeCell value={j.import_export} />
                     <TD style={{ maxWidth: 140 }}>{j.customer_name}</TD>
@@ -536,7 +562,13 @@ export default function LogDashboardOps() {
                 renderRow={j => (
                   <tr key={j.id} style={{ background: 'rgba(239,68,68,0.04)', cursor: 'pointer' }} onDoubleClick={() => setDetailJobId(j.id)}>
                     <TD style={{ whiteSpace: 'nowrap', fontSize: 12 }}>{fmtDate(j.created_at)}</TD>
-                    <TD style={{ fontWeight: 600, color: 'var(--info)', whiteSpace: 'nowrap' }}>{j.job_code || `#${j.id}`}</TD>
+                    <TD style={{ fontWeight: 600, color: 'var(--info)', whiteSpace: 'nowrap' }}>
+                      {j.returned_to === 'log' && (
+                        <span style={{ marginRight: 4, cursor: 'help' }}
+                          title={`🟠 KT trả về\nLý do: ${j.returned_reason || '(không có)'}`}>🟠</span>
+                      )}
+                      {j.job_code || `#${j.id}`}
+                    </TD>
                     <TD style={{ whiteSpace: 'nowrap', fontSize: 12, color: 'var(--text-2)' }}>{j.si_number || '—'}</TD>
                     <IeCell value={j.import_export} />
                     <TD style={{ maxWidth: 140 }}>{j.customer_name}</TD>
@@ -588,7 +620,13 @@ export default function LogDashboardOps() {
                 renderRow={j => (
                   <tr key={j.id} style={{ cursor: 'pointer' }} onDoubleClick={() => setDetailJobId(j.id)}>
                     <TD style={{ whiteSpace: 'nowrap', fontSize: 12, color: 'var(--primary)' }}>{fmtDt(j.ops_done_at)}</TD>
-                    <TD style={{ fontWeight: 600, color: 'var(--info)', whiteSpace: 'nowrap' }}>{j.job_code || `#${j.id}`}</TD>
+                    <TD style={{ fontWeight: 600, color: 'var(--info)', whiteSpace: 'nowrap' }}>
+                      {j.returned_to === 'log' && (
+                        <span style={{ marginRight: 4, cursor: 'help' }}
+                          title={`🟠 KT trả về\nLý do: ${j.returned_reason || '(không có)'}`}>🟠</span>
+                      )}
+                      {j.job_code || `#${j.id}`}
+                    </TD>
                     <TD style={{ whiteSpace: 'nowrap', fontSize: 12, color: 'var(--text-2)' }}>{j.si_number || '—'}</TD>
                     <IeCell value={j.import_export} />
                     <TD style={{ maxWidth: 140 }}>{j.customer_name}</TD>
@@ -644,7 +682,13 @@ export default function LogDashboardOps() {
                 renderRow={j => (
                   <tr key={j.id} style={{ cursor: 'pointer' }} onDoubleClick={() => setDetailJobId(j.id)}>
                     <TD style={{ fontSize: 12 }}>{fmtDate(j.created_at)}</TD>
-                    <TD style={{ fontWeight: 600, color: 'var(--primary)' }}>{j.job_code || `#${j.id}`}</TD>
+                    <TD style={{ fontWeight: 600, color: 'var(--primary)' }}>
+                      {j.returned_to === 'log' && (
+                        <span style={{ marginRight: 4, cursor: 'help' }}
+                          title={`🟠 KT trả về\nLý do: ${j.returned_reason || '(không có)'}`}>🟠</span>
+                      )}
+                      {j.job_code || `#${j.id}`}
+                    </TD>
                     <TD style={{ whiteSpace: 'nowrap', fontSize: 12, color: 'var(--text-2)' }}>{j.si_number || '—'}</TD>
                     <IeCell value={j.import_export} />
                     <TD>{j.customer_name}</TD>

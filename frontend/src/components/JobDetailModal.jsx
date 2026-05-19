@@ -463,7 +463,21 @@ function FRow({ label, children }) {
   );
 }
 
-export default function JobDetailModal({ jobId, onClose }) {
+// KT5 — optional KT action callbacks. Each is invoked from buttons that
+// only render when (a) user.role === 'ke_toan' AND (b) the prop is supplied.
+// LOG/Sales dashboards never pass these, so their modal experience is
+// unchanged. Callbacks may return either void or a Promise; the modal
+// uses Promise.resolve(...).finally to clear its local busy state.
+//   onAccountingCheck(jobId)
+//   onDebitSent(jobId, sentAt /* YYYY-MM-DD */)
+//   onPaymentReceived(jobId, receivedAt /* YYYY-MM-DD */)
+//   onReturnToLog(jobId, reason /* string, non-empty */)
+//   onReturnToSales(jobId, reason)
+export default function JobDetailModal({
+  jobId, onClose,
+  onAccountingCheck, onDebitSent, onPaymentReceived,
+  onReturnToLog, onReturnToSales,
+}) {
   const { user } = useAuth();
   const qc = useQueryClient();
   const zIndex = useModalZIndex();
@@ -486,6 +500,26 @@ export default function JobDetailModal({ jobId, onClose }) {
   const [editErr, setEditErr] = useState('');
   const [deleteReason, setDeleteReason] = useState('');
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+
+  // KT5 — action-button dialogs + busy guard. showReturnDialog uses
+  // null | 'log' | 'sales' so a single dialog block handles both targets.
+  const [showDebitDialog, setShowDebitDialog] = useState(false);
+  const [showPaymentDialog, setShowPaymentDialog] = useState(false);
+  const [showReturnDialog, setShowReturnDialog] = useState(null);
+  const [debitDate, setDebitDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [paymentDate, setPaymentDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [returnReason, setReturnReason] = useState('');
+  const [returnErr, setReturnErr] = useState('');
+  const [ktBusy, setKtBusy] = useState(false);
+
+  // Helper to call a KT callback while honoring the busy guard.
+  // Callbacks may be sync (return void) or async (return Promise).
+  function runKt(callback, ...args) {
+    if (!callback || ktBusy) return;
+    setKtBusy(true);
+    Promise.resolve(callback(...args))
+      .finally(() => setKtBusy(false));
+  }
 
   const { data: job, isLoading } = useQuery({
     queryKey: ['job', jobId],
@@ -580,7 +614,22 @@ export default function JobDetailModal({ jobId, onClose }) {
 
   if (!jobId) return null;
 
+  // KT5 — confirm-handler for the return dialog. Validates reason non-empty,
+  // dispatches to onReturnToLog or onReturnToSales based on showReturnDialog,
+  // closes the dialog on success.
+  function confirmReturn() {
+    const reason = returnReason.trim();
+    if (!reason) {
+      setReturnErr('Vui lòng nhập lý do');
+      return;
+    }
+    const callback = showReturnDialog === 'log' ? onReturnToLog : onReturnToSales;
+    runKt(callback, job.id, reason);
+    setShowReturnDialog(null);
+  }
+
   return createPortal((
+    <>
     <div className="modal-overlay" style={{ zIndex }} onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="modal modal-xl" style={{ maxHeight: '92vh' }}>
         <div className="modal-header">
@@ -609,6 +658,94 @@ export default function JobDetailModal({ jobId, onClose }) {
             <button className="btn btn-ghost btn-sm btn-icon" onClick={onClose}>✕</button>
           </div>
         </div>
+
+        {/* KT5 — Accounting action bar. Visible only when role==='ke_toan'
+            AND not in edit mode. Each individual button has its own
+            visibility predicate based on the job's lifecycle columns. */}
+        {job && isKT && !editMode && (
+          <div style={{
+            display: 'flex', gap: 8, flexWrap: 'wrap',
+            padding: '12px 20px',
+            borderBottom: '1px solid var(--border)',
+            background: 'rgba(8,145,178,0.04)',
+          }}>
+            <div style={{ fontSize: 11, color: 'var(--text-3)', width: '100%', marginBottom: 4 }}>
+              Thao tác kế toán
+            </div>
+
+            {/* Đã kiểm tra — only on jobs that are completed + Sales-ticked + not yet KT-checked. */}
+            {!job.accounting_checked_at && job.completed_at && job.revenue_entered_at && onAccountingCheck && (
+              <button className="btn btn-primary btn-sm"
+                onClick={() => runKt(onAccountingCheck, job.id)}
+                disabled={ktBusy}
+                style={{ background: 'var(--primary)' }}>
+                ✅ Đã kiểm tra
+              </button>
+            )}
+
+            {/* Đã gửi debit — only when KT-checked but debit not yet sent. */}
+            {job.accounting_checked_at && !job.debit_sent_at && onDebitSent && (
+              <button className="btn btn-primary btn-sm"
+                onClick={() => { setDebitDate(new Date().toISOString().slice(0, 10)); setShowDebitDialog(true); }}
+                disabled={ktBusy}>
+                📧 Đã gửi debit
+              </button>
+            )}
+
+            {/* Đã thu — only when debit sent but payment not received. */}
+            {job.debit_sent_at && !job.payment_received_at && onPaymentReceived && (
+              <button className="btn btn-primary btn-sm"
+                onClick={() => { setPaymentDate(new Date().toISOString().slice(0, 10)); setShowPaymentDialog(true); }}
+                disabled={ktBusy}
+                style={{ background: 'var(--primary)' }}>
+                💵 Đã thu
+              </button>
+            )}
+
+            {/* Return-to-X — only on Sub-tab 1 candidates (Sales-ticked, not yet KT-checked, not currently returned).
+                Once a job is returned, it stays in Sub-tab 1 with the orange tint, and the return buttons
+                disappear so a second return doesn't overwrite the first reason silently. */}
+            {!job.accounting_checked_at && job.completed_at && job.revenue_entered_at && !job.returned_to && (
+              <>
+                {onReturnToLog && (
+                  <button className="btn btn-sm"
+                    onClick={() => { setReturnReason(''); setReturnErr(''); setShowReturnDialog('log'); }}
+                    disabled={ktBusy}
+                    style={{ background: 'var(--warning)', color: '#fff', border: 'none' }}>
+                    ❌ Trả về LOG
+                  </button>
+                )}
+                {onReturnToSales && (
+                  <button className="btn btn-sm"
+                    onClick={() => { setReturnReason(''); setReturnErr(''); setShowReturnDialog('sales'); }}
+                    disabled={ktBusy}
+                    style={{ background: 'var(--warning)', color: '#fff', border: 'none' }}>
+                    ❌ Trả về Sales
+                  </button>
+                )}
+              </>
+            )}
+
+            {/* Returned-state indicator panel — shows when job has returned_to set. */}
+            {job.returned_to && (
+              <div style={{
+                width: '100%', marginTop: 8, padding: 10,
+                background: 'rgba(249,115,22,0.10)',
+                border: '1px solid rgba(249,115,22,0.30)',
+                borderRadius: 6, fontSize: 12,
+              }}>
+                <div style={{ fontWeight: 600, color: '#9a3412' }}>
+                  🟠 Đang chờ {job.returned_to === 'log' ? 'LOG' : 'Sales'} sửa
+                </div>
+                {job.returned_reason && (
+                  <div style={{ marginTop: 4, color: 'var(--text-2)' }}>
+                    Lý do: {job.returned_reason}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         {editErr && (
           <div style={{ padding: '8px 20px', background: 'var(--danger-dim)', color: 'var(--danger)', fontSize: 13 }}>{editErr}</div>
@@ -1091,5 +1228,115 @@ export default function JobDetailModal({ jobId, onClose }) {
         </div>
       </div>
     </div>
+
+    {/* KT5 — Đã gửi debit dialog. Date picker (default today), confirm/cancel. */}
+    {showDebitDialog && (
+      <div style={{
+        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        zIndex: zIndex + 10, padding: 16,
+      }} onClick={e => { if (e.target === e.currentTarget) setShowDebitDialog(false); }}>
+        <div style={{
+          background: 'var(--bg-card)', borderRadius: 12, padding: 20,
+          width: 420, maxWidth: 'calc(100vw - 32px)',
+          boxShadow: '0 10px 40px rgba(0,0,0,0.2)',
+        }}>
+          <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 12 }}>
+            📧 Đã gửi debit
+          </div>
+          <div style={{ fontSize: 13, color: 'var(--text-2)', marginBottom: 6 }}>Ngày gửi</div>
+          <input type="date" value={debitDate} onChange={e => setDebitDate(e.target.value)}
+            style={{ ...INP, marginBottom: 16, width: '100%' }} />
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <button className="btn btn-ghost btn-sm" onClick={() => setShowDebitDialog(false)}>Hủy</button>
+            <button className="btn btn-primary btn-sm"
+              disabled={!debitDate || ktBusy}
+              onClick={() => { runKt(onDebitSent, job.id, debitDate); setShowDebitDialog(false); }}>
+              Xác nhận
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* KT5 — Đã thu dialog. Date picker (default today), confirm/cancel. */}
+    {showPaymentDialog && (
+      <div style={{
+        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        zIndex: zIndex + 10, padding: 16,
+      }} onClick={e => { if (e.target === e.currentTarget) setShowPaymentDialog(false); }}>
+        <div style={{
+          background: 'var(--bg-card)', borderRadius: 12, padding: 20,
+          width: 420, maxWidth: 'calc(100vw - 32px)',
+          boxShadow: '0 10px 40px rgba(0,0,0,0.2)',
+        }}>
+          <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 12 }}>
+            💵 Đã thu
+          </div>
+          <div style={{ fontSize: 13, color: 'var(--text-2)', marginBottom: 6 }}>Ngày thu</div>
+          <input type="date" value={paymentDate} onChange={e => setPaymentDate(e.target.value)}
+            style={{ ...INP, marginBottom: 16, width: '100%' }} />
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <button className="btn btn-ghost btn-sm" onClick={() => setShowPaymentDialog(false)}>Hủy</button>
+            <button className="btn btn-primary btn-sm"
+              disabled={!paymentDate || ktBusy}
+              onClick={() => { runKt(onPaymentReceived, job.id, paymentDate); setShowPaymentDialog(false); }}>
+              Xác nhận
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* KT5 — Trả về LOG/Sales dialog. Reason textarea required; title varies by target. */}
+    {showReturnDialog && (
+      <div style={{
+        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        zIndex: zIndex + 10, padding: 16,
+      }} onClick={e => { if (e.target === e.currentTarget) setShowReturnDialog(null); }}>
+        <div style={{
+          background: 'var(--bg-card)', borderRadius: 12, padding: 20,
+          width: 420, maxWidth: 'calc(100vw - 32px)',
+          boxShadow: '0 10px 40px rgba(0,0,0,0.2)',
+        }}>
+          <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 12 }}>
+            ❌ Trả về {showReturnDialog === 'log' ? 'LOG' : 'Sales'}
+          </div>
+          <div style={{ fontSize: 13, color: 'var(--text-2)', marginBottom: 6 }}>
+            Lý do trả về (bắt buộc)
+          </div>
+          <textarea
+            value={returnReason}
+            onChange={e => { setReturnReason(e.target.value); if (returnErr) setReturnErr(''); }}
+            placeholder={showReturnDialog === 'log'
+              ? 'Ví dụ: Hóa đơn lệch, thiếu phụ phí ...'
+              : 'Ví dụ: Sales chốt sai mức giá ...'}
+            rows={4}
+            style={{
+              width: '100%', padding: 10, fontSize: 13,
+              border: '1px solid var(--border)', borderRadius: 8,
+              fontFamily: 'inherit', resize: 'vertical',
+              marginBottom: 8, boxSizing: 'border-box',
+            }} />
+          {returnErr && (
+            <div style={{ fontSize: 12, color: 'var(--danger)', marginBottom: 8 }}>
+              {returnErr}
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <button className="btn btn-ghost btn-sm" onClick={() => setShowReturnDialog(null)}>Hủy</button>
+            <button className="btn btn-sm"
+              disabled={ktBusy}
+              onClick={confirmReturn}
+              style={{ background: 'var(--warning)', color: '#fff', border: 'none' }}>
+              Xác nhận trả về
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   ), document.body);
 }

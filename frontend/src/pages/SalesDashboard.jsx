@@ -114,10 +114,15 @@ const REVENUE_ENTERED_COLS = [
 // Shared mobile card frame (matches TPCard / CusCard / OpsCard from Phase
 // B1-B3): job_code (left) + Loại badge (right) + Khách line + divider +
 // per-sub-tab body + optional full-width action button.
-function SalesCard({ job: j, codeColor, onOpen, body, action }) {
+// KT5 — two optional decoration props for the Sub-tab 2 returned-to-Sales
+// indicator. `wrapperStyle` merges into the root data-card div style;
+// `beforeHeader` renders a single ReactNode before the job_code/Loại header
+// row. Both default to undefined so Sub-tab 1/3 callers stay unchanged.
+function SalesCard({ job: j, codeColor, onOpen, body, action, wrapperStyle, beforeHeader }) {
   const imp = j.import_export === 'import';
   return (
-    <div key={j.id} className="data-card" onClick={onOpen}>
+    <div key={j.id} className="data-card" onClick={onOpen} style={wrapperStyle}>
+      {beforeHeader}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, marginBottom: 4 }}>
         <div style={{
           fontWeight: 700, fontSize: 15,
@@ -264,8 +269,11 @@ export default function SalesDashboard() {
   // Shared cell renderer for the 3 sub-tab tables. Each sub-tab passes its
   // own column array; cell() only handles the keys it knows. Unknown keys
   // return null (caller's responsibility to use the right column set).
+  // KT5 — 4th arg `showReturnedSales` toggles the 🟠 prefix on the job_code
+  // cell. Sub-tab 2 (revenue_pending) passes true so jobs KT returned to
+  // Sales are visible at a glance; Sub-tab 1/3 leave it false per spec.
   const tdStyle = { padding: '8px 8px' };
-  function cell(key, j, i) {
+  function cell(key, j, i, showReturnedSales = false) {
     switch (key) {
       case 'stt':
         return <td key={key} style={{ ...tdStyle, color: 'var(--text-3)' }}>{i + 1}</td>;
@@ -275,6 +283,10 @@ export default function SalesDashboard() {
           fontWeight: 600, color: 'var(--info)',
           cursor: 'pointer', textDecoration: 'underline dotted',
         }} onClick={e => { e.stopPropagation(); setDetailJobId(j.id); }}>
+          {showReturnedSales && j.returned_to === 'sales' && (
+            <span style={{ marginRight: 4, cursor: 'help' }}
+              title={`🟠 KT trả về\nLý do: ${j.returned_reason || '(không có)'}`}>🟠</span>
+          )}
           {j.job_code || `#${j.id}`}
         </td>;
       case 'si_number':
@@ -615,9 +627,11 @@ export default function SalesDashboard() {
                       tableStyle={{ fontSize: 13 }}
                       renderRow={(j, i) => {
                         const inFlight = tickMut.isPending && tickMut.variables === j.id;
+                        // KT5 — orange row when KT returned this job to Sales.
+                        const ktReturnedBg = j.returned_to === 'sales' ? 'rgba(249,115,22,0.10)' : '';
                         return (
-                          <tr key={j.id} style={{ borderBottom: '1px solid var(--border)' }}>
-                            {REVENUE_PENDING_COLS.map(c => cell(c.key, j, i))}
+                          <tr key={j.id} style={{ borderBottom: '1px solid var(--border)', background: ktReturnedBg }}>
+                            {REVENUE_PENDING_COLS.map(c => cell(c.key, j, i, true))}
                             <td style={{ padding: '8px 8px', whiteSpace: 'nowrap' }}>
                               <button className="btn btn-primary btn-sm"
                                 disabled={tickMut.isPending}
@@ -632,8 +646,20 @@ export default function SalesDashboard() {
                         const d = daysSinceCompleted(j);
                         const isLate = d > 3;
                         const inFlight = tickMut.isPending && tickMut.variables === j.id;
+                        // KT5 — KT returned this job to Sales: chip + left border.
+                        const isReturned = j.returned_to === 'sales';
                         return (
                           <SalesCard job={j} onOpen={() => setDetailJobId(j.id)}
+                            wrapperStyle={isReturned ? { borderLeft: '4px solid #ea580c' } : undefined}
+                            beforeHeader={isReturned && (
+                              <div style={{
+                                background: 'rgba(249,115,22,0.10)',
+                                padding: '6px 8px', borderRadius: 4, marginBottom: 8,
+                                fontSize: 11, color: '#9a3412', fontWeight: 500,
+                              }}>
+                                🟠 KT trả về — Lý do: {j.returned_reason || '(không có)'}
+                              </div>
+                            )}
                             body={
                               <>
                                 <div style={{ fontSize: 12, marginBottom: 4 }}>

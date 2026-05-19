@@ -403,8 +403,20 @@ export default function LogDashboardDieuDo() {
                         ? fmtDate(j.han_lenh)
                         : new Date(j.han_lenh).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }))
                     : '—';
+                  // KT5 — orange chip + left border when KT bounced job back to LOG.
+                  const isReturned = j.returned_to === 'log';
                   return (
-                    <div key={j.id} className="data-card" onClick={() => setDetailJobId(j.id)}>
+                    <div key={j.id} className="data-card" onClick={() => setDetailJobId(j.id)}
+                      style={isReturned ? { borderLeft: '4px solid #ea580c' } : undefined}>
+                      {isReturned && (
+                        <div style={{
+                          background: 'rgba(249,115,22,0.10)',
+                          padding: '6px 8px', borderRadius: 4, marginBottom: 8,
+                          fontSize: 11, color: '#9a3412', fontWeight: 500,
+                        }}>
+                          🟠 KT trả về — Lý do: {j.returned_reason || '(không có)'}
+                        </div>
+                      )}
                       {/* Header — job code + loại badge */}
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, marginBottom: 4 }}>
                         <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--info)', fontFamily: 'var(--font-display)' }}>
@@ -516,11 +528,19 @@ export default function LogDashboardDieuDo() {
                     if (hasBooking) truckMut.mutate({ bookingId: j.first_booking_id, data });
                   };
                   const dash = <span style={{ color: 'var(--text-3)', fontSize: 12 }}>—</span>;
+                  // KT5 — orange row tint when KT bounced job back to LOG.
+                  const ktReturnedBg = j.returned_to === 'log' ? 'rgba(249,115,22,0.10)' : '';
                   return (
-                    <tr key={j.id} style={{ borderBottom: '1px solid var(--border)', cursor: 'pointer' }}
+                    <tr key={j.id} style={{ borderBottom: '1px solid var(--border)', cursor: 'pointer', background: ktReturnedBg }}
                       onDoubleClick={() => setDetailJobId(j.id)}>
                       <td style={{ ...cs, whiteSpace: 'nowrap', fontSize: 12 }}>{fmtDate(j.created_at)}</td>
-                      <td style={{ ...cs, whiteSpace: 'nowrap', fontWeight: 600, color: 'var(--info)' }}>{j.job_code || `#${j.id}`}</td>
+                      <td style={{ ...cs, whiteSpace: 'nowrap', fontWeight: 600, color: 'var(--info)' }}>
+                        {j.returned_to === 'log' && (
+                          <span style={{ marginRight: 4, cursor: 'help' }}
+                            title={`🟠 KT trả về\nLý do: ${j.returned_reason || '(không có)'}`}>🟠</span>
+                        )}
+                        {j.job_code || `#${j.id}`}
+                      </td>
                       <td style={{ ...cs, whiteSpace: 'nowrap', fontSize: 12, color: 'var(--text-2)' }}>{j.si_number || '—'}</td>
                       <td style={{ ...cs, whiteSpace: 'nowrap' }}>
                         <span style={{ background: imp ? 'rgba(217,119,6,0.12)' : 'rgba(34,197,94,0.12)',

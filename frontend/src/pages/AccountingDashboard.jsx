@@ -10,7 +10,8 @@
 // Polling: both stats and the active sub-tab list refetch every 30s.
 
 import { useState, useEffect, Component } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import toast from 'react-hot-toast';
 import {
   LineChart, Line, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
@@ -19,7 +20,11 @@ import Navbar from '../components/Navbar';
 import FilteredTable from '../components/FilteredTable';
 import JobDetailModal from '../components/JobDetailModal';
 import DateRangeFilter from '../components/DateRangeFilter';
-import { getAccountingStats, getAccountingJobs } from '../api';
+import {
+  getAccountingStats, getAccountingJobs,
+  accountingCheck, accountingDebitSent, accountingPaymentReceived,
+  accountingReturnToLog, accountingReturnToSales,
+} from '../api';
 
 // ─── Constants ─────────────────────────────────────────────────────────────
 const OVERDUE_DAYS       = 30; // Sub-tab 3: red badge if debit_sent_at + 30d
@@ -229,6 +234,7 @@ function fmtTick(d) {
 
 export default function AccountingDashboard() {
   const isMobile = useIsMobile();
+  const qc = useQueryClient();
   const [activeTab, setActiveTab] = useState('pending_check');
   const [showOnlyOverdue, setShowOnlyOverdue] = useState(false);
   // KT4 — JobDetailModal trigger from any sub-tab's Số job click.
@@ -237,6 +243,55 @@ export default function AccountingDashboard() {
   // via its defaultPreset='30d' useEffect (DateRangeFilter.jsx), so the
   // first query fires with explicit dates rather than backend-default.
   const [paidDateRange, setPaidDateRange] = useState({});
+
+  // KT5 — five action mutations. mutateAsync is returned to the modal so
+  // its local busy guard (ktBusy) can await completion regardless of
+  // success/failure. invalidateQueries(['accounting']) refetches every
+  // accounting-namespaced query (stats + the active sub-tab list), so the
+  // sub-tab the action moves the job out of refreshes immediately and the
+  // KPI counts in Tầng 1 retick.
+  const invalidate = () => qc.invalidateQueries({ queryKey: ['accounting'] });
+
+  const checkMut = useMutation({
+    mutationFn: (id) => accountingCheck(id),
+    onSuccess: (job) => {
+      toast.success(`Đã kiểm tra job ${job?.job_code || ''}`.trim());
+      invalidate(); setDetailJobId(null);
+    },
+    onError: (err) => toast.error(err?.error || err?.message || 'Lỗi kiểm tra'),
+  });
+  const debitMut = useMutation({
+    mutationFn: ({ id, sentAt })   => accountingDebitSent(id, sentAt),
+    onSuccess: (job) => {
+      toast.success(`Đã ghi nhận gửi debit job ${job?.job_code || ''}`.trim());
+      invalidate(); setDetailJobId(null);
+    },
+    onError: (err) => toast.error(err?.error || err?.message || 'Lỗi ghi nhận'),
+  });
+  const paymentMut = useMutation({
+    mutationFn: ({ id, recvAt })   => accountingPaymentReceived(id, recvAt),
+    onSuccess: (job) => {
+      toast.success(`Đã ghi nhận thu cho job ${job?.job_code || ''}`.trim());
+      invalidate(); setDetailJobId(null);
+    },
+    onError: (err) => toast.error(err?.error || err?.message || 'Lỗi ghi nhận thu'),
+  });
+  const returnLogMut = useMutation({
+    mutationFn: ({ id, reason })   => accountingReturnToLog(id, reason),
+    onSuccess: (job) => {
+      toast.success(`Đã trả về LOG: job ${job?.job_code || ''}`.trim());
+      invalidate(); setDetailJobId(null);
+    },
+    onError: (err) => toast.error(err?.error || err?.message || 'Lỗi trả về LOG'),
+  });
+  const returnSalesMut = useMutation({
+    mutationFn: ({ id, reason })   => accountingReturnToSales(id, reason),
+    onSuccess: (job) => {
+      toast.success(`Đã trả về Sales: job ${job?.job_code || ''}`.trim());
+      invalidate(); setDetailJobId(null);
+    },
+    onError: (err) => toast.error(err?.error || err?.message || 'Lỗi trả về Sales'),
+  });
 
   const statsQ = useQuery({
     queryKey: ['accounting', 'stats'],
@@ -494,7 +549,15 @@ export default function AccountingDashboard() {
           For ke_toan role, JobDetailModal renders read-only (canEditJob
           excludes ke_toan per KT4 PART B). KT5 will add KT action buttons. */}
       {detailJobId && (
-        <JobDetailModal jobId={detailJobId} onClose={() => setDetailJobId(null)} />
+        <JobDetailModal
+          jobId={detailJobId}
+          onClose={() => setDetailJobId(null)}
+          onAccountingCheck={(id)        => checkMut.mutateAsync(id)}
+          onDebitSent={(id, sentAt)      => debitMut.mutateAsync({ id, sentAt })}
+          onPaymentReceived={(id, recvAt)=> paymentMut.mutateAsync({ id, recvAt })}
+          onReturnToLog={(id, reason)    => returnLogMut.mutateAsync({ id, reason })}
+          onReturnToSales={(id, reason)  => returnSalesMut.mutateAsync({ id, reason })}
+        />
       )}
     </div>
   );
