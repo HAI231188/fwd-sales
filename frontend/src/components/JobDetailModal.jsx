@@ -431,6 +431,10 @@ function buildDraft(job) {
     kg: job.kg || '',
     destination: job.destination || '',
     han_lenh: toDatetimeLocal(job.han_lenh),
+    // L19 reversed 2026-05-20: import_export is editable in edit mode. Default
+    // to the row's current value; the selector lets the user switch live and the
+    // han_lenh input swaps between date (import) and datetime-local (export).
+    import_export: job.import_export || 'export',
     si_number: job.si_number || '',
     mbl_no: job.mbl_no || '',
     hbl_no: job.hbl_no || '',
@@ -583,17 +587,45 @@ export default function JobDetailModal({
       return { ...d, containers: conts };
     });
   }
+  // Mirror of CreateJobModal.setImportExport (lines 141-151). When the user
+  // toggles between export and import in edit mode, han_lenh format must change
+  // too: import uses YYYY-MM-DD (date input), export uses YYYY-MM-DDTHH:MM
+  // (datetime-local). Existing value is preserved across the switch — going
+  // datetime→date slices off T... (lossy on purpose); going date→datetime
+  // appends T00:00 so the datetime-local input has a valid string.
+  function setImportExportD(next) {
+    setDraft(d => {
+      const cur = d.han_lenh || '';
+      let newVal = cur;
+      if (next === 'import' && cur.includes('T')) newVal = cur.slice(0, 10);
+      else if (next === 'export' && cur && !cur.includes('T') && /^\d{4}-\d{2}-\d{2}$/.test(cur)) {
+        newVal = `${cur}T00:00`;
+      }
+      return { ...d, import_export: next, han_lenh: newVal };
+    });
+  }
   function handleSave() {
     setEditErr('');
     // han_lenh / Cutoff guard — mirror POST + PUT backend rule. Reject blank
     // before any network call so the user sees the same conditional message
-    // they'd get from the server. Label follows job.import_export (read from
-    // the source-of-truth row; import_export is not editable via PUT anyway).
+    // they'd get from the server. Label follows draft.import_export now that
+    // L19 is reversed and the selector lives in the edit form.
     if (!(draft.han_lenh || '').trim()) {
-      setEditErr(job?.import_export === 'import'
+      setEditErr(draft.import_export === 'import'
         ? 'Vui lòng nhập Hạn lệnh'
         : 'Vui lòng nhập Cutoff time');
       return;
+    }
+    // Hàng nhập + FCL: every container row must carry cont_number + seal.
+    // Mirrors CreateJobModal.submit() at CreateJobModal.jsx:281-288 — keep the
+    // logic + message identical so create and edit behave the same way.
+    if (draft.cargo_type === 'fcl' && draft.import_export === 'import') {
+      const incomplete = (draft.containers || []).some(c =>
+        !(c.cont_number || '').trim() || !(c.seal_number || '').trim());
+      if (incomplete) {
+        setEditErr('Hàng nhập phải nhập đủ số cont và seal cho tất cả container');
+        return;
+      }
     }
     const payload = { ...draft };
     if (!isTP) delete payload.deadline;
@@ -832,8 +864,29 @@ export default function JobDetailModal({
                             onChange={e => setD('goods_description', e.target.value)}
                             placeholder="AS PER BILL" />
                         </FRow>
-                        <FRow label={job.import_export === 'import' ? 'Hạn lệnh' : 'Cutoff time'}>
-                          {job.import_export === 'import' ? (
+                        <FRow label="Loại lô">
+                          <div style={{ display: 'flex', gap: 4 }}>
+                            {[
+                              { value: 'export', label: 'Hàng xuất', color: '#16a34a', dim: 'rgba(34,197,94,0.12)' },
+                              { value: 'import', label: 'Hàng nhập', color: '#d97706', dim: 'rgba(217,119,6,0.12)' },
+                            ].map(opt => {
+                              const active = draft.import_export === opt.value;
+                              return (
+                                <label key={opt.value} style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4,
+                                  cursor: 'pointer', fontSize: 12, padding: '6px 6px', borderRadius: 6, whiteSpace: 'nowrap',
+                                  border: `1.5px solid ${active ? opt.color : 'var(--border)'}`,
+                                  background: active ? opt.dim : '', fontWeight: active ? 600 : 400,
+                                  color: active ? opt.color : 'var(--text)' }}>
+                                  <input type="radio" name="import_export_edit" value={opt.value} checked={active}
+                                    onChange={() => setImportExportD(opt.value)} style={{ accentColor: opt.color }} />
+                                  {opt.label}
+                                </label>
+                              );
+                            })}
+                          </div>
+                        </FRow>
+                        <FRow label={draft.import_export === 'import' ? 'Hạn lệnh' : 'Cutoff time'}>
+                          {draft.import_export === 'import' ? (
                             <input style={INP} type="date"
                               value={(draft.han_lenh || '').slice(0, 10)}
                               onChange={e => setD('han_lenh', e.target.value)} />

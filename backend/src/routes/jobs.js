@@ -1735,7 +1735,19 @@ router.put('/:id', requireAuth, async (req, res) => {
     'cargo_type','so_kien','kg','destination','han_lenh','si_number','mbl_no','hbl_no',
     'ops_partner','sales_id',
     // CP4.2.1 — BBBG shipping document fields, editable post-create.
-    'shipper','vessel','voy','shipping_line','goods_description'];
+    'shipper','vessel','voy','shipping_line','goods_description',
+    // L19 reversed 2026-05-20: import_export is editable post-create so the user
+    // can switch the displayed date semantic (cutoff vs hạn lệnh). Existing
+    // han_lenh value is preserved; only the label/input type follows the toggle.
+    'import_export'];
+
+  // import_export validation guard — mirror POST behavior at jobs.js:1349-1352.
+  // Only fires when the field is present in the body; absent leaves the row's
+  // existing value intact.
+  if (req.body.import_export !== undefined &&
+      !['export', 'import'].includes(req.body.import_export)) {
+    return res.status(400).json({ error: "Loại lô phải là 'export' hoặc 'import'" });
+  }
 
   const client = await db.pool.connect();
   try {
@@ -1745,14 +1757,16 @@ router.put('/:id', requireAuth, async (req, res) => {
 
     // han_lenh / Cutoff guard — mirror POST behavior. Only fires when the field
     // is explicitly present in the body; absent fields leave the existing value
-    // intact (partial-update friendly). The error label follows import_export
-    // (cur row's value, since import_export is not editable via PUT).
+    // intact (partial-update friendly). The error label follows import_export —
+    // since import_export is now editable too (L19 reversed 2026-05-20), prefer
+    // the payload's new value when present, otherwise fall back to the row's.
     if (req.body.han_lenh !== undefined) {
       const v = req.body.han_lenh;
       if (!v || !String(v).trim()) {
         await client.query('ROLLBACK');
+        const effectiveImpExp = req.body.import_export ?? cur[0].import_export;
         return res.status(400).json({
-          error: cur[0].import_export === 'import'
+          error: effectiveImpExp === 'import'
             ? 'Vui lòng nhập Hạn lệnh'
             : 'Vui lòng nhập Cutoff time',
         });
