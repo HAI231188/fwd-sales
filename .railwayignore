@@ -1,0 +1,13 @@
+node_modules/
+**/node_modules/
+.git/
+dist/
+**/dist/
+.claude/
+.env
+.env.local
+*.log
+.DS_Store
+docs/
+qa_plan.md
+skill hướng dẫn sales gọi điện/
