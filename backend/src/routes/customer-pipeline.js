@@ -30,7 +30,11 @@ router.get('/', requireAuth, async (req, res) => {
 
   const search = (req.query.search || '').trim();
   const params = [];
-  let where = 'cp.deleted_at IS NULL';
+  // Restrict to booked customers only: TP should see customers TP created
+  // (always stage='booked' via the L14 upsert at jobs.js:1461-1466) and
+  // customers Sales has booked. Sales' in-progress leads (new/following/dormant)
+  // remain on the Sales pipeline view and don't appear here.
+  let where = `cp.deleted_at IS NULL AND cp.stage = 'booked'`;
   if (search) {
     params.push(`%${search}%`);
     // ILIKE on either the internal short name OR the legal/invoice name.
