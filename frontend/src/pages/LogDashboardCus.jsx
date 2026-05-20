@@ -31,6 +31,10 @@ const OTHER_SVC_KEYS = ['kiem_dich', 'hun_trung', 'co', 'dkktcl', 'khac'];
 const OTHER_SVC_LABEL = {
   kiem_dich: 'Kiểm dịch', hun_trung: 'Hun trùng', co: 'CO', dkktcl: 'DKKTCL', khac: 'Khác',
 };
+// Mirror of LogDashboardTP.jsx:22 — copied locally per the project convention
+// (frontend/src/CLAUDE.md: "Canonical maps live at the top of each file ... don't
+// import them from a shared module — copy the map into the file that needs it").
+const SVC_LABEL = { tk: 'TK', truck: 'Xe', both: 'TK+Xe' };
 
 function fmtDate(val) {
   if (!val) return '—';
@@ -209,7 +213,7 @@ const CUS_FILTER_COLS = [
   { key: 'created_at',       label: 'Ngày' },
   { key: 'job_code',         label: 'Job',            filterType: 'text' },
   { key: 'si_number',        label: 'Mã SI',          filterType: 'text' },
-  { key: 'import_export',    label: 'Loại' },
+  { key: 'service_type',     label: 'Dịch vụ' },
   { key: 'customer_name',    label: 'Khách hàng',     filterType: 'text', accessor: j => j.customer_name || '' },
   { key: 'ops_col',          label: 'Tên OPS',        filterType: 'text', accessor: j => j.ops_name || j.ops_partner || '' },
   { key: 'etd_eta',          label: 'ETD / ETA' },
@@ -240,7 +244,6 @@ const CUS_FILTER_COLS = [
 // is consumed once and the body branches on `tab` / `isConfirmPending` / `isTk`
 // the same way the desktop renderRow does.
 function CusCard({ job: j, body, actions, onOpen, codeColor }) {
-  const imp = j.import_export === 'import';
   // KT5 — orange chip + left border when KT bounced job back to LOG.
   const isReturned = j.returned_to === 'log';
   return (
@@ -259,12 +262,7 @@ function CusCard({ job: j, body, actions, onOpen, codeColor }) {
         <div style={{ fontWeight: 700, fontSize: 15, color: codeColor || 'var(--info)', fontFamily: 'var(--font-display)' }}>
           {j.job_code || `#${j.id}`}
         </div>
-        <span style={{
-          background: imp ? 'rgba(217,119,6,0.12)' : 'rgba(34,197,94,0.12)',
-          color: imp ? '#d97706' : '#16a34a',
-          borderRadius: 6, padding: '2px 10px',
-          fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap',
-        }}>{imp ? 'Nhập' : 'Xuất'}</span>
+        <span className="badge badge-info" style={{ fontSize: 10 }}>{SVC_LABEL[j.service_type] || j.service_type}</span>
       </div>
       <div style={{ fontSize: 13, color: 'var(--text)', marginBottom: 6 }}>
         <span style={{ color: 'var(--text-2)', fontSize: 11 }}>Khách: </span>
@@ -634,12 +632,7 @@ export default function LogDashboardCus() {
                         </td>
                         <td style={{ padding: '8px 8px', whiteSpace: 'nowrap', fontSize: 12, color: 'var(--text-2)' }}>{j.si_number || '—'}</td>
                         <td style={{ padding: '8px 8px', whiteSpace: 'nowrap' }}>
-                          {(() => {
-                            const imp = j.import_export === 'import';
-                            return <span style={{ background: imp ? 'rgba(217,119,6,0.12)' : 'rgba(34,197,94,0.12)',
-                              color: imp ? '#d97706' : '#16a34a', borderRadius: 6, padding: '2px 8px',
-                              fontSize: 11, fontWeight: 600 }}>{imp ? 'Nhập' : 'Xuất'}</span>;
-                          })()}
+                          <span className="badge badge-info" style={{ fontSize: 10 }}>{SVC_LABEL[j.service_type] || j.service_type}</span>
                         </td>
                         <td style={{ padding: '8px 8px', maxWidth: 140 }}>{j.customer_name}</td>
                         <td style={{ padding: '8px 6px', minWidth: 80, ...(!j.ops_id && !j.ops_partner ? missingInputStyle : {}) }}>
