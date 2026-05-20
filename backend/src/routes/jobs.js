@@ -1473,6 +1473,37 @@ router.post('/', requireAuth, async (req, res) => {
         ]
       );
       pipelineTransfer.wasNewlyInserted = !!upserted[0]?.was_inserted;
+
+      // BACKFILL pipeline snapshot (per owner spec May 2026):
+      // TPL auto-fills invoice fields from customer-level data when the
+      // pipeline snapshot is empty. Persist those values back so the
+      // next job creation finds them pre-populated — the DB cleans itself
+      // over time, one job at a time.
+      //
+      // Safety: COALESCE(NULLIF(existing, ''), $new) only fills empty
+      // snapshots. Existing values are NEVER overwritten — so a re-submit
+      // with a different value is a no-op, and an INSERT branch (row just
+      // born with the form's values already in place) is also a no-op.
+      //
+      // Same transaction as the UPSERT above and the job INSERT — atomic
+      // with the rest of POST /api/jobs.
+      if (upserted[0]?.id) {
+        await client.query(
+          `UPDATE customer_pipeline
+             SET company_full_name = COALESCE(NULLIF(company_full_name, ''), $1),
+                 invoice_address   = COALESCE(NULLIF(invoice_address,   ''), $2),
+                 tax_code          = COALESCE(NULLIF(tax_code,          ''), $3),
+                 updated_at        = NOW()
+           WHERE id = $4
+             AND deleted_at IS NULL`,
+          [
+            (company_full_name || '').toString().trim() || null,
+            (invoice_address   || '').toString().trim() || null,
+            (invoice_tax_code  || '').toString().trim() || null,
+            upserted[0].id,
+          ]
+        );
+      }
     }
 
     // Phase 2: job_truck is deprecated. Truck planning lives on truck_bookings now

@@ -225,10 +225,15 @@ export default function CreateJobModal({ onClose, onCreated }) {
       customer_address: c.customer_address || '',
       customer_tax_code: c.customer_tax_code || '',
       sales_id: c.sales_id ? String(c.sales_id) : f.sales_id,
-      // Pre-fill invoice info from pipeline snapshot (L15).
-      company_full_name: c.company_full_name || '',
-      invoice_address:   c.invoice_address   || '',
-      invoice_tax_code:  c.pipeline_tax_code || '',
+      // Pre-fill invoice info — pipeline snapshot first (L15), then fall
+      // back to customer-level data. Sales nhập customer fields theo bản
+      // xuất HĐ (owner spec May 2026), so customer_name / customer_address
+      // / customer_tax_code are safe stand-ins until the snapshot is set.
+      // The backend backfills the snapshot inside POST /api/jobs when the
+      // current row is empty, so subsequent picks read directly from L15.
+      company_full_name: c.company_full_name || c.customer_name    || '',
+      invoice_address:   c.invoice_address   || c.customer_address || '',
+      invoice_tax_code:  c.pipeline_tax_code || c.customer_tax_code || '',
     }));
   }
 
