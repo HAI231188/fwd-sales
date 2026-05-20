@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import toast from 'react-hot-toast';
 import Navbar from '../components/Navbar';
 import JobDetailModal from '../components/JobDetailModal';
 import CreateJobModal from '../components/CreateJobModal';
@@ -350,6 +351,7 @@ export default function LogDashboardCus() {
   const tkMut = useMutation({
     mutationFn: ({ jobId, data }) => updateJobTk(jobId, data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['jobs'] }),
+    onError: (err) => toast.error(err?.response?.data?.error || err?.error || err?.message || 'Không lưu được số tờ khai'),
   });
   const confirmMut = useMutation({
     mutationFn: id => confirmJob(id),

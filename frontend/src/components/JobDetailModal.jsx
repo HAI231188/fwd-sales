@@ -540,6 +540,7 @@ export default function JobDetailModal({
   const tkMut = useMutation({
     mutationFn: data => updateJobTk(jobId, data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['job', jobId] }),
+    onError: (err) => toast.error(err?.response?.data?.error || err?.error || err?.message || 'Không lưu được số tờ khai'),
   });
   // Phase 4: truckMut removed (legacy section is read-only).
   const editMut = useMutation({

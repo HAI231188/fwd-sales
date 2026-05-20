@@ -1931,6 +1931,32 @@ router.put('/:id', requireAuth, async (req, res) => {
       }
     }
 
+    // Fix A — back-fill job_tk when service_type changes to include TK.
+    // Root cause from audit: a job created with service_type='truck' has no
+    // job_tk row; if later edited to 'tk' or 'both', the CUS dashboard renders
+    // an editable tk_number cell but PATCH /:id/tk returns 404 because no row
+    // exists. Ensure the row exists here. Pattern matches the existence-then-
+    // INSERT used elsewhere in this file (jobs.js:1994-1999, 2120-2124) since
+    // job_tk has no UNIQUE(job_id) — can't use ON CONFLICT.
+    //
+    // POST inserts only (job_id) [+ optional cus_id from AI suggestion] —
+    // we mirror that minimal shape here.
+    const effectiveSvc = req.body.service_type ?? cur[0].service_type;
+    if (effectiveSvc === 'tk' || effectiveSvc === 'both') {
+      const { rows: tkEx } = await client.query(
+        `SELECT id FROM job_tk WHERE job_id = $1`,
+        [req.params.id]
+      );
+      if (!tkEx[0]) {
+        await client.query(
+          `INSERT INTO job_tk (job_id) VALUES ($1)`,
+          [req.params.id]
+        );
+        await recordHistory(client, req.params.id, req.user.id,
+          'job_tk_backfilled', null, 'auto on service_type change');
+      }
+    }
+
     await client.query('COMMIT');
     res.json({ ok: true });
   } catch (err) {
