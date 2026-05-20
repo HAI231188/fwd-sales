@@ -61,8 +61,9 @@ function truncate(s, n) {
 export default function CustomerDataPage() {
   const qc = useQueryClient();
   const { user } = useAuth();
-  // Delete is Lead-only (Mr Hải). TP can edit but never delete.
-  const isLead = user?.role === 'lead';
+  // Delete is open to TP + Lead, same as edit. Backend enforces both the role
+  // gate and the 0-job guard — see backend/src/routes/customer-pipeline.js.
+  const canDelete = user?.role === 'lead' || user?.role === 'truong_phong_log';
 
   const [search, setSearch] = useState('');
   const [sort, setSort]     = useState('updated');
@@ -84,11 +85,11 @@ export default function CustomerDataPage() {
   );
 
   const deleteMut = useMutation({
-    mutationFn: id => deleteCustomerPipeline(id),
-    onSuccess: () => {
+    mutationFn: (row) => deleteCustomerPipeline(row.id),
+    onSuccess: (_data, row) => {
       qc.invalidateQueries({ queryKey: ['customerPipelines'] });
       setDeleting(null);
-      toast.success('Đã xóa khách hàng');
+      toast.success(`Đã xóa khách ${row.company_name}`);
     },
     onError: (err) => toast.error(err?.error || err?.message || 'Lỗi khi xóa'),
   });
@@ -198,12 +199,26 @@ export default function CustomerDataPage() {
                           onClick={() => setEditing(c)}>
                           ✏️ Sửa
                         </button>
-                        {isLead && (
-                          <button className="btn btn-ghost btn-sm" style={{ fontSize: 11, color: 'var(--danger)', borderColor: 'var(--danger)' }}
-                            onClick={() => setDeleting(c)}>
-                            🗑 Xóa
-                          </button>
-                        )}
+                        {canDelete && (() => {
+                          const hasJobs = (c.job_count || 0) > 0;
+                          return (
+                            <button
+                              className="btn btn-ghost btn-sm"
+                              style={{
+                                fontSize: 11,
+                                color: hasJobs ? 'var(--text-3)' : 'var(--danger)',
+                                borderColor: hasJobs ? 'var(--border)' : 'var(--danger)',
+                                cursor: hasJobs ? 'not-allowed' : 'pointer',
+                                opacity: hasJobs ? 0.5 : 1,
+                              }}
+                              disabled={hasJobs}
+                              title={hasJobs ? 'Khách còn job, không thể xóa' : 'Xóa khách'}
+                              onClick={() => { if (!hasJobs) setDeleting(c); }}
+                            >
+                              🗑 Xóa
+                            </button>
+                          );
+                        })()}
                       </td>
                     </tr>
                   ))}
@@ -243,20 +258,15 @@ export default function CustomerDataPage() {
             </div>
             <div className="modal-body" style={{ padding: 16, fontSize: 13 }}>
               <p>Xóa khách <strong>{deleting.company_name}</strong>?</p>
-              {deleting.job_count > 0 && (
-                <p style={{ color: 'var(--warning)', marginTop: 8 }}>
-                  ⚠ Khách này có <strong>{deleting.job_count}</strong> job đã chạy. Lịch sử job vẫn được giữ trên các bản ghi job (tên khách là snapshot).
-                </p>
-              )}
               <p style={{ color: 'var(--text-2)', marginTop: 8, fontSize: 12 }}>
-                Soft delete — có thể khôi phục sau bằng cách clear cột deleted_at.
+                Hành động này ẩn khách khỏi danh sách (soft delete). Có thể khôi phục sau bằng cách clear cột deleted_at.
               </p>
             </div>
             <div className="modal-footer" style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, padding: 12, borderTop: '1px solid var(--border)' }}>
               <button className="btn btn-ghost btn-sm" onClick={() => setDeleting(null)} disabled={deleteMut.isPending}>Hủy</button>
               <button className="btn btn-danger btn-sm"
                 disabled={deleteMut.isPending}
-                onClick={() => deleteMut.mutate(deleting.id)}>
+                onClick={() => deleteMut.mutate(deleting)}>
                 {deleteMut.isPending ? 'Đang xóa...' : 'Xóa'}
               </button>
             </div>

@@ -8,8 +8,8 @@
 // distinct: /api/customers = customers (interaction) table, /api/customer-pipeline =
 // customer_pipeline (CRM company) table.
 //
-// Auth: GET + PATCH require role IN ('truong_phong_log','lead'). DELETE requires
-// 'truong_phong_log' only (per spec: "Only TP can delete").
+// Auth: GET + PATCH + DELETE all require role IN ('truong_phong_log','lead').
+// DELETE additionally requires 0 live jobs for the customer (see L17 + 0-job guard).
 
 const router = require('express').Router();
 const db = require('../db');
@@ -17,10 +17,6 @@ const { requireAuth } = require('../middleware/auth');
 
 const ADMIN_ROLES = ['truong_phong_log', 'lead'];
 function isAdmin(req) { return ADMIN_ROLES.includes(req.user?.role); }
-// Delete is intentionally narrower than edit: only Lead (Mr Hải) can soft-delete
-// customers. TP can edit (including L14 transfer) but cannot remove customers
-// from the pipeline.
-function isLead(req)  { return req.user?.role === 'lead'; }
 
 const EDITABLE_FIELDS = ['company_name', 'company_full_name', 'tax_code', 'invoice_address'];
 
@@ -242,41 +238,109 @@ router.patch('/:id', requireAuth, async (req, res) => {
 });
 
 // ─── DELETE /api/customer-pipeline/:id ─────────────────────────────────────────
-// Soft delete only. Tombstone the row (deleted_at = NOW()). The partial unique
-// index `WHERE deleted_at IS NULL` lets the same (sales, company) pair be
-// re-created later if needed.
+// Soft delete only on customer_pipeline. Guarded by 0 live jobs.
+//
+// L17 backfill protection: `backfill_pipeline.js` Step 1 inserts a fresh pipeline
+// row on every deploy for any `customers` row whose (user_id, LOWER(company_name))
+// has no live pipeline. Just soft-deleting the pipeline would let backfill resurrect
+// it on the next deploy. To prevent that, also hard-DELETE the matching `customers`
+// rows in the same transaction. The same hard-delete pattern is used at L14
+// transfer (`customer-pipeline.js:153` and `jobs.js:1450`).
+//
+// The DELETE keys on BOTH `pipeline_id = $1` (directly linked rows) AND
+// `(user_id, LOWER(company_name))` (detached rows that backfill would otherwise
+// pick up). Together this guarantees soft-deleted pipeline rows stay deleted.
 router.delete('/:id', requireAuth, async (req, res) => {
-  if (!isLead(req)) return res.status(403).json({ error: 'Chỉ Lead (Mr Hải) mới được xóa khách' });
+  if (!isAdmin(req)) return res.status(403).json({ error: 'Không có quyền' });
 
   const pipelineId = parseInt(req.params.id, 10);
   if (!Number.isFinite(pipelineId)) {
     return res.status(400).json({ error: 'ID không hợp lệ' });
   }
 
+  const client = await db.pool.connect();
   try {
-    const { rows } = await db.query(
-      `UPDATE customer_pipeline
-          SET deleted_at = NOW(), updated_at = NOW()
+    await client.query('BEGIN');
+
+    // Fetch the row first — need company_name + sales_id for the job count,
+    // customers cleanup, and notification. SELECT ... FOR UPDATE locks it so a
+    // concurrent UPDATE/DELETE on the same id can't race us.
+    const { rows: curRows } = await client.query(
+      `SELECT id, sales_id, company_name
+         FROM customer_pipeline
         WHERE id = $1 AND deleted_at IS NULL
-        RETURNING id, sales_id, company_name`,
+        FOR UPDATE`,
       [pipelineId]
     );
-    if (!rows[0]) return res.status(404).json({ error: 'Không tìm thấy hoặc đã bị xóa' });
+    if (!curRows[0]) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Không tìm thấy hoặc đã bị xóa' });
+    }
+    const cur = curRows[0];
+
+    // 0-job guard. Same predicate as the list endpoint's job_count column
+    // (`customer-pipeline.js:59-63`) so the UI count is the contract.
+    const { rows: jobCountRows } = await client.query(
+      `SELECT COUNT(*)::int AS n
+         FROM jobs
+        WHERE deleted_at IS NULL
+          AND LOWER(customer_name) = LOWER($1)`,
+      [cur.company_name]
+    );
+    const liveJobs = jobCountRows[0].n;
+    if (liveJobs > 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        error: `Khách còn ${liveJobs} job, không thể xóa`,
+        live_job_count: liveJobs,
+      });
+    }
+
+    // L17 cleanup: hard-DELETE the matching customers rows so backfill_pipeline.js
+    // won't recreate the soft-deleted pipeline on the next deploy. Keys on both
+    // pipeline_id (directly linked) AND (user_id, LOWER(company_name)) (detached
+    // rows that share the company name with the same sales user).
+    const { rowCount: customersDeleted } = await client.query(
+      `DELETE FROM customers
+        WHERE pipeline_id = $1
+           OR ($2::int IS NOT NULL
+               AND user_id = $2::int
+               AND LOWER(company_name) = LOWER($3))`,
+      [pipelineId, cur.sales_id, cur.company_name]
+    );
+
+    // Soft-delete the pipeline row. The partial unique index
+    // `idx_pipeline_sales_company_active WHERE deleted_at IS NULL` lets the same
+    // (sales, company) pair be re-created later if needed.
+    await client.query(
+      `UPDATE customer_pipeline
+          SET deleted_at = NOW(), updated_at = NOW()
+        WHERE id = $1`,
+      [pipelineId]
+    );
 
     // Notify the owner sales (if any) that their pipeline entry was removed.
-    if (rows[0].sales_id) {
-      await db.query(
+    if (cur.sales_id) {
+      await client.query(
         `INSERT INTO notifications (user_id, type, title, message)
          VALUES ($1, 'pipeline_deleted', 'Khách bị xóa khỏi pipeline', $2)`,
-        [rows[0].sales_id,
-         `Khách ${rows[0].company_name} đã được xóa khỏi pipeline bởi ${req.user.name}`]
+        [cur.sales_id,
+         `Khách ${cur.company_name} đã được xóa khỏi pipeline bởi ${req.user.name}`]
       );
     }
 
-    res.json({ ok: true, soft_deleted: true });
+    await client.query('COMMIT');
+    res.json({
+      ok: true,
+      soft_deleted: true,
+      customers_purged: customersDeleted,
+    });
   } catch (err) {
+    await client.query('ROLLBACK');
     console.error('DELETE /api/customer-pipeline/:id error:', err.message);
     res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
   }
 });
 
