@@ -14,6 +14,7 @@ import { useModalZIndex } from '../hooks/useModalZIndex';
 import {
   getJobStats, getJobs, updateJobTk, updateJob, confirmJob, requestDeadline, completeJob,
   requestJobDelete, createJob,
+  tickJobTkCost, untickJobTkCost,
 } from '../api';
 
 const TK_STATUS_OPTIONS = [
@@ -232,7 +233,7 @@ const CUS_FILTER_COLS = [
   { key: 'other_svc',        label: 'Dịch vụ khác' },
   { key: 'delivery_dt',      label: 'Ngày giao hàng' },
   { key: 'delivery_loc',     label: 'Địa điểm giao' },
-  { key: 'truck_booked',     label: 'Đặt xe' },
+  { key: 'cost_entered_at',  label: 'Nhập cost' },
   { key: 'ht',               label: 'HT' },
   { key: 'notes',            label: 'Ghi chú' },
 ];
@@ -351,6 +352,40 @@ export default function LogDashboardCus() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['jobs'] }),
     onError: (err) => toast.error(err?.response?.data?.error || err?.error || err?.message || 'Không lưu được số tờ khai'),
   });
+  // 2026-05-21 — Cost tick mutations mirror M4 revenue tick (SalesDashboard:240-255).
+  // PATCH stamps + triggers checkAndCompleteJob on the backend; DELETE clears
+  // (no auto-uncomplete). Both invalidate ['jobs'] so the tab counts + dashboard
+  // refetch atomically.
+  const tickCostMut = useMutation({
+    mutationFn: (jobId) => tickJobTkCost(jobId),
+    onSuccess: (resp) => {
+      toast.success(resp?.job_completed
+        ? 'Đã nhập cost — job hoàn thành'
+        : 'Đã nhập cost');
+      qc.invalidateQueries({ queryKey: ['jobs'] });
+    },
+    onError: (err) => toast.error(err?.error || err?.message || 'Không tick được cost'),
+  });
+  const untickCostMut = useMutation({
+    mutationFn: (jobId) => untickJobTkCost(jobId),
+    onSuccess: () => {
+      toast.success('Đã bỏ tick cost');
+      qc.invalidateQueries({ queryKey: ['jobs'] });
+    },
+    onError: (err) => toast.error(err?.error || err?.message || 'Không bỏ tick được'),
+  });
+  function onTickCostClick(j) {
+    const msg = `Xác nhận đã nhập cost job ${j.job_code || '#' + j.id}?\n\n`
+              + 'Sau khi tick, phần cost TK của bạn coi như xong. '
+              + 'Bạn có thể bỏ tick sau nếu sai sót.';
+    if (window.confirm(msg)) tickCostMut.mutate(j.id);
+  }
+  function onUntickCostClick(j) {
+    const msg = `Bỏ tick cost job ${j.job_code || '#' + j.id}?\n\n`
+              + 'Nếu job đã hoàn thành, bỏ tick KHÔNG đưa job về pending — '
+              + 'job vẫn ở trạng thái hoàn thành.';
+    if (window.confirm(msg)) untickCostMut.mutate(j.id);
+  }
   const confirmMut = useMutation({
     mutationFn: id => confirmJob(id),
     onSuccess: () => {
@@ -544,11 +579,30 @@ export default function LogDashboardCus() {
                           )}
 
                           <div style={{ display: 'flex', gap: 14, alignItems: 'center', flexWrap: 'wrap', fontSize: 12 }}>
-                            <span>
-                              <span style={{ color: 'var(--text-2)' }}>Đặt xe:</span>{' '}
-                              {j.truck_booked
-                                ? <span style={{ color: 'var(--primary)', fontWeight: 600 }}>✓</span>
-                                : <span style={{ color: 'var(--text-3)' }}>—</span>}
+                            <span onClick={e => e.stopPropagation()}>
+                              {(() => {
+                                const ticked = !!j.cost_entered_at;
+                                const inFlight = (tickCostMut.isPending && tickCostMut.variables === j.id)
+                                              || (untickCostMut.isPending && untickCostMut.variables === j.id);
+                                if (ticked) {
+                                  return (
+                                    <button className="btn btn-ghost btn-sm"
+                                      style={{ fontSize: 11, color: 'var(--primary)', padding: '2px 8px' }}
+                                      disabled={inFlight}
+                                      onClick={() => onUntickCostClick(j)}>
+                                      {inFlight ? '...' : '✓ Cost đã nhập'}
+                                    </button>
+                                  );
+                                }
+                                return (
+                                  <button className="btn btn-primary btn-sm"
+                                    style={{ fontSize: 11, padding: '2px 8px' }}
+                                    disabled={inFlight}
+                                    onClick={() => onTickCostClick(j)}>
+                                    {inFlight ? '...' : '✅ Nhập cost'}
+                                  </button>
+                                );
+                              })()}
                             </span>
                             <span>
                               <span style={{ color: 'var(--text-2)' }}>HT:</span>{' '}
@@ -713,13 +767,31 @@ export default function LogDashboardCus() {
                           <InlineInput value={j.delivery_location}
                             onSave={v => tkMut.mutate({ jobId: j.id, data: { delivery_location: v } })} />
                         </td>
-                        <td style={{ padding: '8px 8px', textAlign: 'center' }}>
-                          <input type="checkbox" checked={!!j.truck_booked}
-                            disabled={!canBookTruck(j) && !j.truck_booked}
-                            title={!canBookTruck(j) && !j.truck_booked
-                              ? 'Nhập thời gian và địa điểm giao trước khi đặt xe'
-                              : 'Đặt xe'}
-                            onChange={e => tkMut.mutate({ jobId: j.id, data: { truck_booked: e.target.checked } })} />
+                        <td style={{ padding: '8px 8px', textAlign: 'center', whiteSpace: 'nowrap' }}>
+                          {(() => {
+                            const ticked = !!j.cost_entered_at;
+                            const inFlight = (tickCostMut.isPending && tickCostMut.variables === j.id)
+                                          || (untickCostMut.isPending && untickCostMut.variables === j.id);
+                            if (ticked) {
+                              return (
+                                <button className="btn btn-ghost btn-sm"
+                                  style={{ fontSize: 11, color: 'var(--primary)' }}
+                                  disabled={inFlight}
+                                  title="Click để bỏ tick"
+                                  onClick={(e) => { e.stopPropagation(); onUntickCostClick(j); }}>
+                                  {inFlight ? '...' : '✓ Đã nhập'}
+                                </button>
+                              );
+                            }
+                            return (
+                              <button className="btn btn-primary btn-sm"
+                                style={{ fontSize: 11 }}
+                                disabled={inFlight}
+                                onClick={(e) => { e.stopPropagation(); onTickCostClick(j); }}>
+                                {inFlight ? '...' : '✅ Nhập cost'}
+                              </button>
+                            );
+                          })()}
                         </td>
                         <td style={{ padding: '8px 8px', textAlign: 'center' }}>
                           {tab === 'completed' ? (

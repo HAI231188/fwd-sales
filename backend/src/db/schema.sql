@@ -1008,3 +1008,17 @@ CREATE INDEX IF NOT EXISTS idx_email_history_sender
   ON email_history(sender_user_id) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_email_history_status
   ON email_history(status) WHERE deleted_at IS NULL;
+
+-- ============================================================
+-- CUS "Nhập cost" tick on job_tk (2026-05-21)
+-- Mirrors the M1 jobs.revenue_entered_* pattern. CUS ticks when they've
+-- entered the cost into the external accounting system. tkDone in
+-- checkAndCompleteJob now requires BOTH job_tk.completed_at (terminal
+-- tk_status) AND job_tk.cost_entered_at (this tick). Order is independent
+-- — CUS may tick cost before or after Thông quan/Giải phóng/Bảo quản;
+-- the job auto-completes when both are set.
+-- ============================================================
+ALTER TABLE job_tk ADD COLUMN IF NOT EXISTS cost_entered_at TIMESTAMP WITH TIME ZONE;
+ALTER TABLE job_tk ADD COLUMN IF NOT EXISTS cost_entered_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_job_tk_cost_pending
+  ON job_tk(job_id) WHERE cost_entered_at IS NULL;

@@ -77,6 +77,11 @@ export const createJob = (data) => api.post('/jobs', data);
 export const tickJobRevenue   = (id) => api.patch(`/jobs/${id}/revenue-tick`);
 export const untickJobRevenue = (id) => api.delete(`/jobs/${id}/revenue-tick`);
 
+// 2026-05-21 — CUS "Nhập cost" tick on job_tk. Independent of tk_status order.
+// PATCH stamps + triggers checkAndCompleteJob; DELETE un-ticks (does NOT auto-uncomplete).
+export const tickJobTkCost   = (id) => api.patch(`/jobs/${id}/tk-cost-tick`);
+export const untickJobTkCost = (id) => api.delete(`/jobs/${id}/tk-cost-tick`);
+
 // KT3 — Accounting dashboard data (role 'ke_toan' only — backend enforces).
 export const getAccountingStats = () => api.get('/accounting/stats');
 export const getAccountingJobs  = (params) => api.get('/accounting/jobs', { params });

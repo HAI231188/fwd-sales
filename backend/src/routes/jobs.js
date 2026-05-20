@@ -1243,6 +1243,7 @@ router.get('/', requireAuth, async (req, res) => {
         jt.tk_datetime, jt.tq_datetime, jt.services_completed,
         jt.delivery_datetime, jt.delivery_location, jt.truck_booked,
         jt.completed_at AS tk_completed_at, jt.notes AS tk_notes,
+        jt.cost_entered_at, jt.cost_entered_by,
         jtr.id AS truck_id, jtr.transport_name, jtr.transport_company_id,
         tc.name AS tc_name,
         jtr.planned_datetime, jtr.actual_datetime,
@@ -2651,8 +2652,117 @@ router.patch('/:id/tk', requireAuth, async (req, res) => {
     // truck_booked flag is still flipped above (in the FIELDS loop) for any
     // legacy reader that hasn't migrated; no downstream side effect needed.
 
+    // Trigger-gap fix (2026-05-21): every other side-completion event calls
+    // checkAndCompleteJob (truck/complete:2719, ops-done:2861, truck-bookings
+    // vehicle transition:403); the TK side did not, leaving TK-only jobs stuck
+    // at status='pending' after CUS marked terminal status. Idempotent — the
+    // helper early-returns when status === 'completed' already.
+    await checkAndCompleteJob(client, req.params.id, req.user.id);
+
     await client.query('COMMIT');
     res.json(rows[0]);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// ─── PATCH /api/jobs/:id/tk-cost-tick ──────────────────────────────────────────
+// CUS marks "đã nhập cost" — independent of tk_status (CUS may tick before or
+// after Thông quan/Giải phóng/Bảo quản). Mirrors the M2 revenue-tick contract
+// at /api/jobs/:id/revenue-tick — same shape, different scope (CUS-side TK
+// completion instead of Sales-side revenue recognition). PATCH stamps; DELETE
+// clears. PATCH calls checkAndCompleteJob so the job auto-flips when both
+// tk_completed_at + cost_entered_at are set.
+router.patch('/:id/tk-cost-tick', requireAuth, async (req, res) => {
+  const allowed = ['cus','cus1','cus2','cus3','lead','truong_phong_log'];
+  if (!allowed.includes(req.user.role)) {
+    return res.status(403).json({ error: 'Không có quyền tick cost' });
+  }
+  const client = await db.pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows: cur } = await client.query(
+      `SELECT jt.id, jt.job_id, jt.cost_entered_at, j.deleted_at
+         FROM job_tk jt
+         LEFT JOIN jobs j ON j.id = jt.job_id
+        WHERE jt.job_id = $1`,
+      [req.params.id]
+    );
+    if (!cur[0] || cur[0].deleted_at) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Không tìm thấy TK của job' });
+    }
+    if (cur[0].cost_entered_at) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Cost đã được tick trước đó' });
+    }
+    const { rows } = await client.query(
+      `UPDATE job_tk
+          SET cost_entered_at = NOW(),
+              cost_entered_by = $1
+        WHERE job_id = $2
+        RETURNING *`,
+      [req.user.id, req.params.id]
+    );
+    await recordHistory(
+      client, req.params.id, req.user.id,
+      'cost_entered', null, rows[0].cost_entered_at?.toISOString?.() || 'NOW()'
+    );
+    const completed = await checkAndCompleteJob(client, req.params.id, req.user.id);
+    await client.query('COMMIT');
+    res.json({ ok: true, tk: rows[0], job_completed: completed });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// ─── DELETE /api/jobs/:id/tk-cost-tick ─────────────────────────────────────────
+// Un-tick. Clears cost_entered_at/by. Does NOT auto-uncomplete the job —
+// matches the M2 revenue un-tick precedent (a completed job stays completed).
+router.delete('/:id/tk-cost-tick', requireAuth, async (req, res) => {
+  const allowed = ['cus','cus1','cus2','cus3','lead','truong_phong_log'];
+  if (!allowed.includes(req.user.role)) {
+    return res.status(403).json({ error: 'Không có quyền bỏ tick cost' });
+  }
+  const client = await db.pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows: cur } = await client.query(
+      `SELECT jt.id, jt.job_id, jt.cost_entered_at, j.deleted_at
+         FROM job_tk jt
+         LEFT JOIN jobs j ON j.id = jt.job_id
+        WHERE jt.job_id = $1`,
+      [req.params.id]
+    );
+    if (!cur[0] || cur[0].deleted_at) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Không tìm thấy TK của job' });
+    }
+    if (!cur[0].cost_entered_at) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Cost chưa được tick' });
+    }
+    const prev = cur[0].cost_entered_at;
+    const { rows } = await client.query(
+      `UPDATE job_tk
+          SET cost_entered_at = NULL,
+              cost_entered_by = NULL
+        WHERE job_id = $1
+        RETURNING *`,
+      [req.params.id]
+    );
+    await recordHistory(
+      client, req.params.id, req.user.id,
+      'cost_entered', prev?.toISOString?.() || String(prev), null
+    );
+    await client.query('COMMIT');
+    res.json({ ok: true, tk: rows[0] });
   } catch (err) {
     await client.query('ROLLBACK');
     res.status(500).json({ error: err.message });

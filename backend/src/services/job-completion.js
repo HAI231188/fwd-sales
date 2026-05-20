@@ -14,7 +14,8 @@
 async function checkAndCompleteJob(client, jobId, changedBy, recordHistory) {
   const { rows } = await client.query(`
     SELECT j.id, j.status, j.service_type, j.destination,
-           jt.completed_at  AS tk_completed_at,
+           jt.completed_at    AS tk_completed_at,
+           jt.cost_entered_at AS tk_cost_entered_at,
            get_truck_booking_status(j.id) AS truck_booking_status,
            COALESCE(ja.ops_done, FALSE) AS ops_done
     FROM jobs j
@@ -26,7 +27,11 @@ async function checkAndCompleteJob(client, jobId, changedBy, recordHistory) {
   const j = rows[0];
   if (j.status === 'completed') return false;
 
-  const tkDone    = !!j.tk_completed_at;
+  // tkDone (2026-05-21): now requires BOTH terminal tk_status (which stamps
+  // job_tk.completed_at) AND CUS's "Nhập cost" tick (job_tk.cost_entered_at).
+  // Cost-tick order is independent of tk_status (mirrors M2 revenue-tick).
+  // Affects service_type='tk' and 'both'; 'truck' branch doesn't use tkDone.
+  const tkDone    = !!j.tk_completed_at && !!j.tk_cost_entered_at;
   const truckDone = j.truck_booking_status === 'hoan_thanh';
   const opsDone   = !!j.ops_done;
 
