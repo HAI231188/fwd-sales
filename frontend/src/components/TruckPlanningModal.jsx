@@ -206,41 +206,63 @@ export default function TruckPlanningModal({ jobId, jobCode, onClose }) {
     return map;
   }, [mailStatusData]);
 
-  // Per-container rows. Match each container to its booking (if any).
+  // FCL vs LCL. LCL jobs have zero job_containers (aggregate so_kien/kg/cbm);
+  // their bookings are whole-lot (no truck_booking_containers link). The
+  // container-driven row builder below would yield 0 rows for LCL — so LCL
+  // branches to map over `bookings` directly. Mirrors PlanDeliveryModal (82737e6).
   const containers = job?.containers || [];
+  const isLcl = job?.cargo_type === 'lcl';
+  const lotSummary = job
+    ? `Cả lô — ${job.so_kien ?? '?'} kiện, ${job.kg ?? '?'} kg${job.cbm != null ? `, ${job.cbm} CBM` : ''}`
+    : 'Cả lô';
+
+  // Shared row shape for both branches. For FCL, container fields come from the
+  // job_containers row; for LCL they are null (whole-lot booking).
+  function bookingRow(b, contFields) {
+    return {
+      container_id: contFields.container_id,
+      cont_number: contFields.cont_number,
+      cont_type: contFields.cont_type,
+      booking_id: b?.id || null,
+      booking_code: b?.booking_code || null,
+      delivery_location: b?.delivery_location || '',
+      planned_datetime: b?.planned_datetime || '',
+      transport_company_id: b?.transport_company_id ?? null,
+      transport_name: b?.transport_current_name || b?.transport_name || '',
+      // CP5.3 — null = forming batch, number = already-mailed batch id.
+      mail_group_id: b?.mail_group_id ?? null,
+      cost: b?.cost != null ? String(b.cost) : '',
+      vehicle_number: b?.vehicle_number || '',
+      // CP4.1 — local edit state for receiver info. ReceiverInfoModal merges
+      // changes here (marking the row dirty); the batch "Lưu thay đổi" footer
+      // PATCHes alongside cost/vehicle_number, matching how every other
+      // Vùng 1 column works.
+      receiver_name:  b?.receiver_name  || '',
+      receiver_phone: b?.receiver_phone || '',
+      bbbg_note:      b?.bbbg_note      || '',
+      // CP6.1 — sign-off ticks. Default false. Editable only when this row
+      // already has a carrier + vehicle (the gating logic lives in the
+      // Vùng1Table cell renderer).
+      invoice_lifting_ticked: !!b?.invoice_lifting_ticked,
+      cost_entered_ticked:    !!b?.cost_entered_ticked,
+      dirty: false,
+    };
+  }
   const initialRows = useMemo(() => {
+    // LCL: one row per whole-lot booking (no containers to iterate).
+    if (isLcl) {
+      return bookings.map(b => bookingRow(b, {
+        container_id: null, cont_number: null, cont_type: null,
+      }));
+    }
+    // FCL: one row per container, matched to its booking (if any).
     return containers.map(c => {
       const b = bookings.find(b => (b.containers || []).some(bc => bc.id === c.id));
-      return {
-        container_id: c.id,
-        cont_number: c.cont_number,
-        cont_type: c.cont_type,
-        booking_id: b?.id || null,
-        booking_code: b?.booking_code || null,
-        delivery_location: b?.delivery_location || '',
-        planned_datetime: b?.planned_datetime || '',
-        transport_company_id: b?.transport_company_id ?? null,
-        transport_name: b?.transport_current_name || b?.transport_name || '',
-        // CP5.3 — null = forming batch, number = already-mailed batch id.
-        mail_group_id: b?.mail_group_id ?? null,
-        cost: b?.cost != null ? String(b.cost) : '',
-        vehicle_number: b?.vehicle_number || '',
-        // CP4.1 — local edit state for receiver info. ReceiverInfoModal merges
-        // changes here (marking the row dirty); the batch "Lưu thay đổi" footer
-        // PATCHes alongside cost/vehicle_number, matching how every other
-        // Vùng 1 column works.
-        receiver_name:  b?.receiver_name  || '',
-        receiver_phone: b?.receiver_phone || '',
-        bbbg_note:      b?.bbbg_note      || '',
-        // CP6.1 — sign-off ticks. Default false. Editable only when this row
-        // already has a carrier + vehicle (the gating logic lives in the
-        // Vùng1Table cell renderer).
-        invoice_lifting_ticked: !!b?.invoice_lifting_ticked,
-        cost_entered_ticked:    !!b?.cost_entered_ticked,
-        dirty: false,
-      };
+      return bookingRow(b, {
+        container_id: c.id, cont_number: c.cont_number, cont_type: c.cont_type,
+      });
     });
-  }, [containers, bookings]);
+  }, [isLcl, containers, bookings]);
 
   const [rows, setRows] = useState([]);
   useEffect(() => { setRows(initialRows); }, [initialRows]);
@@ -399,6 +421,7 @@ export default function TruckPlanningModal({ jobId, jobCode, onClose }) {
             <>
               <SectionTitle>Vùng 1: Bảng kế hoạch theo container</SectionTitle>
               <Vung1Table rows={rows} job={job} onUpdateRow={updateRow}
+                isLcl={isLcl} lotSummary={lotSummary}
                 onOpenReceiver={(bookingId) => setReceiverModalBookingId(bookingId)}
                 canEditTicks={user?.role === 'dieu_do'} />
 
@@ -417,6 +440,7 @@ export default function TruckPlanningModal({ jobId, jobCode, onClose }) {
                     return (
                       <TransportCard key={g.key} group={g}
                         statusInfo={statusInfo}
+                        lotSummary={isLcl ? lotSummary : null}
                         sending={sendingGroupKey === g.key}
                         canceling={cancelingGroupKey === g.key}
                         loadingBbbg={bbbgLoadingGroupKey === g.key}
@@ -567,7 +591,7 @@ function SectionTitle({ children }) {
   );
 }
 
-function Vung1Table({ rows, job, onUpdateRow, onOpenReceiver, canEditTicks }) {
+function Vung1Table({ rows, job, isLcl, lotSummary, onUpdateRow, onOpenReceiver, canEditTicks }) {
   const impExp = job?.import_export;
   const inp = { padding: '4px 6px', border: '1px solid var(--border)', borderRadius: 4,
     fontSize: 12, width: '100%', minWidth: 0, boxSizing: 'border-box' };
@@ -575,6 +599,15 @@ function Vung1Table({ rows, job, onUpdateRow, onOpenReceiver, canEditTicks }) {
   const th = { padding: '10px 8px', textAlign: 'left', fontWeight: 600,
     color: 'var(--text-2)', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em',
     background: 'var(--bg)', borderBottom: '2px solid var(--border)', whiteSpace: 'nowrap' };
+
+  if (rows.length === 0) {
+    return (
+      <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-3)', fontSize: 13,
+        border: '1px solid var(--border)', borderRadius: 8, background: 'var(--bg)' }}>
+        Chưa có kế hoạch xe — vào &quot;Đặt kế hoạch xe&quot; để tạo trước.
+      </div>
+    );
+  }
 
   return (
     <div style={{ overflowX: 'auto', border: '1px solid var(--border)', borderRadius: 8 }}>
@@ -602,13 +635,13 @@ function Vung1Table({ rows, job, onUpdateRow, onOpenReceiver, canEditTicks }) {
               ? 'Cần đặt kế hoạch trước (nút Đặt kế hoạch xe)'
               : '';
             return (
-              <tr key={r.container_id} style={{ background: noBooking ? 'rgba(156,163,175,0.04)' : '#fff' }}>
+              <tr key={r.booking_id ?? r.container_id} style={{ background: noBooking ? 'rgba(156,163,175,0.04)' : '#fff' }}>
                 <td style={{ ...td, color: 'var(--text-2)', fontFamily: 'var(--font-display)',
                   fontWeight: 600, whiteSpace: 'nowrap' }}>
                   {r.booking_code || '—'}
                 </td>
-                <td style={{ ...td, fontWeight: 600 }}>{r.cont_number || '—'}</td>
-                <td style={td}>{r.cont_type}</td>
+                <td style={{ ...td, fontWeight: 600 }}>{isLcl ? lotSummary : (r.cont_number || '—')}</td>
+                <td style={td}>{isLcl ? '—' : r.cont_type}</td>
                 <td style={td}>{noBooking ? '—' : (r.delivery_location || '—')}</td>
                 <td style={{ ...td, whiteSpace: 'nowrap' }}>
                   {noBooking ? '—' : fmtPlanned(r.planned_datetime)}
@@ -734,7 +767,7 @@ function fmtSentTime(iso) {
 }
 
 function TransportCard({
-  group, statusInfo,
+  group, statusInfo, lotSummary,
   sending, canceling, loadingBbbg,
   onPreview, onSend, onPreviewBbbg, onCancelMail, onShowHistory,
 }) {
@@ -791,21 +824,21 @@ function TransportCard({
                 {b.booking_code || '—'}
               </span>
               <span>
-                {b.cont_number || '(chưa số)'} ({b.cont_type})
+                {b.cont_type ? `${b.cont_number || '(chưa số)'} (${b.cont_type})` : (lotSummary || 'Cả lô')}
                 {b.planned_datetime ? ` — ${fmtPlanned(b.planned_datetime)}` : ''}
                 {b.delivery_location ? `, ${b.delivery_location}` : ''}
               </span>
             </div>
           ))
         ) : group.rows.map(r => (
-          <div key={r.container_id} style={{ fontSize: 12, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          <div key={r.booking_id ?? r.container_id} style={{ fontSize: 12, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
             <span style={{ padding: '1px 6px', background: 'var(--primary-dim)',
               color: 'var(--primary)', borderRadius: 4, fontWeight: 600,
               fontFamily: 'var(--font-display)', fontSize: 11 }}>
               {r.booking_code || '—'}
             </span>
             <span style={{ color: 'var(--text)' }}>
-              {r.cont_number || '(chưa số)'} ({r.cont_type})
+              {r.cont_type ? `${r.cont_number || '(chưa số)'} (${r.cont_type})` : (lotSummary || 'Cả lô')}
               {r.planned_datetime ? ` — ${fmtPlanned(r.planned_datetime)}` : ''}
               {r.delivery_location ? `, ${r.delivery_location}` : ''}
               {r.cost ? `, ${Number(r.cost).toLocaleString('vi-VN')}đ` : ''}
