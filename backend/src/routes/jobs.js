@@ -11,6 +11,12 @@ let suggestionCache = { data: null, ts: 0 };
 const CUS_ROLES = ['cus', 'cus1', 'cus2', 'cus3'];
 const AUTO_CUS_ROLES = ['cus1', 'cus2', 'cus3'];
 const LOG_ROLES = ['truong_phong_log', 'dieu_do', 'cus', 'cus1', 'cus2', 'cus3', 'ops'];
+// "Đặt kế hoạch xe" surface roles — kept in sync with PLAN_ROLES in
+// routes/truck-bookings.js:32-33 (not exported there; replicated here).
+// PlanDeliveryModal is shared by CUS/DieuDo/TP; its read endpoints
+// (available-containers, past-delivery-locations) must allow this whole set.
+const PLAN_ROLES = ['dieu_do', 'truong_phong_log', 'lead', 'sales',
+                    'cus', 'cus1', 'cus2', 'cus3'];
 
 async function recordHistory(client, jobId, changedBy, fieldName, oldValue, newValue) {
   if (String(oldValue) === String(newValue)) return;
@@ -3397,10 +3403,12 @@ router.get('/:id/truck-booking-status', requireAuth, async (req, res) => {
 
 // GET /api/jobs/:id/available-containers
 // Containers belonging to this job that are NOT yet in any LIVE booking.
-// Used by the booking-create modal to populate its checkbox list. Restricted
-// to dieu_do + truong_phong_log since this is a planning surface.
+// Consumed by the DD booking-create modal AND by PlanDeliveryModal (the
+// shared "Đặt kế hoạch xe" surface used by CUS/DieuDo/TP). Guard widened to
+// PLAN_ROLES — reading the container list is strictly less privileged than
+// POST /api/truck-bookings/batch, which CUS already calls.
 router.get('/:id/available-containers', requireAuth, async (req, res) => {
-  if (!['dieu_do', 'truong_phong_log'].includes(req.user.role)) {
+  if (!PLAN_ROLES.includes(req.user.role)) {
     return res.status(403).json({ error: 'Không có quyền' });
   }
   const id = parseInt(req.params.id, 10);
@@ -3432,7 +3440,9 @@ router.get('/:id/available-containers', requireAuth, async (req, res) => {
 // truck_bookings (new) with a UNION fallback to legacy job_truck so any
 // pre-Phase-2 data still surfaces during the transition window.
 router.get('/:id/past-delivery-locations', requireAuth, async (req, res) => {
-  if (!['dieu_do', 'truong_phong_log'].includes(req.user.role)) {
+  // PLAN_ROLES — PlanDeliveryModal's delivery-location autocomplete is shared
+  // with CUS (L10 broadcast: same fix as available-containers above).
+  if (!PLAN_ROLES.includes(req.user.role)) {
     return res.status(403).json({ error: 'Không có quyền' });
   }
   const id = parseInt(req.params.id, 10);
