@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import {
+  getJob,
   getTruckBookings, getAvailableContainers, getPastDeliveryLocations,
   createTruckBookingsBatch, updateTruckBooking, deleteTruckBooking,
 } from '../api';
@@ -35,6 +36,18 @@ export default function PlanDeliveryModal({ jobId, jobCode, onClose, onSaved }) 
   const [err, setErr] = useState('');
   const [saving, setSaving] = useState(false);
 
+  // Job fetch — needed for cargo_type (FCL per-container vs LCL whole-lot)
+  // and the LCL lot summary (so_kien / kg / cbm).
+  const { data: job, isLoading: loadingJob } = useQuery({
+    queryKey: ['job', jobId],
+    queryFn: () => getJob(jobId),
+    enabled: !!jobId,
+  });
+  const isLcl = job?.cargo_type === 'lcl';
+  const lotSummary = job
+    ? `Cả lô — ${job.so_kien ?? '?'} kiện, ${job.kg ?? '?'} kg, ${job.cbm ?? '?'} CBM`
+    : 'Cả lô';
+
   const { data: bookings = [], isLoading: loadingBookings } = useQuery({
     queryKey: ['truck-bookings', jobId],
     queryFn: () => getTruckBookings(jobId),
@@ -61,6 +74,37 @@ export default function PlanDeliveryModal({ jobId, jobCode, onClose, onSaved }) 
   // bookings, toggling off and saving DELETES the booking (soft-delete on the
   // server). For new rows, toggling off just excludes them from the batch.
   const initialRows = useMemo(() => {
+    // Until the job is loaded we don't know FCL vs LCL — return nothing so we
+    // don't briefly render the wrong layout.
+    if (!job) return [];
+
+    // LCL whole-lot: one row per existing booking (no containers), plus a
+    // single empty row to start with when nothing is planned yet. The user
+    // adds more rows via "+ Thêm xe" (LCL is usually 1 truck, sometimes 2).
+    if (isLcl) {
+      const rows = bookings.map(b => ({
+        container_id: null,
+        cont_number: null,
+        cont_type: null,
+        booking_id: b.id,
+        planned_datetime: toDatetimeLocal(b.planned_datetime),
+        delivery_location: b.delivery_location || '',
+        note: b.note || '',
+        existing: true,
+        enabled: true,
+        dirty: false,
+      }));
+      if (rows.length === 0) {
+        rows.push({
+          container_id: null, cont_number: null, cont_type: null,
+          booking_id: null, planned_datetime: '', delivery_location: '',
+          note: '', existing: false, enabled: true, dirty: false,
+        });
+      }
+      return rows;
+    }
+
+    // FCL: one row per container (existing booking rows + available).
     const rows = [];
     for (const b of bookings) {
       for (const c of (b.containers || [])) {
@@ -93,7 +137,7 @@ export default function PlanDeliveryModal({ jobId, jobCode, onClose, onSaved }) 
       });
     }
     return rows;
-  }, [bookings, avail]);
+  }, [job, isLcl, bookings, avail]);
 
   const [rows, setRows] = useState([]);
 
@@ -107,6 +151,15 @@ export default function PlanDeliveryModal({ jobId, jobCode, onClose, onSaved }) 
 
   function toggleRow(idx) {
     setRows(rs => rs.map((r, i) => i === idx ? { ...r, enabled: !r.enabled } : r));
+  }
+
+  // LCL only — add another whole-lot truck row (the occasional 2nd truck).
+  function addLclRow() {
+    setRows(rs => [...rs, {
+      container_id: null, cont_number: null, cont_type: null,
+      booking_id: null, planned_datetime: '', delivery_location: '',
+      note: '', existing: false, enabled: true, dirty: false,
+    }]);
   }
 
   const enabledCount = rows.filter(r => r.enabled).length;
@@ -141,9 +194,11 @@ export default function PlanDeliveryModal({ jobId, jobCode, onClose, onSaved }) 
       const toDelete = rows.filter(r => !r.enabled && r.existing && r.booking_id);
 
       if (newOnes.length > 0) {
+        // FCL rows carry container_id; LCL whole-lot rows omit it entirely
+        // (backend POST /batch accepts container-less bookings for LCL jobs).
         await createTruckBookingsBatch(newOnes.map(r => ({
           job_id: jobId,
-          container_id: r.container_id,
+          ...(r.container_id != null ? { container_id: r.container_id } : {}),
           planned_datetime: r.planned_datetime,
           delivery_location: r.delivery_location.trim(),
           note: r.note?.trim() || null,
@@ -176,7 +231,7 @@ export default function PlanDeliveryModal({ jobId, jobCode, onClose, onSaved }) 
     }
   }
 
-  const loading = loadingBookings || loadingAvail;
+  const loading = loadingJob || loadingBookings || loadingAvail;
 
   return createPortal((
     <div className="modal-overlay" style={{ zIndex }}
@@ -195,17 +250,26 @@ export default function PlanDeliveryModal({ jobId, jobCode, onClose, onSaved }) 
               Đang tải...
             </div>
           ) : rows.length === 0 ? (
+            // Empty state only reachable for FCL (LCL always seeds ≥1 lot row).
             <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-3)' }}>
               Job này chưa có container. Hãy thêm container trong &quot;Tạo job&quot; trước khi đặt kế hoạch xe.
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               {rows.map((r, idx) => (
-                <PlanRow key={`${r.container_id}-${idx}`}
+                <PlanRow key={`${r.booking_id ?? 'new'}-${r.container_id ?? 'lot'}-${idx}`}
                   row={r} pastLocs={pastLocs}
+                  isLcl={isLcl} lotSummary={lotSummary}
                   onChange={(f, v) => updateRow(idx, f, v)}
                   onToggle={() => toggleRow(idx)} />
               ))}
+              {isLcl && (
+                <button type="button" className="btn btn-ghost btn-sm"
+                  style={{ alignSelf: 'flex-start' }}
+                  onClick={addLclRow}>
+                  + Thêm xe
+                </button>
+              )}
             </div>
           )}
 
@@ -228,7 +292,7 @@ export default function PlanDeliveryModal({ jobId, jobCode, onClose, onSaved }) 
   ), document.body);
 }
 
-function PlanRow({ row, pastLocs, onChange, onToggle }) {
+function PlanRow({ row, pastLocs, isLcl, lotSummary, onChange, onToggle }) {
   const [showLocList, setShowLocList] = useState(false);
   const filteredLocs = useMemo(() => {
     const q = (row.delivery_location || '').trim().toLowerCase();
@@ -257,13 +321,19 @@ function PlanRow({ row, pastLocs, onChange, onToggle }) {
         }}>
           <input type="checkbox" checked={row.enabled} onChange={onToggle}
             style={{ width: 16, height: 16, cursor: 'pointer' }} />
-          Đặt cont này
+          {isLcl ? 'Đặt xe này' : 'Đặt cont này'}
         </label>
         <span style={{ width: 1, height: 16, background: 'var(--border)' }} />
-        <strong style={{ fontSize: 13 }}>
-          {row.cont_number || `(${row.cont_type} chưa nhập số)`}
-        </strong>
-        <span style={{ fontSize: 12, color: 'var(--text-2)' }}>({row.cont_type})</span>
+        {isLcl ? (
+          <strong style={{ fontSize: 13 }}>{lotSummary}</strong>
+        ) : (
+          <>
+            <strong style={{ fontSize: 13 }}>
+              {row.cont_number || `(${row.cont_type} chưa nhập số)`}
+            </strong>
+            <span style={{ fontSize: 12, color: 'var(--text-2)' }}>({row.cont_type})</span>
+          </>
+        )}
         {row.existing && row.enabled && (
           <span style={{ fontSize: 11, padding: '2px 6px', background: 'var(--primary-dim)',
             color: 'var(--primary)', borderRadius: 4 }}>Đã có kế hoạch</span>

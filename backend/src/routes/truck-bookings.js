@@ -441,15 +441,20 @@ router.post('/batch', requireAuth, async (req, res) => {
   }
 
   // Per-row shape validation. Build a normalized list with parsed ids.
+  // container_id is OPTIONAL — absent for LCL whole-lot bookings (the job has
+  // no job_containers rows). When present it must be a valid int. The
+  // FCL-requires-container / LCL-forbids-container cross-check runs after this
+  // loop, once we know each job's cargo_type.
   const norm = [];
   for (let i = 0; i < items.length; i++) {
     const r = items[i] || {};
     const jobId = parseInt(r.job_id, 10);
-    const contId = parseInt(r.container_id, 10);
     if (!Number.isFinite(jobId)) {
       return res.status(400).json({ error: `Dòng ${i + 1}: job_id không hợp lệ` });
     }
-    if (!Number.isFinite(contId)) {
+    const hasCont = r.container_id !== undefined && r.container_id !== null && r.container_id !== '';
+    const contId = hasCont ? parseInt(r.container_id, 10) : null;
+    if (hasCont && !Number.isFinite(contId)) {
       return res.status(400).json({ error: `Dòng ${i + 1}: container_id không hợp lệ` });
     }
     if (!r.planned_datetime || !String(r.planned_datetime).trim()) {
@@ -477,11 +482,37 @@ router.post('/batch', requireAuth, async (req, res) => {
   try {
     await client.query('BEGIN');
 
+    // cargo_type cross-check: an FCL row MUST carry a container_id; an LCL row
+    // MUST NOT (LCL = whole-lot booking, no job_containers, no link row).
+    const jobIds = [...new Set(norm.map(r => r.job_id))];
+    const { rows: jobRows } = await client.query(
+      `SELECT id, cargo_type FROM jobs WHERE id = ANY($1::int[]) AND deleted_at IS NULL`,
+      [jobIds]
+    );
+    const cargoByJob = new Map(jobRows.map(j => [j.id, j.cargo_type]));
+    for (let i = 0; i < norm.length; i++) {
+      const r = norm[i];
+      const cargo = cargoByJob.get(r.job_id);
+      if (cargo === undefined) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: `Dòng ${i + 1}: không tìm thấy job #${r.job_id}` });
+      }
+      if (cargo === 'lcl' && r.container_id !== null) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: `Dòng ${i + 1}: job LCL không nhận container_id` });
+      }
+      if (cargo !== 'lcl' && r.container_id === null) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: `Dòng ${i + 1}: thiếu container_id` });
+      }
+    }
+
     // Validate every container belongs to its named job. Group by job_id to
     // minimize roundtrips. The COUNT-match technique mirrors the single-POST
-    // path (line ~145).
+    // path (line ~145). LCL rows (container_id null) are skipped entirely.
     const byJob = new Map();
     for (const r of norm) {
+      if (r.container_id === null) continue;
       const arr = byJob.get(r.job_id) || [];
       arr.push(r.container_id);
       byJob.set(r.job_id, arr);
@@ -502,7 +533,8 @@ router.post('/batch', requireAuth, async (req, res) => {
     // Pre-check: none of the requested containers is already in another LIVE
     // booking. Surfaces a user-friendly list of cont_numbers vs. letting the
     // UNIQUE(container_id) on the link table error out anonymously.
-    const allCids = norm.map(r => r.container_id);
+    // LCL rows have no container_id — filtered out (no link row, no conflict).
+    const allCids = norm.map(r => r.container_id).filter(c => c !== null);
     const { rows: dupRows } = await client.query(`
       SELECT tbc.container_id, jc.cont_number
       FROM truck_booking_containers tbc
@@ -540,10 +572,14 @@ router.post('/batch', requireAuth, async (req, res) => {
          req.user.id]
       );
       const bookingId = bRows[0].id;
-      await client.query(
-        `INSERT INTO truck_booking_containers (booking_id, container_id) VALUES ($1, $2)`,
-        [bookingId, r.container_id]
-      );
+      // FCL: one M:N link row per container. LCL: no link row (whole-lot
+      // booking — container_id is null, L20 UNIQUE(container_id) untouched).
+      if (r.container_id !== null) {
+        await client.query(
+          `INSERT INTO truck_booking_containers (booking_id, container_id) VALUES ($1, $2)`,
+          [bookingId, r.container_id]
+        );
+      }
       createdIds.push(bookingId);
     }
 
