@@ -682,6 +682,67 @@ Applies to future tables: `ports`, `vendors`, `forwarders`, `customs_brokers`, e
 
 ---
 
+### L23 — MCP server (Windows) — wrap an npm `.cmd` in `cmd.exe /c`
+
+**Root cause pattern:** An MCP server in `C:\Users\HP\.claude.json` that launches an npm-installed CLI (e.g. `codegraph`) fails to start on Windows. The failure has **two layers** and surfaces as two different errors in sequence:
+
+1. **`spawn <tool> ENOENT`** — the config used a bare command name (`"command": "codegraph"`). On Windows that resolves to the extension-less Unix shell script npm drops next to the `.cmd`, which cannot be spawned as a process → `ENOENT`.
+2. **`spawn EINVAL`** — after "fixing" the command to point directly at `...\codegraph.cmd`, Node's `spawn()` **without `shell: true`** refuses to launch a `.cmd`/`.bat` file (a Node security change, CVE-2024-27980) → `EINVAL`. Claude Code's own MCP spawner tolerates a `.cmd`, but the ECC `mcp-health-check.js` PreToolUse hook does a plain `spawn(command, args)` with no `shell`, so it keeps blocking every one of that server's tools (`codegraph_*`) with a "server is unavailable" message and a quarantine timestamp.
+
+**Fix (standard Windows MCP pattern) — wrap in `cmd.exe`:**
+```json
+"codegraph": {
+  "type": "stdio",
+  "command": "C:\\Windows\\System32\\cmd.exe",
+  "args": ["/c", "C:\\Users\\HP\\AppData\\Roaming\\npm\\<tool>.cmd", "<tool args...>"]
+}
+```
+`cmd.exe` is a real `.exe`, so `spawn()` launches it cleanly with no `shell` flag → no `EINVAL`; `cmd /c` then runs the `.cmd` internally. This satisfies BOTH Claude Code's spawner and the ECC health-check hook.
+
+**Process notes:**
+1. Edit `C:\Users\HP\.claude.json` **directly** with **double-escaped backslashes** (`\\`). Do **not** use `claude mcp add/remove` — on Windows it strips backslashes from the path.
+2. After editing, validate the file still parses as JSON (a corrupt `.claude.json` breaks all MCP servers + Claude Code config).
+3. Reload with `/mcp` → select the server → **Reconnect** (lightest action; full restart only if Reconnect isn't offered). The config is re-read on reconnect.
+4. The ECC health-check quarantine clears automatically on the next successful live probe after reconnect — no manual unblock needed.
+
+**Rules:**
+1. Any Windows MCP server that launches an npm-installed CLI must use the `cmd.exe /c <tool>.cmd` wrapper — never a bare command name, never a direct `.cmd` path.
+2. Verify the npm tool actually has the `.cmd` variant before pointing at it: `dir <npm-prefix>\<tool>*` — npm creates three siblings (`<tool>`, `<tool>.cmd`, `<tool>.ps1`); the `.cmd` is the one to wrap.
+3. When an MCP tool is blocked with `ENOENT`/`EINVAL`, the layer at fault is the hook's `spawn()` call, not the index or the tool itself — check the `command` shape first.
+
+Applies to: `codegraph` MCP server (fixed this session). Future candidates: any npm-based MCP server added on Windows (Context7 local installs, custom MCP CLIs, etc.).
+
+---
+
+### L24 — `checkAndCompleteJob` is defined in TWO files — confirm the canonical one before editing completion logic
+
+**Root cause pattern:** CodeGraph (`codegraph_search checkAndCompleteJob`) surfaced the same function name defined in **two** files with **different signatures**:
+
+| File | Signature | Status |
+|------|-----------|--------|
+| `backend/src/routes/jobs.js:44` | `(client, jobId, changedBy)` | suspect — verify if stale duplicate or thin wrapper |
+| `backend/src/services/job-completion.js:14` | `(client, jobId, changedBy, recordHistory)` | **canonical Phase-4 version** |
+
+`services/job-completion.js` is the canonical version per CLAUDE.md §3 (TRUCK_BOOKINGS) — it is the one called from `PATCH /api/truck-bookings/:id` on `vehicle_number` transitions.
+
+**Risk:** Completion-logic fixes (the `PATCH /tk` trigger-gap call, the cost gate, FCL/LCL completion) must target the **canonical** `services/job-completion.js` version. If `routes/jobs.js:44` is a stale independent copy, a fix applied to one silently diverges from the other — exactly the "fixed here, still broken there" class of bug §9 (L9) and L10 warn about.
+
+**TODO (deferred — not yet done):**
+1. Run `codegraph_callers` on both definitions to map which call sites use which.
+2. Confirm whether `routes/jobs.js:44` is a **thin wrapper** re-exporting / delegating to the `services/job-completion.js` version (likely — `job-completion.js` is imported near the top of `routes/jobs.js`), or a **stale independent copy**.
+3. If it is a stale independent copy, consolidate to a single canonical definition.
+
+Deferred because it touches shared completion logic — needs `codegraph_impact` first (per §9) and careful review, not a drive-by edit.
+
+**Rules:**
+1. Before editing any job-completion code, confirm you are editing `services/job-completion.js` (canonical), not the `routes/jobs.js` definition.
+2. Do not "fix" `routes/jobs.js:44` in isolation — broadcast or consolidate per L10.
+3. When a symbol search returns the same name from two files, treat it as a duplication hazard and resolve which is canonical before any edit.
+
+Applies to: `checkAndCompleteJob` (current). General rule: any function found defined more than once by `codegraph_search`.
+
+---
+
 ## 6. Session Start Checklist
 
 1. Read this file.
