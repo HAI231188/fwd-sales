@@ -92,6 +92,27 @@ function fmtWeight(w) {
   const s = Number.isInteger(n) ? String(n) : n.toString();
   return ` - ${s} tấn`;
 }
+// Phase 5 — LCL cargo summary for the planning mail. LCL jobs have no
+// containers, so the mail describes the whole lot via jobs.so_kien/kg/cbm.
+// so_kien is INTEGER; kg/cbm are DECIMAL (pg returns them as strings like
+// "13933.00"), so each value is normalized: null/empty/non-finite → dropped,
+// integer-valued → trailing .00 stripped. Never emits "null kg".
+function cargoNum(v) {
+  if (v == null || v === '') return null;
+  const n = Number(v);
+  if (!Number.isFinite(n)) return null;
+  return Number.isInteger(n) ? String(n) : n.toString();
+}
+function cargoLabel(job) {
+  const parts = [];
+  const kien = cargoNum(job && job.so_kien);
+  if (kien != null) parts.push(`${kien} kiện`);
+  const kg = cargoNum(job && job.kg);
+  if (kg != null) parts.push(`${kg} kg`);
+  const cbm = cargoNum(job && job.cbm);
+  if (cbm != null) parts.push(`${cbm} CBM`);
+  return parts.join(', ') || 'hàng lẻ';
+}
 // CP4.1 — Per-booking warehouse contact line. Emitted only when name OR phone
 // is set; bbbg_note is intentionally NOT rendered (driver-only, BBBG PDF).
 function receiverLine(b) {
@@ -156,12 +177,18 @@ async function sendWithRetry(transporter, mailOptions, maxRetries = 2) {
   throw lastErr;
 }
 
-function renderSubject({ mailType, jobCode, customerName, n, importExport, earliestPlanned }) {
+function renderSubject({ mailType, jobCode, customerName, n, importExport, earliestPlanned, cargoType, job }) {
   const customerShort = firstWord(customerName);
   const ieLabel = importExport === 'import' ? 'Nhập' : 'Xuất';
   const dateLabel = shortDate(earliestPlanned);
   const prefix = mailType === 'cancel' ? 'HỦY ĐẶT KẾ HOẠCH XE' : 'ĐẶT KẾ HOẠCH XE';
-  return `${prefix} ${jobCode} - ${customerShort} - ${n} cont / ${ieLabel} / ${dateLabel}`;
+  // LCL: describe the whole lot once; bookings are trucks, not conts, so the
+  // "(N xe)" suffix only appears when the lot is split across >1 booking.
+  // FCL: unchanged — "{n} cont".
+  const cargoSeg = cargoType === 'lcl'
+    ? `${cargoLabel(job)}${n > 1 ? ` (${n} xe)` : ''}`
+    : `${n} cont`;
+  return `${prefix} ${jobCode} - ${customerShort} - ${cargoSeg} / ${ieLabel} / ${dateLabel}`;
 }
 
 function renderBody({
@@ -179,6 +206,10 @@ function renderBody({
   // CP5.1 — free-text cancellation reason. Rendered as "Lý do hủy: …"
   // when present on a cancel mail; ignored on 'new' mails.
   reason = null,
+  // Phase 5 — LCL: jobs.cargo_type ('fcl'|'lcl') selects the cargo wording.
+  // `job` carries so_kien/kg/cbm for cargoLabel(). FCL renders byte-identically.
+  cargoType,
+  job,
 }) {
   const lines = [];
   lines.push('Kính gửi anh/chị,');
@@ -194,7 +225,9 @@ function renderBody({
     lines.push(`SLB Logistics xin thông báo HỦY kế hoạch giao hàng đã gửi trước đó cho job ${jobCode}:`);
     lines.push('');
     bookings.forEach(b => {
-      lines.push(`📦 [${b.booking_code}] Cont ${b.cont_number || '(chưa số)'} (${b.cont_type || '—'})`);
+      lines.push(cargoType === 'lcl'
+        ? `📦 [${b.booking_code}] Cả lô`
+        : `📦 [${b.booking_code}] Cont ${b.cont_number || '(chưa số)'} (${b.cont_type || '—'})`);
       lines.push(`   - Ngày giao đã đặt: ${fmtDt(b.planned_datetime)}`);
       lines.push(`   - Địa điểm: ${b.delivery_location || '—'}`);
       lines.push('');
@@ -222,7 +255,10 @@ function renderBody({
     lines.push('SLB Logistics gửi kế hoạch giao hàng như sau, nhờ anh/chị sắp xếp:');
   }
   lines.push('');
-  lines.push(`📦 Tổng cộng: ${bookings.length} cont`);
+  // LCL: lot summary once, "(N xe)" only when split across >1 booking.
+  lines.push(cargoType === 'lcl'
+    ? `📦 Tổng cộng: ${cargoLabel(job)}${bookings.length > 1 ? ` (${bookings.length} xe)` : ''}`
+    : `📦 Tổng cộng: ${bookings.length} cont`);
   lines.push(`🏢 Khách hàng: ${customerName || '—'}`);
   lines.push(`🚢 Hãng tàu: ${shippingLine || '—'}`);
   lines.push(`📅 Hạn lệnh / Cutoff: ${fmtHanLenh(hanLenh, importExport)}`);
@@ -249,7 +285,9 @@ function renderBody({
   lines.push('📝 Chi tiết kế hoạch:');
   lines.push('');
   bookings.forEach((b, i) => {
-    lines.push(`${i + 1}. [${b.booking_code}] Cont ${b.cont_number || '(chưa số)'} (${b.cont_type})${fmtWeight(b.weight_tons)}`);
+    lines.push(cargoType === 'lcl'
+      ? `${i + 1}. [${b.booking_code}] Cả lô`
+      : `${i + 1}. [${b.booking_code}] Cont ${b.cont_number || '(chưa số)'} (${b.cont_type})${fmtWeight(b.weight_tons)}`);
     lines.push(`   - Ngày giờ giao: ${fmtDt(b.planned_datetime)}`);
     lines.push(`   - Địa điểm giao: ${b.delivery_location || '—'}`);
     lines.push(`   - Cước chốt: ${fmtCost(b.cost)}`);
@@ -368,7 +406,8 @@ async function sendPlanningEmail({
   // shows it as '—' if NULL. A later schema change can add the column
   // without touching this query (the COALESCE here will pick it up).
   const { rows: [job] } = await db.query(
-    `SELECT id, job_code, customer_name, han_lenh, import_export, NULL::text AS shipping_line
+    `SELECT id, job_code, customer_name, han_lenh, import_export,
+            cargo_type, so_kien, kg, cbm, NULL::text AS shipping_line
        FROM jobs WHERE id = $1 AND deleted_at IS NULL`,
     [jobId]
   );
@@ -482,6 +521,8 @@ async function sendPlanningEmail({
     n: bookings.length,
     importExport: job.import_export,
     earliestPlanned,
+    cargoType: job.cargo_type,
+    job,
   });
   const body = renderBody({
     mailType,
@@ -491,6 +532,8 @@ async function sendPlanningEmail({
     shippingLine: job.shipping_line,
     hanLenh: job.han_lenh,
     importExport: job.import_export,
+    cargoType: job.cargo_type,
+    job,
     invoiceInfo: invoice,
     bookings,
     // The body's "Đính kèm: N file..." line uses the ACTUAL generated count
@@ -692,7 +735,8 @@ async function previewPlanningEmail({
 
   // Job + bookings — identical query to send path.
   const { rows: [job] } = await db.query(
-    `SELECT id, job_code, customer_name, han_lenh, import_export, NULL::text AS shipping_line
+    `SELECT id, job_code, customer_name, han_lenh, import_export,
+            cargo_type, so_kien, kg, cbm, NULL::text AS shipping_line
        FROM jobs WHERE id = $1 AND deleted_at IS NULL`,
     [jobId]
   );
@@ -759,6 +803,8 @@ async function previewPlanningEmail({
     n: bookings.length,
     importExport: job.import_export,
     earliestPlanned,
+    cargoType: job.cargo_type,
+    job,
   });
   const body = renderBody({
     mailType,
@@ -768,6 +814,8 @@ async function previewPlanningEmail({
     shippingLine: job.shipping_line,
     hanLenh: job.han_lenh,
     importExport: job.import_export,
+    cargoType: job.cargo_type,
+    job,
     invoiceInfo: normalizedInvoice,
     bookings,
     // CP4.3 — preview mirrors the send-path body's "Đính kèm: N file..." line
