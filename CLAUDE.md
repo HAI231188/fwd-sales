@@ -765,3 +765,22 @@ curl -s -o /dev/null -w "%{http_code}\n" https://fwd-sales-production.up.railway
 - Run `/compact` at logical breakpoints
 - Use `/clear` between unrelated tasks
 - Run `/learn` at the end of each major session
+
+---
+
+## 9. CodeGraph (code navigation)
+
+Project có `.codegraph/` index (live). For code exploration ("how does X work", "where is Y", "what calls Z"), prefer CodeGraph MCP tools over grep/glob/read:
+- `codegraph_search` — find code by concept
+- `codegraph_callers` / `codegraph_callees` — who calls / what it calls
+- `codegraph_context` — understand a snippet
+- `codegraph_impact` — **what breaks if I change this**
+
+**Bắt buộc chạy `codegraph_impact` TRƯỚC khi sửa shared code**, đặc biệt:
+- `backend/src/db/schema.sql` (DDL dùng chung)
+- `checkAndCompleteJob` (job-completion.js) — completion logic chạm nhiều endpoint
+- `get_truck_booking_status` (plpgsql) — truck completion, FCL + LCL
+- status / role / service_type / cargo_type enums + their guards
+- shared modals (JobDetailModal, PlanDeliveryModal, TruckPlanningModal) + shared dashboards
+
+Lý do: nhiều bug gần đây là loại "sửa chỗ này quên chỗ kia" — TK trigger gap (PHƯƠNG ANH), cost gate ảnh hưởng cả 'tk' + 'both', LCL phải fix ở 2 modal riêng. `codegraph_impact` bắt được các điểm ảnh hưởng trước khi sửa.
