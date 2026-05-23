@@ -3,7 +3,7 @@ const db = require('../db');
 const { requireAuth } = require('../middleware/auth');
 const { suggestCus, suggestOps } = require('../services/ai-assignment');
 const { buildBbbgPdf } = require('../services/bbbg-pdf');
-const { checkAndCompleteJob: _checkAndCompleteJob } = require('../services/job-completion');
+const { checkAndCompleteJob: _checkAndCompleteJob, checkOpsTasksDone } = require('../services/job-completion');
 
 // In-memory suggestion cache (60s TTL) — invalidated on manual assignment
 let suggestionCache = { data: null, ts: 0 };
@@ -1857,6 +1857,20 @@ router.put('/:id', requireAuth, async (req, res) => {
           return res.status(400).json({
             error: "Vui lòng tick 'Cost hệ thống' cho tất cả container trước khi hoàn thành",
             code: 'MISSING_COST_ENTERED',
+          });
+        }
+        // Guard #4 (2026-05-23): OPS per-task gate. Closes the bypass where DD
+        // could close a truck/both HP job while OPS thong_quan/doi_lenh were
+        // still incomplete. The auto-path gate in checkAndCompleteJob is dead
+        // code for truck/both (circular truckDone='hoan_thanh'), so this is the
+        // only place the OPS gate actually fires for those jobs. Non-HP and any
+        // job without OPS task rows → ready=true (passes through).
+        const opsCheck = await checkOpsTasksDone(client, req.params.id);
+        if (!opsCheck.ready) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({
+            error: opsCheck.missing.join(', '),
+            code: 'OPS_TASKS_INCOMPLETE',
           });
         }
         sets.push(`completed_at = $${idx++}`); params.push(ts);

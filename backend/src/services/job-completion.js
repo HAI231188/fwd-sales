@@ -1,15 +1,67 @@
-// Shared helper: decide whether a job should auto-flip to status='completed'
-// based on its sub-task state. Called from multiple route files (jobs.js,
-// truck-bookings.js, …) — kept in one place per L19 (single source of truth
-// for derived status logic).
+// Shared helpers for job completion logic. Single source of truth per L19.
+// Called from multiple routes (jobs.js, truck-bookings.js).
 //
-// Phase 5 CP4.5 update: truck side is now sourced from the new 8-status
-// get_truck_booking_status() — `hoan_thanh` means every alive booking has
-// actual_datetime IS NOT NULL (the new "delivery actually happened" signal).
-// Previous `da_giao_xong` was a vehicle-assignment milestone, NOT a delivery
-// signal, and incorrectly triggered job completion before delivery occurred.
-// jobs.completed_at is now stamped with NOW() at the same time as the status
-// flip.
+// Two completion paths exist for production-shaped jobs:
+//
+//   AUTO (service_type='tk' only):
+//     CUS/OPS tick endpoints call `checkAndCompleteJob`, which derives ready
+//     from tk_done + OPS task state. Stamps jobs.completed_at = NOW() and
+//     flips status to 'completed'.
+//
+//   MANUAL via PUT /api/jobs/:id (service_type IN ('truck','both')):
+//     DD enters "TH ngày giờ" → PUT body {completed_at: <ts>}. That route
+//     stamps the body timestamp (honoring DD's actual delivery time) AFTER
+//     running its own guards including `checkOpsTasksDone` (2026-05-23 fix
+//     for the OPS-gate bypass on truck/both HP jobs).
+//
+// Why `checkAndCompleteJob` is DEAD CODE for truck/both:
+//   truckDone is derived as `truck_booking_status === 'hoan_thanh'`, but the
+//   plpgsql function returns 'hoan_thanh' only when jobs.completed_at IS NOT
+//   NULL. So while the job is still pending, truckDone is structurally false
+//   → ready=false → no auto-flip. The OPS gate inside this function therefore
+//   never fires for truck/both. The OPS gate for those paths lives in PUT
+//   /:id via checkOpsTasksDone — see jobs.js completed_at branch.
+
+// Per-task OPS done check (2026-05-23). Re-used by both completion paths:
+//   - checkAndCompleteJob (the auto-tk path)
+//   - PUT /api/jobs/:id completed_at guard (the DD truck/both path)
+//
+// Returns { ready: bool, missing: string[] }. `missing` contains Vietnamese
+// user-facing messages — empty when ready=true.
+//
+// Semantics (mirror auto-task INSERT rule for HP jobs):
+//   thong_quan done = cost_entered_at ticked (no separate "done" flag —
+//                     tk_status already represents the digital "cleared" event)
+//   doi_lenh   done = completed=TRUE AND cost_entered_at ticked
+//   Task row absence ⇒ task not required ⇒ treated as satisfied. This makes
+//   the helper degrade gracefully for non-HP jobs (no auto-task rows) and
+//   ad-hoc TP-created rows that don't follow the standard task_type enum.
+async function checkOpsTasksDone(client, jobId) {
+  const { rows: [r] } = await client.query(`
+    SELECT
+      (SELECT id              FROM job_ops_task
+         WHERE job_id = $1 AND task_type = 'thong_quan') AS tq_task_id,
+      (SELECT cost_entered_at FROM job_ops_task
+         WHERE job_id = $1 AND task_type = 'thong_quan') AS tq_cost_entered_at,
+      (SELECT id              FROM job_ops_task
+         WHERE job_id = $1 AND task_type = 'doi_lenh')   AS dl_task_id,
+      (SELECT completed       FROM job_ops_task
+         WHERE job_id = $1 AND task_type = 'doi_lenh')   AS dl_completed,
+      (SELECT cost_entered_at FROM job_ops_task
+         WHERE job_id = $1 AND task_type = 'doi_lenh')   AS dl_cost_entered_at
+  `, [jobId]);
+  const tqRequired = r.tq_task_id !== null;
+  const tqDone     = !tqRequired || !!r.tq_cost_entered_at;
+  const dlRequired = r.dl_task_id !== null;
+  const dlDone     = !dlRequired || (!!r.dl_completed && !!r.dl_cost_entered_at);
+  const missing = [];
+  if (!tqDone) missing.push('OPS chưa nhập cost thông quan');
+  if (!dlDone) {
+    if (!r.dl_completed)       missing.push('OPS chưa đổi lệnh xong');
+    if (!r.dl_cost_entered_at) missing.push('OPS chưa nhập cost đổi lệnh');
+  }
+  return { ready: tqDone && dlDone, missing };
+}
 
 async function checkAndCompleteJob(client, jobId, changedBy, recordHistory) {
   const { rows } = await client.query(`
@@ -17,18 +69,7 @@ async function checkAndCompleteJob(client, jobId, changedBy, recordHistory) {
            jt.completed_at    AS tk_completed_at,
            jt.cost_entered_at AS tk_cost_entered_at,
            get_truck_booking_status(j.id) AS truck_booking_status,
-           ja.ops_id,
-           -- Per-task OPS state (2026-05-23). NULL task_id → task not required.
-           (SELECT id              FROM job_ops_task
-              WHERE job_id = j.id AND task_type = 'thong_quan') AS tq_task_id,
-           (SELECT cost_entered_at FROM job_ops_task
-              WHERE job_id = j.id AND task_type = 'thong_quan') AS tq_cost_entered_at,
-           (SELECT id              FROM job_ops_task
-              WHERE job_id = j.id AND task_type = 'doi_lenh')   AS dl_task_id,
-           (SELECT completed       FROM job_ops_task
-              WHERE job_id = j.id AND task_type = 'doi_lenh')   AS dl_completed,
-           (SELECT cost_entered_at FROM job_ops_task
-              WHERE job_id = j.id AND task_type = 'doi_lenh')   AS dl_cost_entered_at
+           ja.ops_id
     FROM jobs j
     LEFT JOIN job_tk jt ON jt.job_id = j.id
     LEFT JOIN job_assignments ja ON ja.job_id = j.id
@@ -44,31 +85,20 @@ async function checkAndCompleteJob(client, jobId, changedBy, recordHistory) {
   const tkDone    = !!j.tk_completed_at && !!j.tk_cost_entered_at;
   const truckDone = j.truck_booking_status === 'hoan_thanh';
 
-  // Per-task OPS state (2026-05-23). If a task row doesn't exist for this job,
-  // the task is "not required" → treated as satisfied. This makes the gate
-  // degrade gracefully for non-HP jobs (no auto-task rows) and any job that
-  // legitimately doesn't need an OPS step.
-  //   thong_quan done = cost_entered_at ticked (no separate done — tk_status
-  //                     already represents the digital "cleared" event)
-  //   doi_lenh   done = completed flag AND cost_entered_at ticked
-  const tqRequired = j.tq_task_id !== null;
-  const tqDone     = !tqRequired || !!j.tq_cost_entered_at;
-  const dlRequired = j.dl_task_id !== null;
-  const dlDone     = !dlRequired || (!!j.dl_completed && !!j.dl_cost_entered_at);
-
   let ready = false;
   if (j.service_type === 'tk')         ready = tkDone;
-  else if (j.service_type === 'truck') ready = truckDone;
-  else if (j.service_type === 'both')  ready = tkDone && truckDone;
+  else if (j.service_type === 'truck') ready = truckDone;  // dead — see docstring at top
+  else if (j.service_type === 'both')  ready = tkDone && truckDone;  // dead — see docstring
 
-  // Per-task OPS gate (replaces the old `destination='hai_phong' && truck/both`
-  // gate which incorrectly excluded HP tk-only jobs that DID get OPS assigned —
-  // see THẠCH HIỂN jobs 25/26 audit). Task-row presence is the source of truth:
-  //   - HP auto-task rule places rows for tk(+thong_quan,+doi_lenh) /
-  //     truck(+doi_lenh) / both(+thong_quan,+doi_lenh).
-  //   - For non-HP jobs no task rows exist → tqRequired=false, dlRequired=false
-  //     → gate passes trivially → non-HP behavior unchanged.
-  if (ready) ready = tqDone && dlDone;
+  // OPS per-task gate (delegates to checkOpsTasksDone for single-source logic).
+  // Only effective for service_type='tk' here — the truck/both ready expressions
+  // above already return false due to truckDone circularity, so this gate is
+  // unreachable for those job shapes. PUT /:id enforces the same gate for
+  // truck/both (where the actual completion happens).
+  if (ready) {
+    const opsCheck = await checkOpsTasksDone(client, jobId);
+    if (!opsCheck.ready) ready = false;
+  }
 
   // Non-HP manual OPS assignment follow-up: the 4 manual TP-assign endpoints
   // (POST /:id/assign, /:id/manual-assign, /:id/ops-task, /:id/reassign-ops)
@@ -90,4 +120,4 @@ async function checkAndCompleteJob(client, jobId, changedBy, recordHistory) {
   return true;
 }
 
-module.exports = { checkAndCompleteJob };
+module.exports = { checkAndCompleteJob, checkOpsTasksDone };
