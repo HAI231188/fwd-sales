@@ -6,7 +6,40 @@ import JobListModal from '../components/JobListModal';
 import FilteredTable from '../components/FilteredTable';
 import DateRangeFilter from '../components/DateRangeFilter';
 import StaffSection, { OPS_COLS as STAFF_OPS_COLS } from '../components/StaffSection';
-import { getJobStats, getJobs, requestJobDelete, markOpsDone, updateJobTk } from '../api';
+import {
+  getJobStats, getJobs, requestJobDelete, updateJobTk,
+  markOpsTaskDone, unmarkOpsTaskDone, tickOpsTaskCost, untickOpsTaskCost,
+} from '../api';
+
+// Per-task model helpers (2026-05-23). j.ops_tasks is the JSON array of task
+// rows returned by GET /api/jobs (see backend ops_tasks projection).
+//   thong_quan done = cost_entered_at set (no separate done — tk_status owns it)
+//   doi_lenh   done = completed=TRUE AND cost_entered_at set
+function getOpsTask(j, taskType) {
+  const tasks = Array.isArray(j.ops_tasks) ? j.ops_tasks : [];
+  return tasks.find(t => t.task_type === taskType) || null;
+}
+function hasTqTask(j) { return !!getOpsTask(j, 'thong_quan'); }
+function hasDlTask(j) { return !!getOpsTask(j, 'doi_lenh'); }
+function isTqDone(j) {
+  const t = getOpsTask(j, 'thong_quan');
+  return !!t && !!t.cost_entered_at;
+}
+function isDlDone(j) {
+  const t = getOpsTask(j, 'doi_lenh');
+  return !!t && t.completed === true && !!t.cost_entered_at;
+}
+function tqDoneAt(j) { return getOpsTask(j, 'thong_quan')?.cost_entered_at || null; }
+function dlDoneAt(j) {
+  const t = getOpsTask(j, 'doi_lenh');
+  return (t?.completed && t?.cost_entered_at) ? t.cost_entered_at : null;
+}
+// Latest "OPS done" timestamp = max of available task finish times.
+function latestOpsDoneAt(j) {
+  const stamps = [tqDoneAt(j), dlDoneAt(j)].filter(Boolean).map(s => new Date(s).getTime());
+  if (!stamps.length) return null;
+  return new Date(Math.max(...stamps));
+}
 
 const TK_STATUS_LABEL = {
   chua_truyen: 'Chưa truyền', dang_lam: 'Đang làm',
@@ -182,7 +215,7 @@ const TODAY_COLS = [
 ];
 
 const DONE_COLS = [
-  { key: 'ops_done_at',   label: 'Ngày xong' },
+  { key: 'latest_done_at', label: 'Ngày xong' },
   { key: 'job_code',      label: 'Job',           filterType: 'text' },
   { key: 'si_number',     label: 'Mã SI',         filterType: 'text' },
   { key: 'import_export', label: 'Loại' },
@@ -229,13 +262,25 @@ export default function LogDashboardOps() {
     enabled: tab === 'hoan_thanh',
   });
 
-  const opsDoneMut = useMutation({
-    mutationFn: id => markOpsDone(id),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['jobs'] });
-      qc.invalidateQueries({ queryKey: ['jobStats'] });
-    },
+  // Per-task mutations (2026-05-23). All four invalidate the same queries so
+  // counts + lists refresh on every tick.
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ['jobs'] });
+    qc.invalidateQueries({ queryKey: ['jobStats'] });
+  };
+  const tqCostMut = useMutation({
+    mutationFn: ({ id, on }) => on ? tickOpsTaskCost(id, 'thong_quan') : untickOpsTaskCost(id, 'thong_quan'),
+    onSuccess: invalidate,
   });
+  const dlCostMut = useMutation({
+    mutationFn: ({ id, on }) => on ? tickOpsTaskCost(id, 'doi_lenh') : untickOpsTaskCost(id, 'doi_lenh'),
+    onSuccess: invalidate,
+  });
+  const dlDoneMut = useMutation({
+    mutationFn: ({ id, on }) => on ? markOpsTaskDone(id, 'doi_lenh') : unmarkOpsTaskDone(id, 'doi_lenh'),
+    onSuccess: invalidate,
+  });
+  const anyTickPending = tqCostMut.isPending || dlCostMut.isPending || dlDoneMut.isPending;
   const tkMut = useMutation({
     mutationFn: ({ id, data }) => updateJobTk(id, data),
     onSuccess: () => {
@@ -254,15 +299,19 @@ export default function LogDashboardOps() {
   const tomorrow = localDate(new Date(Date.now() + 86400000));
   const threeDaysAgo = new Date(Date.now() - 3 * 86400000);
 
+  // Per-task filters (2026-05-23).
+  //   tqJobs: HP + (tk/both) + thong_quan task pending (cost not ticked)
+  //   dlJobs: HP + ANY service_type + doi_lenh  task pending (done OR cost not ticked)
+  //   todayJobs: tomorrow's planned doi_lenh deliveries
+  //   doneJobs: jobs where ALL required OPS tasks just finished within 3 days
   const tqJobs = pendingJobs.filter(j =>
     j.destination === 'hai_phong' &&
     (j.service_type === 'tk' || j.service_type === 'both') &&
-    !j.ops_done
+    hasTqTask(j) && !isTqDone(j)
   );
   const dlJobs = pendingJobs.filter(j =>
     j.destination === 'hai_phong' &&
-    (j.service_type === 'truck' || j.service_type === 'both') &&
-    !j.ops_done
+    hasDlTask(j) && !isDlDone(j)
   );
   const todayJobs = pendingJobs.filter(j =>
     j.destination === 'hai_phong' &&
@@ -270,9 +319,21 @@ export default function LogDashboardOps() {
     j.planned_datetime &&
     localDate(new Date(j.planned_datetime)) === tomorrow
   );
-  const doneJobs = pendingJobs.filter(j =>
-    j.ops_done && j.ops_done_at && new Date(j.ops_done_at) >= threeDaysAgo
-  );
+  const doneJobs = pendingJobs.filter(j => {
+    // For each task type the job needs, the task must be done AND its finish
+    // timestamp must be within the last 3 days. If the job needs both tasks,
+    // require both finished; recency uses the most recent finish.
+    const needsTq = hasTqTask(j);
+    const needsDl = hasDlTask(j);
+    if (!needsTq && !needsDl) return false;
+    const tqOk = !needsTq || isTqDone(j);
+    const dlOk = !needsDl || isDlDone(j);
+    if (!tqOk || !dlOk) return false;
+    const finishes = [tqDoneAt(j), dlDoneAt(j)].filter(Boolean).map(s => new Date(s));
+    if (!finishes.length) return false;
+    const latest = new Date(Math.max(...finishes.map(d => d.getTime())));
+    return latest >= threeDaysAgo;
+  });
 
   function rowBg(j) {
     // KT5 — KT-returned-to-log overrides tk_flow + deadline tints.
@@ -287,32 +348,98 @@ export default function LogDashboardOps() {
     return '';
   }
 
-  function opsDoneBtn(j) {
-    const isTkJob = j.service_type === 'tk' || j.service_type === 'both';
-    const canDone = !isTkJob || TK_TERMINAL.includes(j.tk_status);
+  // tk_status precondition (per-task ticks require terminal when job has TK).
+  // Mirrors the backend guard in PATCH /ops-task/:type/{done,cost}.
+  function tkPreconditionOk(j) {
+    const hasTk = j.service_type === 'tk' || j.service_type === 'both';
+    return !hasTk || TK_TERMINAL.includes(j.tk_status);
+  }
+  function tkPreconditionHint(j) {
+    return tkPreconditionOk(j) ? null : 'TK chưa thông quan / giải phóng / bảo quan';
+  }
+
+  // Per-task tick buttons (2026-05-23, replaces single opsDoneBtn).
+  //   thong_quan tab → one "Cost thông quan" toggle
+  //   doi_lenh   tab → two toggles: "Đổi lệnh xong" + "Cost đổi lệnh"
+  // Each button shows the ticked state inline; clicking a ticked one un-ticks.
+  // Disabled when tk_status precondition fails.
+  function TickButton({ label, ticked, disabled, hint, onClick }) {
     return (
       <button
-        className="btn btn-primary btn-sm"
-        style={{ padding: '3px 8px', fontSize: 11, whiteSpace: 'nowrap' }}
-        disabled={!canDone || opsDoneMut.isPending}
-        title={canDone ? 'Xong việc' : 'TK chưa thông quan / giải phóng / bảo quan'}
-        onClick={e => { e.stopPropagation(); if (window.confirm('Xác nhận xong việc?')) opsDoneMut.mutate(j.id); }}
-      >Xong việc</button>
+        className={`btn ${ticked ? 'btn-ghost' : 'btn-primary'} btn-sm`}
+        style={{ padding: '3px 8px', fontSize: 11, whiteSpace: 'nowrap',
+          ...(ticked ? { color: 'var(--primary)', borderColor: 'var(--primary)' } : {}) }}
+        disabled={disabled}
+        title={hint || (ticked ? 'Bỏ tick' : label)}
+        onClick={e => { e.stopPropagation(); onClick(); }}
+      >
+        {ticked ? '✓ ' : ''}{label}
+      </button>
+    );
+  }
+
+  function tqCostBtn(j) {
+    const t = getOpsTask(j, 'thong_quan');
+    if (!t) return null;
+    const ticked = !!t.cost_entered_at;
+    const ok = tkPreconditionOk(j);
+    return (
+      <TickButton
+        label="Cost thông quan"
+        ticked={ticked}
+        disabled={(!ok && !ticked) || anyTickPending}
+        hint={!ok && !ticked ? tkPreconditionHint(j) : null}
+        onClick={() => tqCostMut.mutate({ id: j.id, on: !ticked })}
+      />
+    );
+  }
+  function dlDoneBtn(j) {
+    const t = getOpsTask(j, 'doi_lenh');
+    if (!t) return null;
+    const ticked = t.completed === true;
+    const ok = tkPreconditionOk(j);
+    return (
+      <TickButton
+        label="Đổi lệnh xong"
+        ticked={ticked}
+        disabled={(!ok && !ticked) || anyTickPending}
+        hint={!ok && !ticked ? tkPreconditionHint(j) : null}
+        onClick={() => dlDoneMut.mutate({ id: j.id, on: !ticked })}
+      />
+    );
+  }
+  function dlCostBtn(j) {
+    const t = getOpsTask(j, 'doi_lenh');
+    if (!t) return null;
+    const ticked = !!t.cost_entered_at;
+    const ok = tkPreconditionOk(j);
+    return (
+      <TickButton
+        label="Cost đổi lệnh"
+        ticked={ticked}
+        disabled={(!ok && !ticked) || anyTickPending}
+        hint={!ok && !ticked ? tkPreconditionHint(j) : null}
+        onClick={() => dlCostMut.mutate({ id: j.id, on: !ticked })}
+      />
     );
   }
 
   function opsTaskInfo(j) {
     const tasks = Array.isArray(j.ops_tasks) ? j.ops_tasks : [];
     if (!tasks.length) return <span style={{ color: 'var(--text-3)' }}>—</span>;
-    return tasks.map(t => (
-      <div key={t.id} style={{ fontSize: 11, color: 'var(--text-2)', lineHeight: 1.5 }}>
-        {t.port && <span style={{ fontWeight: 600 }}>{t.port}</span>}
-        {t.task_type && <span style={{ marginLeft: 4, color: 'var(--info)' }}>
-          [{t.task_type === 'doi_lenh' ? 'Đổi lệnh' : t.task_type === 'thong_quan_doi_lenh' ? 'TQ đổi lệnh' : t.task_type}]
-        </span>}
-        {t.content && <span style={{ marginLeft: 4 }}>{t.content}</span>}
-      </div>
-    ));
+    return tasks.map(t => {
+      const label = t.task_type === 'thong_quan' ? 'Thông quan'
+                  : t.task_type === 'doi_lenh'   ? 'Đổi lệnh'
+                  : t.task_type === 'thong_quan_doi_lenh' ? 'TQ + đổi lệnh (legacy)'
+                  : t.task_type || '';
+      return (
+        <div key={t.id} style={{ fontSize: 11, color: 'var(--text-2)', lineHeight: 1.5 }}>
+          {t.port && <span style={{ fontWeight: 600 }}>{t.port}</span>}
+          {label && <span style={{ marginLeft: 4, color: 'var(--info)' }}>[{label}]</span>}
+          {t.content && <span style={{ marginLeft: 4 }}>{t.content}</span>}
+        </div>
+      );
+    });
   }
 
   function deleteBtn(j) {
@@ -417,7 +544,7 @@ export default function LogDashboardOps() {
                       </>
                     }
                     actions={<>
-                      {opsDoneBtn(j)}
+                      {tqCostBtn(j)}
                       {deleteBtn(j)}
                       <button className="btn btn-ghost btn-sm btn-icon" onClick={e => { e.stopPropagation(); setDetailJobId(j.id); }}>🔍</button>
                     </>}
@@ -456,7 +583,7 @@ export default function LogDashboardOps() {
                     <TD style={{ whiteSpace: 'nowrap', fontSize: 12 }}>{fmtDt(j.tq_datetime)}</TD>
                     <TD style={{ color: 'var(--text-2)', maxWidth: 160, fontSize: 12 }}>{j.tk_notes || '—'}</TD>
                     <TD style={{ whiteSpace: 'nowrap' }}>
-                      {opsDoneBtn(j)}
+                      {tqCostBtn(j)}
                       {deleteBtn(j)}
                       <button className="btn btn-ghost btn-sm btn-icon" onClick={e => { e.stopPropagation(); setDetailJobId(j.id); }}>🔍</button>
                     </TD>
@@ -491,7 +618,8 @@ export default function LogDashboardOps() {
                       </>
                     }
                     actions={<>
-                      {opsDoneBtn(j)}
+                      {dlDoneBtn(j)}
+                      {dlCostBtn(j)}
                       {deleteBtn(j)}
                       <button className="btn btn-ghost btn-sm btn-icon" onClick={e => { e.stopPropagation(); setDetailJobId(j.id); }}>🔍</button>
                     </>}
@@ -516,8 +644,9 @@ export default function LogDashboardOps() {
                     <TD style={{ whiteSpace: 'nowrap', fontSize: 12 }}>{fmtCargo(j)}</TD>
                     <TD style={{ whiteSpace: 'nowrap', ...deadlineStyle(j.han_lenh) }}>{j.han_lenh ? (j.import_export === 'import' ? fmtDate(j.han_lenh) : fmtDt(j.han_lenh)) : '—'}</TD>
                     <TD>{opsTaskInfo(j)}</TD>
-                    <TD style={{ whiteSpace: 'nowrap' }}>
-                      {opsDoneBtn(j)}
+                    <TD style={{ whiteSpace: 'nowrap', display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                      {dlDoneBtn(j)}
+                      {dlCostBtn(j)}
                       {deleteBtn(j)}
                       <button className="btn btn-ghost btn-sm btn-icon" onClick={e => { e.stopPropagation(); setDetailJobId(j.id); }}>🔍</button>
                     </TD>
@@ -591,7 +720,7 @@ export default function LogDashboardOps() {
                     body={
                       <>
                         <div style={{ fontSize: 12, marginBottom: 6, color: 'var(--primary)', fontWeight: 600 }}>
-                          ✓ Xong: {fmtDt(j.ops_done_at)}
+                          ✓ Xong: {fmtDt(latestOpsDoneAt(j))}
                         </div>
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 12px', marginBottom: 6, fontSize: 12 }}>
                           <div><span style={{ color: 'var(--text-2)' }}>Mã SI:</span> {j.si_number || '—'}</div>
@@ -619,7 +748,7 @@ export default function LogDashboardOps() {
                 tableStyle={{ fontSize: 13 }}
                 renderRow={j => (
                   <tr key={j.id} style={{ cursor: 'pointer' }} onDoubleClick={() => setDetailJobId(j.id)}>
-                    <TD style={{ whiteSpace: 'nowrap', fontSize: 12, color: 'var(--primary)' }}>{fmtDt(j.ops_done_at)}</TD>
+                    <TD style={{ whiteSpace: 'nowrap', fontSize: 12, color: 'var(--primary)' }}>{fmtDt(latestOpsDoneAt(j))}</TD>
                     <TD style={{ fontWeight: 600, color: 'var(--info)', whiteSpace: 'nowrap' }}>
                       {j.returned_to === 'log' && (
                         <span style={{ marginRight: 4, cursor: 'help' }}

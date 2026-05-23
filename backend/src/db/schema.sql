@@ -1022,3 +1022,73 @@ ALTER TABLE job_tk ADD COLUMN IF NOT EXISTS cost_entered_at TIMESTAMP WITH TIME 
 ALTER TABLE job_tk ADD COLUMN IF NOT EXISTS cost_entered_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS idx_job_tk_cost_pending
   ON job_tk(job_id) WHERE cost_entered_at IS NULL;
+
+-- ============================================================
+-- OPS Hải Phòng per-task model (2026-05-23)
+-- Replaces the single ja.ops_done flag with per-task tracking via
+-- job_ops_task rows. Each HP job gets task rows by service_type:
+--   tk    → 'thong_quan' + 'doi_lenh' (đổi lệnh hộ khách)
+--   truck → 'doi_lenh'
+--   both  → 'thong_quan' + 'doi_lenh'
+-- thong_quan done = cost_entered_at set (no separate done — tk_status owns
+-- the digital "cleared" event).
+-- doi_lenh   done = completed=TRUE AND cost_entered_at IS NOT NULL.
+-- All ticks require tk_status terminal when the job has TK (tk/both).
+-- ja.ops_done / ops_done_at are DEPRECATED but kept in schema for legacy
+-- reads; checkAndCompleteJob now reads per-task state from job_ops_task.
+-- ============================================================
+ALTER TABLE job_ops_task ADD COLUMN IF NOT EXISTS cost_entered_at TIMESTAMP WITH TIME ZONE;
+ALTER TABLE job_ops_task ADD COLUMN IF NOT EXISTS cost_entered_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
+
+-- Migrate composite 'thong_quan_doi_lenh' rows into separate 'thong_quan' +
+-- 'doi_lenh'. Idempotent — NOT EXISTS guards skip already-split jobs; safe
+-- to re-run. Must run BEFORE the UNIQUE index is created so legacy composite
+-- rows don't collide during the transition. NEVER writes to the jobs table —
+-- jobs.status is untouched (the 18 historical completed-but-OPS-not-done
+-- jobs stay completed per owner decision).
+DO $migrate_ops_task$
+DECLARE
+  c RECORD;
+BEGIN
+  FOR c IN
+    SELECT jt.id, jt.job_id, jt.ops_id, jt.completed, jt.completed_at,
+           jt.content, jt.port, jt.deadline, jt.notes,
+           j.service_type
+    FROM job_ops_task jt
+    JOIN jobs j ON j.id = jt.job_id
+    WHERE jt.task_type = 'thong_quan_doi_lenh'
+  LOOP
+    -- For tk/both: ensure a 'thong_quan' row exists. Preserve completed state.
+    IF c.service_type IN ('tk','both') THEN
+      INSERT INTO job_ops_task (job_id, ops_id, task_type, completed, completed_at,
+                                cost_entered_at, content, port, deadline, notes)
+      SELECT c.job_id, c.ops_id, 'thong_quan', c.completed, c.completed_at,
+             CASE WHEN c.completed THEN c.completed_at ELSE NULL END,
+             c.content, c.port, c.deadline, c.notes
+      WHERE NOT EXISTS (
+        SELECT 1 FROM job_ops_task WHERE job_id = c.job_id AND task_type = 'thong_quan'
+      );
+    END IF;
+    -- For all (tk/truck/both at HP): ensure a 'doi_lenh' row exists.
+    INSERT INTO job_ops_task (job_id, ops_id, task_type, completed, completed_at,
+                              cost_entered_at, content, port, deadline, notes)
+    SELECT c.job_id, c.ops_id, 'doi_lenh', c.completed, c.completed_at,
+           CASE WHEN c.completed THEN c.completed_at ELSE NULL END,
+           c.content, c.port, c.deadline, c.notes
+    WHERE NOT EXISTS (
+      SELECT 1 FROM job_ops_task WHERE job_id = c.job_id AND task_type = 'doi_lenh'
+    );
+    -- Delete the composite row.
+    DELETE FROM job_ops_task WHERE id = c.id;
+  END LOOP;
+END
+$migrate_ops_task$;
+
+-- Partial UNIQUE: only enforces uniqueness on typed task rows. TP ad-hoc rows
+-- via POST /:id/ops-task insert task_type=NULL (jobs.js:2854) — those remain
+-- unconstrained. NO CHECK enum per the L17-style cautious-rollout pattern;
+-- the auto-create paths only ever write 'thong_quan' or 'doi_lenh'.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_job_ops_task_jobid_tasktype
+  ON job_ops_task(job_id, task_type) WHERE task_type IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_job_ops_task_cost_pending
+  ON job_ops_task(job_id) WHERE cost_entered_at IS NULL;

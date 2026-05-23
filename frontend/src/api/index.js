@@ -125,7 +125,14 @@ export const manualAssignJob = (id, data) => api.post(`/jobs/${id}/manual-assign
 export const reassignCus = (id, newCusId) => api.patch(`/jobs/${id}/reassign-cus`, { new_cus_id: newCusId });
 export const reassignOps = (id, newOpsId) => api.patch(`/jobs/${id}/reassign-ops`, { new_ops_id: newOpsId });
 export const refreshJobSuggestion = (id, type) => api.post(`/jobs/${id}/refresh-suggestion`, { type });
-export const markOpsDone = (id) => api.post(`/jobs/${id}/ops-done`, {});
+// OPS per-task ticks (2026-05-23, replaces markOpsDone). taskType ∈
+// {'thong_quan','doi_lenh'}. /done is only valid for 'doi_lenh' (đổi lệnh xong);
+// /cost works for both task types. All ticks require tk_status terminal when
+// the job has TK.
+export const markOpsTaskDone   = (id, taskType) => api.patch(`/jobs/${id}/ops-task/${taskType}/done`, {});
+export const unmarkOpsTaskDone = (id, taskType) => api.delete(`/jobs/${id}/ops-task/${taskType}/done`);
+export const tickOpsTaskCost   = (id, taskType) => api.patch(`/jobs/${id}/ops-task/${taskType}/cost`, {});
+export const untickOpsTaskCost = (id, taskType) => api.delete(`/jobs/${id}/ops-task/${taskType}/cost`);
 export const getJobOverview = (params) => api.get('/jobs/overview', { params });
 export const getBbbgData = (id, bookingId) =>
   api.get(`/jobs/${id}/bbbg-data`, { params: bookingId ? { booking_id: bookingId } : {} });

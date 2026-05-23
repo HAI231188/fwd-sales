@@ -708,7 +708,18 @@ export default function LogDashboardTP() {
                     const isTk = j.service_type === 'tk' || j.service_type === 'both';
                     const waitingAssign = (j.service_type === 'tk' || j.service_type === 'both') && !j.cus_id;
                     const cusEligible = tab === 'pending' && !j.tk_completed_at;
-                    const opsEligible = tab === 'pending' && !j.ops_done;
+                    // Per-task model (2026-05-23): OPS reassign allowed while any
+                    // required task is still pending. Empty ops_tasks ⇒ allowed
+                    // (nothing committed yet).
+                    const opsEligible = tab === 'pending' && (() => {
+                      const tasks = Array.isArray(j.ops_tasks) ? j.ops_tasks : [];
+                      if (!tasks.length) return true;
+                      return tasks.some(t => {
+                        if (t.task_type === 'thong_quan') return !t.cost_entered_at;
+                        if (t.task_type === 'doi_lenh')   return !(t.completed && t.cost_entered_at);
+                        return false;
+                      });
+                    })();
                     return (
                       <TPCard key={j.id} job={j} onOpen={() => setDetailJobId(j.id)}
                         codeColor={tab === 'completed' ? 'var(--primary)' : 'var(--info)'}
@@ -952,7 +963,18 @@ export default function LogDashboardTP() {
                           </td>;
                         }
                         case 'ops': {
-                          const opsEligible = tab === 'pending' && !j.ops_done;
+                          // Per-task model (2026-05-23): OPS reassign allowed while any
+                    // required task is still pending. Empty ops_tasks ⇒ allowed
+                    // (nothing committed yet).
+                    const opsEligible = tab === 'pending' && (() => {
+                      const tasks = Array.isArray(j.ops_tasks) ? j.ops_tasks : [];
+                      if (!tasks.length) return true;
+                      return tasks.some(t => {
+                        if (t.task_type === 'thong_quan') return !t.cost_entered_at;
+                        if (t.task_type === 'doi_lenh')   return !(t.completed && t.cost_entered_at);
+                        return false;
+                      });
+                    })();
                           if (!j.ops_name) {
                             return <td key={key} style={cs}>
                               {opsEligible ? (

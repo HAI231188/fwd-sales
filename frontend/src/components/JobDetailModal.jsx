@@ -1122,11 +1122,39 @@ export default function JobDetailModal({
                   )}
                   <Row label="Nhân viên OPS" value={job.ops_name || '—'} />
                   <Row label="Đối tác OPS" value={job.ops_partner || '—'} />
-                  {job.ops_done != null && (
-                    <Row label="Xong việc OPS"
-                      value={job.ops_done ? `Đã xong — ${fmtDt(job.ops_done_at)}` : 'Chưa xong'}
-                      color={job.ops_done ? 'var(--primary)' : 'var(--warning)'} />
-                  )}
+                  {/* Per-task OPS status (2026-05-23). Reads from job.ops_tasks JSON.
+                      Shows separate rows for thong_quan + doi_lenh when those tasks exist.
+                      Legacy ja.ops_done row removed — was misleading after the split. */}
+                  {(() => {
+                    const tasks = Array.isArray(job.ops_tasks) ? job.ops_tasks : [];
+                    const tq = tasks.find(t => t.task_type === 'thong_quan');
+                    const dl = tasks.find(t => t.task_type === 'doi_lenh');
+                    if (!tq && !dl) return null;
+                    return (
+                      <>
+                        {tq && (
+                          <Row label="Thông quan (OPS)"
+                            value={tq.cost_entered_at
+                              ? `Đã nhập cost — ${fmtDt(tq.cost_entered_at)}`
+                              : 'Chưa nhập cost'}
+                            color={tq.cost_entered_at ? 'var(--primary)' : 'var(--warning)'} />
+                        )}
+                        {dl && (() => {
+                          const doneOk = dl.completed && dl.cost_entered_at;
+                          let val;
+                          if (doneOk) val = `Xong — ${fmtDt(dl.cost_entered_at)}`;
+                          else {
+                            const parts = [];
+                            parts.push(dl.completed ? '✓ đổi lệnh xong' : '✗ chưa xong');
+                            parts.push(dl.cost_entered_at ? '✓ cost' : '✗ chưa nhập cost');
+                            val = parts.join(' / ');
+                          }
+                          return <Row label="Đổi lệnh (OPS)" value={val}
+                            color={doneOk ? 'var(--primary)' : 'var(--warning)'} />;
+                        })()}
+                      </>
+                    );
+                  })()}
                   {(job.service_type === 'truck' || job.service_type === 'both') && (
                     <Row label="Điều Độ" value={job.dieu_do_name || '—'} />
                   )}

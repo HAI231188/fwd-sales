@@ -172,8 +172,11 @@ function queryOpsStaffStats(scope) {
   return db.query(`
     SELECT u.id, u.name, u.role, u.code, u.avatar_color,
       COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL) AS managing,
-      COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND j.service_type IN ('tk','both') AND j.destination = 'hai_phong' AND COALESCE(ja.ops_done, FALSE) = FALSE) AS tq_doi_lenh,
-      COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND j.service_type IN ('truck','both') AND j.destination = 'hai_phong' AND COALESCE(ja.ops_done, FALSE) = FALSE) AS doi_lenh,
+      -- Per-task pending counts (2026-05-23): pending = task row exists and is not done.
+      --   tq pending = thong_quan row exists with cost_entered_at IS NULL
+      --   dl pending = doi_lenh   row exists with completed=FALSE OR cost_entered_at IS NULL
+      COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND j.service_type IN ('tk','both') AND j.destination = 'hai_phong' AND EXISTS (SELECT 1 FROM job_ops_task jot WHERE jot.job_id = j.id AND jot.task_type = 'thong_quan' AND jot.cost_entered_at IS NULL)) AS tq_doi_lenh,
+      COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND j.service_type IN ('truck','both') AND j.destination = 'hai_phong' AND EXISTS (SELECT 1 FROM job_ops_task jot WHERE jot.job_id = j.id AND jot.task_type = 'doi_lenh' AND (jot.completed = FALSE OR jot.cost_entered_at IS NULL))) AS doi_lenh,
       COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '4 hours' AND (jt.tk_status IS NULL OR jt.tk_status IN ('chua_truyen','dang_lam'))) AS near_deadline
     FROM users u
     LEFT JOIN job_assignments ja ON ja.ops_id = u.id
@@ -288,7 +291,7 @@ router.get('/stats', requireAuth, async (req, res) => {
         db.query(`SELECT COUNT(*) AS v ${BASE} AND get_truck_booking_status(j.id) = 'chua_dat_kh'`, [userId]),
         db.query(`SELECT COUNT(*) AS v ${BASE} AND get_truck_booking_status(j.id) NOT IN ('chua_dat_kh','hoan_thanh')`, [userId]),
         db.query(`SELECT COUNT(*) AS v ${BASE} AND get_truck_booking_status(j.id) = 'chua_dat_kh' AND j.han_lenh BETWEEN NOW() AND NOW() + INTERVAL '24 hours'`, [userId]),
-        db.query(`SELECT COUNT(*) AS v ${BASE} AND get_truck_booking_status(j.id) NOT IN ('chua_dat_kh','hoan_thanh') AND j.destination = 'hai_phong' AND COALESCE(ja.ops_done, FALSE) = FALSE`, [userId]),
+        db.query(`SELECT COUNT(*) AS v ${BASE} AND get_truck_booking_status(j.id) NOT IN ('chua_dat_kh','hoan_thanh') AND j.destination = 'hai_phong' AND EXISTS (SELECT 1 FROM job_ops_task jot WHERE jot.job_id = j.id AND jot.task_type = 'doi_lenh' AND (jot.completed = FALSE OR jot.cost_entered_at IS NULL))`, [userId]),
         db.query(`SELECT COUNT(*) AS v ${BASE} AND get_truck_booking_status(j.id) = 'du_xe_cho_giao'`, [userId]),
         db.query(`SELECT COUNT(*) AS v ${BASE} AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '48 hours'`, [userId]),
         queryDieuDoStaffStats({ userId }),
@@ -348,8 +351,8 @@ router.get('/stats', requireAuth, async (req, res) => {
     } else if (role === 'ops') {
       const [total, choTqDoiLenh, choDoiLenh, sapHan, quaHan, opsStats] = await Promise.all([
         db.query(`SELECT COUNT(*) AS v FROM job_assignments ja JOIN jobs j ON j.id = ja.job_id WHERE ja.ops_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL`, [userId]),
-        db.query(`SELECT COUNT(*) AS v FROM job_assignments ja JOIN jobs j ON j.id = ja.job_id WHERE ja.ops_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL AND j.destination = 'hai_phong' AND j.service_type IN ('tk','both') AND COALESCE(ja.ops_done, FALSE) = FALSE`, [userId]),
-        db.query(`SELECT COUNT(*) AS v FROM job_assignments ja JOIN jobs j ON j.id = ja.job_id WHERE ja.ops_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL AND j.destination = 'hai_phong' AND j.service_type IN ('truck','both') AND COALESCE(ja.ops_done, FALSE) = FALSE`, [userId]),
+        db.query(`SELECT COUNT(*) AS v FROM job_assignments ja JOIN jobs j ON j.id = ja.job_id WHERE ja.ops_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL AND j.destination = 'hai_phong' AND j.service_type IN ('tk','both') AND EXISTS (SELECT 1 FROM job_ops_task jot WHERE jot.job_id = j.id AND jot.task_type = 'thong_quan' AND jot.cost_entered_at IS NULL)`, [userId]),
+        db.query(`SELECT COUNT(*) AS v FROM job_assignments ja JOIN jobs j ON j.id = ja.job_id WHERE ja.ops_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL AND j.destination = 'hai_phong' AND j.service_type IN ('truck','both') AND EXISTS (SELECT 1 FROM job_ops_task jot WHERE jot.job_id = j.id AND jot.task_type = 'doi_lenh' AND (jot.completed = FALSE OR jot.cost_entered_at IS NULL))`, [userId]),
         db.query(`SELECT COUNT(*) AS v FROM job_assignments ja JOIN jobs j ON j.id = ja.job_id WHERE ja.ops_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '24 hours'`, [userId]),
         db.query(`SELECT COUNT(*) AS v FROM job_assignments ja JOIN jobs j ON j.id = ja.job_id WHERE ja.ops_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL AND j.deadline < NOW()`, [userId]),
         queryOpsStaffStats({ userId }),
@@ -892,11 +895,11 @@ router.get('/filtered', requireAuth, async (req, res) => {
         break;
       case 'staff_ops_tq_doi_lenh':
         staffField = 'ops_id';
-        extraWhere = `AND j.service_type IN ('tk','both') AND j.destination = 'hai_phong' AND COALESCE(ja.ops_done, FALSE) = FALSE`;
+        extraWhere = `AND j.service_type IN ('tk','both') AND j.destination = 'hai_phong' AND EXISTS (SELECT 1 FROM job_ops_task jot WHERE jot.job_id = j.id AND jot.task_type = 'thong_quan' AND jot.cost_entered_at IS NULL)`;
         break;
       case 'staff_ops_doi_lenh':
         staffField = 'ops_id';
-        extraWhere = `AND j.service_type IN ('truck','both') AND j.destination = 'hai_phong' AND COALESCE(ja.ops_done, FALSE) = FALSE`;
+        extraWhere = `AND j.service_type IN ('truck','both') AND j.destination = 'hai_phong' AND EXISTS (SELECT 1 FROM job_ops_task jot WHERE jot.job_id = j.id AND jot.task_type = 'doi_lenh' AND (jot.completed = FALSE OR jot.cost_entered_at IS NULL))`;
         break;
       case 'staff_ops_near_deadline':
         staffField = 'ops_id';
@@ -1086,15 +1089,15 @@ router.get('/filtered', requireAuth, async (req, res) => {
       )`;
       break;
     case 'dd_canh_bao_chua_van_tai':   extraWhere = `AND get_truck_booking_status(j.id) = 'chua_dat_kh' AND j.han_lenh BETWEEN NOW() AND NOW() + INTERVAL '24 hours'`; break;
-    case 'dd_canh_bao_chua_doi_lenh':  extraWhere = `AND get_truck_booking_status(j.id) NOT IN ('chua_dat_kh','hoan_thanh') AND j.destination = 'hai_phong' AND COALESCE(ja.ops_done, FALSE) = FALSE`; break;
+    case 'dd_canh_bao_chua_doi_lenh':  extraWhere = `AND get_truck_booking_status(j.id) NOT IN ('chua_dat_kh','hoan_thanh') AND j.destination = 'hai_phong' AND EXISTS (SELECT 1 FROM job_ops_task jot WHERE jot.job_id = j.id AND jot.task_type = 'doi_lenh' AND (jot.completed = FALSE OR jot.cost_entered_at IS NULL))`; break;
     case 'dd_canh_bao_chua_hoan_thanh':extraWhere = `AND get_truck_booking_status(j.id) = 'du_xe_cho_giao'`; break;
     case 'dd_sap_han':       extraWhere = `AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '48 hours'`; break;
     // OPS filters — must match the corresponding stat-card WHERE clauses exactly (CLAUDE.md L5)
     case 'ops_waiting_tq_doilenh':
-      extraWhere = `AND j.destination = 'hai_phong' AND j.service_type IN ('tk','both') AND COALESCE(ja.ops_done, FALSE) = FALSE`;
+      extraWhere = `AND j.destination = 'hai_phong' AND j.service_type IN ('tk','both') AND EXISTS (SELECT 1 FROM job_ops_task jot WHERE jot.job_id = j.id AND jot.task_type = 'thong_quan' AND jot.cost_entered_at IS NULL)`;
       break;
     case 'ops_waiting_doilenh':
-      extraWhere = `AND j.destination = 'hai_phong' AND j.service_type IN ('truck','both') AND COALESCE(ja.ops_done, FALSE) = FALSE`;
+      extraWhere = `AND j.destination = 'hai_phong' AND j.service_type IN ('truck','both') AND EXISTS (SELECT 1 FROM job_ops_task jot WHERE jot.job_id = j.id AND jot.task_type = 'doi_lenh' AND (jot.completed = FALSE OR jot.cost_entered_at IS NULL))`;
       break;
     case 'ops_near_deadline': extraWhere = `AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '24 hours'`; break;
     case 'ops_overdue':       extraWhere = `AND j.deadline < NOW()`; break;
@@ -1267,7 +1270,9 @@ router.get('/', requireAuth, async (req, res) => {
           SELECT json_agg(json_build_object(
             'id', jot.id, 'task_type', jot.task_type, 'content', jot.content,
             'port', jot.port, 'deadline', jot.deadline,
-            'completed', jot.completed, 'completed_at', jot.completed_at, 'notes', jot.notes
+            'completed', jot.completed, 'completed_at', jot.completed_at, 'notes', jot.notes,
+            -- Per-task model (2026-05-23): cost tick state per task row.
+            'cost_entered_at', jot.cost_entered_at, 'cost_entered_by', jot.cost_entered_by
           ) ORDER BY jot.id)
           FROM job_ops_task jot WHERE jot.job_id = j.id
         ), '[]'::json) AS ops_tasks,
@@ -1593,16 +1598,25 @@ router.post('/', requireAuth, async (req, res) => {
       await recordHistory(client, job.id, req.user.id, 'dieu_do_assigned', null, String(ddUserId));
     }
 
-    // Auto-generate job_ops_task rows for Hải Phòng jobs
-    //   tk    → thong_quan_doi_lenh (OPS handles TQ + đổi lệnh on behalf of CUS)
-    //   truck → doi_lenh (DieuDo + truck side)
-    //   both  → thong_quan_doi_lenh (single task covers TQ + đổi lệnh follow-through)
+    // Auto-generate job_ops_task rows for Hải Phòng jobs (per-task model 2026-05-23).
+    //   tk    → 'thong_quan' + 'doi_lenh' (OPS does TQ paperwork pickup AND đổi lệnh hộ khách)
+    //   truck → 'doi_lenh'
+    //   both  → 'thong_quan' + 'doi_lenh'
+    // Rule: has TK (tk/both) → needs thong_quan; ANY HP job → needs doi_lenh.
+    // Idempotent via partial UNIQUE (job_id, task_type) WHERE task_type IS NOT NULL.
     if (destination === 'hai_phong' && ['tk','truck','both'].includes(service_type)) {
       const opsUserId = opsSuggestion?.user_id || null;
-      const taskType = service_type === 'truck' ? 'doi_lenh' : 'thong_quan_doi_lenh';
+      if (service_type === 'tk' || service_type === 'both') {
+        await client.query(
+          `INSERT INTO job_ops_task (job_id, ops_id, task_type) VALUES ($1, $2, 'thong_quan')
+           ON CONFLICT (job_id, task_type) WHERE task_type IS NOT NULL DO NOTHING`,
+          [job.id, opsUserId]
+        );
+      }
       await client.query(
-        `INSERT INTO job_ops_task (job_id, ops_id, task_type) VALUES ($1, $2, $3)`,
-        [job.id, opsUserId, taskType]
+        `INSERT INTO job_ops_task (job_id, ops_id, task_type) VALUES ($1, $2, 'doi_lenh')
+         ON CONFLICT (job_id, task_type) WHERE task_type IS NOT NULL DO NOTHING`,
+        [job.id, opsUserId]
       );
     }
 
@@ -1964,6 +1978,33 @@ router.put('/:id', requireAuth, async (req, res) => {
       }
     }
 
+    // Per-task model (2026-05-23): back-fill job_ops_task when destination/
+    // service_type changes such that the job newly needs OPS tasks (HP + tk/
+    // truck/both). Idempotent via partial UNIQUE on (job_id, task_type).
+    //   tk/both → ensure 'thong_quan' + 'doi_lenh'
+    //   truck   → ensure 'doi_lenh'
+    // Per spec: do NOT delete tasks if job changes away (out of scope).
+    const effectiveDest = req.body.destination ?? cur[0].destination;
+    if (effectiveDest === 'hai_phong' && ['tk','truck','both'].includes(effectiveSvc)) {
+      const { rows: jaRow } = await client.query(
+        `SELECT ops_id FROM job_assignments WHERE job_id = $1`,
+        [req.params.id]
+      );
+      const opsUserId = jaRow[0]?.ops_id || null;
+      if (effectiveSvc === 'tk' || effectiveSvc === 'both') {
+        await client.query(
+          `INSERT INTO job_ops_task (job_id, ops_id, task_type) VALUES ($1, $2, 'thong_quan')
+           ON CONFLICT (job_id, task_type) WHERE task_type IS NOT NULL DO NOTHING`,
+          [req.params.id, opsUserId]
+        );
+      }
+      await client.query(
+        `INSERT INTO job_ops_task (job_id, ops_id, task_type) VALUES ($1, $2, 'doi_lenh')
+         ON CONFLICT (job_id, task_type) WHERE task_type IS NOT NULL DO NOTHING`,
+        [req.params.id, opsUserId]
+      );
+    }
+
     await client.query('COMMIT');
     res.json({ ok: true });
   } catch (err) {
@@ -2296,8 +2337,7 @@ router.patch('/:id/reassign-ops', requireAuth, async (req, res) => {
 
     const { rows: jrows } = await client.query(`
       SELECT j.id, j.job_code, j.status, j.deleted_at, j.service_type, j.destination,
-             ja.ops_id AS old_ops_id,
-             COALESCE(ja.ops_done, FALSE) AS ops_done
+             ja.ops_id AS old_ops_id
       FROM jobs j
       LEFT JOIN job_assignments ja ON ja.job_id = j.id
       WHERE j.id = $1
@@ -2305,7 +2345,9 @@ router.patch('/:id/reassign-ops', requireAuth, async (req, res) => {
     const j = jrows[0];
     if (!j || j.deleted_at) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Không tìm thấy job' }); }
     if (j.status !== 'pending') { await client.query('ROLLBACK'); return res.status(400).json({ error: 'Job không ở trạng thái pending, không thể đổi OPS' }); }
-    if (j.ops_done) { await client.query('ROLLBACK'); return res.status(400).json({ error: 'OPS đã xong việc, không thể đổi' }); }
+    // Per-task model (2026-05-23): reassign-ops always wipes and recreates tasks
+    // for the new OPS, regardless of prior progress (owner spec: RESET all tasks).
+    // Legacy ja.ops_done guard removed — ops_done is no longer authoritative.
 
     const { rows: nu } = await client.query(`SELECT id, name, role FROM users WHERE id = $1`, [newOpsId]);
     if (!nu[0] || nu[0].role !== 'ops') { await client.query('ROLLBACK'); return res.status(400).json({ error: 'Người dùng không phải OPS' }); }
@@ -2333,13 +2375,22 @@ router.patch('/:id/reassign-ops', requireAuth, async (req, res) => {
       `, [req.params.id, newOpsId, req.user.id]);
     }
 
-    // Wipe and recreate ops tasks (matches initial assignment rule: only Hai Phong + valid service_type)
+    // Wipe and recreate ops tasks per the per-task model (2026-05-23).
+    //   tk/both → 'thong_quan' + 'doi_lenh'
+    //   truck   → 'doi_lenh' only
+    // Per owner: reassign-ops RESETS all tasks for the new OPS — wipe + recreate
+    // (completed=FALSE, cost_entered_at=NULL by column defaults).
     await client.query(`DELETE FROM job_ops_task WHERE job_id = $1`, [req.params.id]);
     if (j.destination === 'hai_phong' && ['tk', 'truck', 'both'].includes(j.service_type)) {
-      const taskType = j.service_type === 'truck' ? 'doi_lenh' : 'thong_quan_doi_lenh';
+      if (j.service_type === 'tk' || j.service_type === 'both') {
+        await client.query(
+          `INSERT INTO job_ops_task (job_id, ops_id, task_type) VALUES ($1, $2, 'thong_quan')`,
+          [req.params.id, newOpsId]
+        );
+      }
       await client.query(
-        `INSERT INTO job_ops_task (job_id, ops_id, task_type) VALUES ($1, $2, $3)`,
-        [req.params.id, newOpsId, taskType]
+        `INSERT INTO job_ops_task (job_id, ops_id, task_type) VALUES ($1, $2, 'doi_lenh')`,
+        [req.params.id, newOpsId]
       );
     }
 
@@ -2789,7 +2840,15 @@ router.patch('/:id/truck/complete', requireAuth, async (req, res) => {
     await client.query('BEGIN');
     const { rows } = await client.query(`
       SELECT j.id, j.service_type, j.destination,
-             ja.dieu_do_id, COALESCE(ja.ops_done, FALSE) AS ops_done,
+             ja.dieu_do_id,
+             -- Per-task model (2026-05-23): "OPS đã đổi lệnh xong" =
+             -- doi_lenh task completed AND cost ticked. Falls back to TRUE
+             -- when no doi_lenh task row exists (non-HP / not required).
+             COALESCE((
+               SELECT (completed = TRUE AND cost_entered_at IS NOT NULL)
+               FROM job_ops_task
+               WHERE job_id = j.id AND task_type = 'doi_lenh'
+             ), TRUE) AS dl_done,
              jtr.transport_name, jtr.vehicle_number, jtr.planned_datetime,
              jtr.delivery_location, jtr.cost, jtr.completed_at
       FROM jobs j
@@ -2818,7 +2877,7 @@ router.patch('/:id/truck/complete', requireAuth, async (req, res) => {
 
     if (j.destination === 'hai_phong'
         && (j.service_type === 'truck' || j.service_type === 'both')
-        && !j.ops_done) {
+        && !j.dl_done) {
       await client.query('ROLLBACK');
       return res.status(400).json({ error: 'OPS chưa đổi lệnh xong' });
     }
@@ -2939,44 +2998,171 @@ router.post('/:id/delete-request', requireAuth, async (req, res) => {
   }
 });
 
-// POST /api/jobs/:id/ops-done
-router.post('/:id/ops-done', requireAuth, async (req, res) => {
-  if (req.user.role !== 'ops') return res.status(403).json({ error: 'Không có quyền' });
+// =================================================================
+// OPS per-task tick endpoints (2026-05-23, replaces POST /ops-done).
+// Per-task model:
+//   thong_quan task → ONE tick: cost_entered_at (no separate done — tk_status
+//                     owns the digital "cleared" event).
+//   doi_lenh   task → TWO ticks: completed flag (đổi lệnh xong) + cost.
+// Precondition: when the job has TK (service_type tk/both), ALL ticks require
+// tk_status ∈ {thong_quan, giai_phong, bao_quan}.
+// Auth: 'ops' role + self-assignment (ja.ops_id === req.user.id), mirrors the
+// retired POST /:id/ops-done auth.
+// Each endpoint calls checkAndCompleteJob so the job auto-flips when all
+// required OPS + CUS + truck conditions are met.
+// =================================================================
+const OPS_TASK_TYPES = ['thong_quan', 'doi_lenh'];
+const TK_TERMINAL_STATUSES = ['thong_quan', 'giai_phong', 'bao_quan'];
+
+async function loadOpsTaskContext(client, jobId, taskType) {
+  const { rows } = await client.query(
+    `SELECT j.id, j.service_type, jt.tk_status, ja.ops_id,
+            jot.id AS task_id, jot.completed, jot.cost_entered_at
+       FROM jobs j
+       LEFT JOIN job_tk jt           ON jt.job_id = j.id
+       LEFT JOIN job_assignments ja  ON ja.job_id = j.id
+       LEFT JOIN job_ops_task jot    ON jot.job_id = j.id AND jot.task_type = $2
+      WHERE j.id = $1 AND j.deleted_at IS NULL`,
+    [jobId, taskType]
+  );
+  return rows[0] || null;
+}
+
+function isOpsAuthorized(user, ctx) {
+  if (!ctx) return { ok: false, code: 404, error: 'Không tìm thấy job' };
+  if (user.role !== 'ops') return { ok: false, code: 403, error: 'Không có quyền' };
+  if (ctx.ops_id !== user.id) return { ok: false, code: 403, error: 'Không có quyền' };
+  return { ok: true };
+}
+
+function checkTkPrecondition(ctx) {
+  // When the job has TK (tk/both), every OPS tick (thong_quan + doi_lenh)
+  // requires tk_status terminal. Truck-only jobs are free of this gate.
+  const hasTk = ctx.service_type === 'tk' || ctx.service_type === 'both';
+  if (hasTk && !TK_TERMINAL_STATUSES.includes(ctx.tk_status)) {
+    return { ok: false, code: 400, error: 'TK chưa thông quan / giải phóng / bảo quan' };
+  }
+  return { ok: true };
+}
+
+// PATCH /api/jobs/:id/ops-task/:taskType/done   — only valid for 'doi_lenh'
+router.patch('/:id/ops-task/:taskType/done', requireAuth, async (req, res) => {
+  const { id, taskType } = req.params;
+  if (taskType !== 'doi_lenh') {
+    return res.status(400).json({ error: 'Chỉ task doi_lenh có thao tác done' });
+  }
   const client = await db.pool.connect();
   try {
     await client.query('BEGIN');
-    const { rows: jobRows } = await client.query(
-      `SELECT j.service_type, jt.tk_status, ja.ops_id
-         FROM jobs j
-         LEFT JOIN job_tk jt ON jt.job_id = j.id
-         LEFT JOIN job_assignments ja ON ja.job_id = j.id
-        WHERE j.id = $1 AND j.deleted_at IS NULL`,
-      [req.params.id]
-    );
-    if (!jobRows[0]) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Không tìm thấy job' }); }
-    if (jobRows[0].ops_id !== req.user.id) {
-      await client.query('ROLLBACK');
-      return res.status(403).json({ error: 'Không có quyền' });
-    }
-    const { service_type, tk_status } = jobRows[0];
-    const needsTkCheck = service_type === 'tk' || service_type === 'both';
-    const terminalStatuses = ['thong_quan', 'giai_phong', 'bao_quan'];
-    if (needsTkCheck && !terminalStatuses.includes(tk_status)) {
-      await client.query('ROLLBACK');
-      return res.status(400).json({ error: 'TK chưa thông quan / giải phóng / bảo quan' });
-    }
+    const ctx = await loadOpsTaskContext(client, id, taskType);
+    const auth = isOpsAuthorized(req.user, ctx);
+    if (!auth.ok) { await client.query('ROLLBACK'); return res.status(auth.code).json({ error: auth.error }); }
+    if (!ctx.task_id) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Task không tồn tại cho job này' }); }
+    const pre = checkTkPrecondition(ctx);
+    if (!pre.ok) { await client.query('ROLLBACK'); return res.status(pre.code).json({ error: pre.error }); }
+    if (ctx.completed) { await client.query('ROLLBACK'); return res.status(400).json({ error: 'Task đã được đánh dấu xong' }); }
     await client.query(
-      `UPDATE job_assignments SET ops_done = TRUE, ops_done_at = NOW() WHERE job_id = $1`,
-      [req.params.id]
+      `UPDATE job_ops_task SET completed = TRUE, completed_at = NOW() WHERE id = $1`,
+      [ctx.task_id]
     );
-    await client.query(
-      `UPDATE job_ops_task SET completed = TRUE, completed_at = NOW() WHERE job_id = $1 AND completed = FALSE`,
-      [req.params.id]
-    );
-    await recordHistory(client, req.params.id, req.user.id, 'ops_done', 'false', 'true');
-    const completed = await checkAndCompleteJob(client, req.params.id, req.user.id);
+    await recordHistory(client, id, req.user.id, `${taskType}_done`, 'false', 'true');
+    const completed = await checkAndCompleteJob(client, id, req.user.id);
     await client.query('COMMIT');
     res.json({ ok: true, job_completed: completed });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// DELETE /api/jobs/:id/ops-task/:taskType/done  — un-tick đổi lệnh done
+router.delete('/:id/ops-task/:taskType/done', requireAuth, async (req, res) => {
+  const { id, taskType } = req.params;
+  if (taskType !== 'doi_lenh') {
+    return res.status(400).json({ error: 'Chỉ task doi_lenh có thao tác done' });
+  }
+  const client = await db.pool.connect();
+  try {
+    await client.query('BEGIN');
+    const ctx = await loadOpsTaskContext(client, id, taskType);
+    const auth = isOpsAuthorized(req.user, ctx);
+    if (!auth.ok) { await client.query('ROLLBACK'); return res.status(auth.code).json({ error: auth.error }); }
+    if (!ctx.task_id) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Task không tồn tại cho job này' }); }
+    if (!ctx.completed) { await client.query('ROLLBACK'); return res.status(400).json({ error: 'Task chưa được đánh dấu xong' }); }
+    await client.query(
+      `UPDATE job_ops_task SET completed = FALSE, completed_at = NULL WHERE id = $1`,
+      [ctx.task_id]
+    );
+    await recordHistory(client, id, req.user.id, `${taskType}_done`, 'true', 'false');
+    // Per spec: do NOT auto-uncomplete the job here. If the job already flipped
+    // to status='completed', leave it; checkAndCompleteJob early-returns on
+    // already-completed jobs anyway.
+    await client.query('COMMIT');
+    res.json({ ok: true });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// PATCH /api/jobs/:id/ops-task/:taskType/cost   — 'thong_quan' or 'doi_lenh'
+router.patch('/:id/ops-task/:taskType/cost', requireAuth, async (req, res) => {
+  const { id, taskType } = req.params;
+  if (!OPS_TASK_TYPES.includes(taskType)) {
+    return res.status(400).json({ error: 'Loại task không hợp lệ' });
+  }
+  const client = await db.pool.connect();
+  try {
+    await client.query('BEGIN');
+    const ctx = await loadOpsTaskContext(client, id, taskType);
+    const auth = isOpsAuthorized(req.user, ctx);
+    if (!auth.ok) { await client.query('ROLLBACK'); return res.status(auth.code).json({ error: auth.error }); }
+    if (!ctx.task_id) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Task không tồn tại cho job này' }); }
+    const pre = checkTkPrecondition(ctx);
+    if (!pre.ok) { await client.query('ROLLBACK'); return res.status(pre.code).json({ error: pre.error }); }
+    if (ctx.cost_entered_at) { await client.query('ROLLBACK'); return res.status(400).json({ error: 'Cost đã được nhập' }); }
+    await client.query(
+      `UPDATE job_ops_task SET cost_entered_at = NOW(), cost_entered_by = $2 WHERE id = $1`,
+      [ctx.task_id, req.user.id]
+    );
+    await recordHistory(client, id, req.user.id, `${taskType}_cost`, null, 'entered');
+    const completed = await checkAndCompleteJob(client, id, req.user.id);
+    await client.query('COMMIT');
+    res.json({ ok: true, job_completed: completed });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// DELETE /api/jobs/:id/ops-task/:taskType/cost  — un-tick cost
+router.delete('/:id/ops-task/:taskType/cost', requireAuth, async (req, res) => {
+  const { id, taskType } = req.params;
+  if (!OPS_TASK_TYPES.includes(taskType)) {
+    return res.status(400).json({ error: 'Loại task không hợp lệ' });
+  }
+  const client = await db.pool.connect();
+  try {
+    await client.query('BEGIN');
+    const ctx = await loadOpsTaskContext(client, id, taskType);
+    const auth = isOpsAuthorized(req.user, ctx);
+    if (!auth.ok) { await client.query('ROLLBACK'); return res.status(auth.code).json({ error: auth.error }); }
+    if (!ctx.task_id) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Task không tồn tại cho job này' }); }
+    if (!ctx.cost_entered_at) { await client.query('ROLLBACK'); return res.status(400).json({ error: 'Cost chưa được nhập' }); }
+    await client.query(
+      `UPDATE job_ops_task SET cost_entered_at = NULL, cost_entered_by = NULL WHERE id = $1`,
+      [ctx.task_id]
+    );
+    await recordHistory(client, id, req.user.id, `${taskType}_cost`, 'entered', null);
+    // Per spec: do NOT auto-uncomplete the job.
+    await client.query('COMMIT');
+    res.json({ ok: true });
   } catch (err) {
     await client.query('ROLLBACK');
     res.status(500).json({ error: err.message });

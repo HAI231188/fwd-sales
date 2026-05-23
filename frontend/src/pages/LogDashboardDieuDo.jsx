@@ -498,14 +498,17 @@ export default function LogDashboardDieuDo() {
                         </div>
                       )}
 
-                      {/* OPS done badge */}
+                      {/* OPS đổi lệnh badge — reads per-task state (2026-05-23).
+                          DD cares specifically about doi_lenh (unlocks truck side). */}
                       <div style={{ fontSize: 12, color: 'var(--text-2)' }}>
                         OPS đổi lệnh:{' '}
-                        {isOpsRelevant ? (
-                          j.ops_done
+                        {isOpsRelevant ? (() => {
+                          const dl = (Array.isArray(j.ops_tasks) ? j.ops_tasks : []).find(t => t.task_type === 'doi_lenh');
+                          const done = !!dl && dl.completed === true && !!dl.cost_entered_at;
+                          return done
                             ? <span style={{ background: 'rgba(34,197,94,0.15)', color: '#16a34a', borderRadius: 6, padding: '2px 8px', fontSize: 11, fontWeight: 600 }}>✓ Đã đổi</span>
-                            : <span style={{ background: 'rgba(217,119,6,0.12)', color: '#b45309', borderRadius: 6, padding: '2px 8px', fontSize: 11, fontWeight: 600 }}>✗ Chưa đổi</span>
-                        ) : <span style={{ color: 'var(--text-3)' }}>—</span>}
+                            : <span style={{ background: 'rgba(217,119,6,0.12)', color: '#b45309', borderRadius: 6, padding: '2px 8px', fontSize: 11, fontWeight: 600 }}>✗ Chưa đổi</span>;
+                        })() : <span style={{ color: 'var(--text-3)' }}>—</span>}
                       </div>
                     </div>
                   );
@@ -647,11 +650,14 @@ export default function LogDashboardDieuDo() {
                       </td>
 
                       <td style={{ ...cs, whiteSpace: 'nowrap' }}>
-                        {isOpsRelevant
-                          ? j.ops_done
+                        {/* Per-task model (2026-05-23): reads doi_lenh task state. */}
+                        {isOpsRelevant ? (() => {
+                          const dl = (Array.isArray(j.ops_tasks) ? j.ops_tasks : []).find(t => t.task_type === 'doi_lenh');
+                          const done = !!dl && dl.completed === true && !!dl.cost_entered_at;
+                          return done
                             ? <span style={{ background: 'rgba(34,197,94,0.15)', color: '#16a34a', borderRadius: 6, padding: '2px 8px', fontSize: 11, fontWeight: 600 }}>Đã đổi</span>
-                            : <span style={{ background: 'rgba(217,119,6,0.12)', color: '#b45309', borderRadius: 6, padding: '2px 8px', fontSize: 11, fontWeight: 600 }}>Chưa đổi</span>
-                          : <span style={{ color: 'var(--text-3)' }}>—</span>}
+                            : <span style={{ background: 'rgba(217,119,6,0.12)', color: '#b45309', borderRadius: 6, padding: '2px 8px', fontSize: 11, fontWeight: 600 }}>Chưa đổi</span>;
+                        })() : <span style={{ color: 'var(--text-3)' }}>—</span>}
                       </td>
 
                       <td style={{ ...cs, whiteSpace: 'nowrap' }} onClick={stop}>
