@@ -852,10 +852,37 @@ CREATE INDEX IF NOT EXISTS idx_jobs_returned_to
 -- (To remove the role: re-issue users_role_check without 'ke_toan' after
 --  ensuring no rows have that role.)
 
--- Job-level booking status — Phase 5 CP4.5.1.
--- CP4.5.1: 'hoan_thanh' is now driven by jobs.completed_at IS NOT NULL (the
--- per-job "TH ngày giờ" input in the DD grid). Per-booking actual_datetime
--- is no longer part of the derivation (column kept for legacy data).
+-- ============================================================
+-- DD completion stamp (2026-05-24)
+-- DD enters "TH ngày giờ" → PUT /:id stamps jobs.dd_completed_at instead
+-- of jobs.completed_at. checkAndCompleteJob now flips the whole job to
+-- 'completed' when CUS + DD + OPS are all done. Fixes the
+-- get_truck_booking_status circularity that previously made truckDone
+-- structurally false for pending truck/both jobs.
+-- ============================================================
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS dd_completed_at TIMESTAMP WITH TIME ZONE;
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS dd_completed_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_jobs_dd_completed_at
+  ON jobs(dd_completed_at)
+  WHERE dd_completed_at IS NOT NULL AND deleted_at IS NULL;
+
+-- Backfill: historical completed truck/both jobs need dd_completed_at so
+-- get_truck_booking_status keeps the right state AND DD's "Hoàn thành" tab
+-- still includes them after the partition shifts to dd_completed_at.
+-- Idempotent — only fills NULL rows. NEVER writes to jobs.status / completed_at.
+UPDATE jobs
+   SET dd_completed_at = completed_at
+ WHERE service_type IN ('truck','both')
+   AND completed_at IS NOT NULL
+   AND dd_completed_at IS NULL;
+
+-- Job-level booking status — Phase 5 CP4.5.1 + DD-split (2026-05-24).
+-- 'hoan_thanh' UNCHANGED — still driven by jobs.completed_at IS NOT NULL
+-- (the whole job completion signal; KT/Sales/CUS/OPS/TP readers rely on this).
+-- NEW state 'dd_da_xong' — DD finished their portion (dd_completed_at set) but
+-- the job is still pending (waiting on CUS or OPS). This makes truckDone in
+-- checkAndCompleteJob reachable for truck/both pending jobs — was previously
+-- structurally false (circular).
 -- A = total job_containers
 -- B = unique containers covered by an alive booking
 -- C = alive bookings with transport_company_id set
@@ -869,9 +896,11 @@ CREATE INDEX IF NOT EXISTS idx_jobs_returned_to
 --   'du_kh_chot_vt_1_phan'  full coverage, some bookings have carrier
 --   'du_vt_chua_co_xe'      full coverage + all carriers, no vehicles yet
 --   'du_vt_co_xe_1_phan'    full coverage + all carriers, some vehicles
---   'du_xe_cho_giao'        all vehicles assigned, jobs.completed_at NULL
---                           (the "ready to mark complete" state)
---   'hoan_thanh'            jobs.completed_at IS NOT NULL
+--   'du_xe_cho_giao'        all vehicles assigned, dd_completed_at NULL
+--                           (DD ready to enter TH ngày giờ)
+--   'dd_da_xong'            dd_completed_at IS NOT NULL AND completed_at IS NULL
+--                           (DD finished, job pending CUS/OPS)
+--   'hoan_thanh'            jobs.completed_at IS NOT NULL (whole job done)
 CREATE OR REPLACE FUNCTION get_truck_booking_status(p_job_id INT) RETURNS TEXT AS $$
 DECLARE
   a_total_cont          INT;  -- A
@@ -880,9 +909,10 @@ DECLARE
   d_with_vehicle        INT;  -- D
   total_bookings        INT;
   job_completed_at      TIMESTAMPTZ;
+  job_dd_done_at        TIMESTAMPTZ;
 BEGIN
-  -- CP4.5.1 — short-circuit on the canonical completion signal.
-  SELECT completed_at INTO job_completed_at
+  -- CP4.5.1 + DD-split — short-circuit on the canonical completion signals.
+  SELECT completed_at, dd_completed_at INTO job_completed_at, job_dd_done_at
     FROM jobs WHERE id = p_job_id;
   -- CP6.5 — fail loudly on bogus job_ids so callers don't silently get
   -- 'chua_dat_kh' for non-existent jobs. Soft-deleted jobs still satisfy
@@ -892,6 +922,9 @@ BEGIN
   END IF;
   IF job_completed_at IS NOT NULL THEN
     RETURN 'hoan_thanh';
+  END IF;
+  IF job_dd_done_at IS NOT NULL THEN
+    RETURN 'dd_da_xong';
   END IF;
 
   SELECT COUNT(*) INTO a_total_cont

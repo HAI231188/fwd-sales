@@ -287,11 +287,11 @@ router.get('/stats', requireAuth, async (req, res) => {
              jobChuaHt, keHoachDaDat, keHoachChuaDat,
              khQuaHan, khHomNay, khD1, khD2, khD3, khD4, khD5] = await Promise.all([
         db.query(`SELECT COUNT(*) AS v ${BASE}`, [userId]),
-        db.query(`SELECT COUNT(*) AS v ${BASE} AND get_truck_booking_status(j.id) NOT IN ('chua_dat_kh','hoan_thanh')`, [userId]),
+        db.query(`SELECT COUNT(*) AS v ${BASE} AND get_truck_booking_status(j.id) NOT IN ('chua_dat_kh','dd_da_xong','hoan_thanh')`, [userId]),
         db.query(`SELECT COUNT(*) AS v ${BASE} AND get_truck_booking_status(j.id) = 'chua_dat_kh'`, [userId]),
-        db.query(`SELECT COUNT(*) AS v ${BASE} AND get_truck_booking_status(j.id) NOT IN ('chua_dat_kh','hoan_thanh')`, [userId]),
+        db.query(`SELECT COUNT(*) AS v ${BASE} AND get_truck_booking_status(j.id) NOT IN ('chua_dat_kh','dd_da_xong','hoan_thanh')`, [userId]),
         db.query(`SELECT COUNT(*) AS v ${BASE} AND get_truck_booking_status(j.id) = 'chua_dat_kh' AND j.han_lenh BETWEEN NOW() AND NOW() + INTERVAL '24 hours'`, [userId]),
-        db.query(`SELECT COUNT(*) AS v ${BASE} AND get_truck_booking_status(j.id) NOT IN ('chua_dat_kh','hoan_thanh') AND j.destination = 'hai_phong' AND EXISTS (SELECT 1 FROM job_ops_task jot WHERE jot.job_id = j.id AND jot.task_type = 'doi_lenh' AND (jot.completed = FALSE OR jot.cost_entered_at IS NULL))`, [userId]),
+        db.query(`SELECT COUNT(*) AS v ${BASE} AND get_truck_booking_status(j.id) NOT IN ('chua_dat_kh','dd_da_xong','hoan_thanh') AND j.destination = 'hai_phong' AND EXISTS (SELECT 1 FROM job_ops_task jot WHERE jot.job_id = j.id AND jot.task_type = 'doi_lenh' AND (jot.completed = FALSE OR jot.cost_entered_at IS NULL))`, [userId]),
         db.query(`SELECT COUNT(*) AS v ${BASE} AND get_truck_booking_status(j.id) = 'du_xe_cho_giao'`, [userId]),
         db.query(`SELECT COUNT(*) AS v ${BASE} AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '48 hours'`, [userId]),
         queryDieuDoStaffStats({ userId }),
@@ -1061,11 +1061,12 @@ router.get('/filtered', requireAuth, async (req, res) => {
     // DieuDo filters — Phase 5 CP4.5: migrated to 8-status enum. 'hoan_thanh'
     // is now the true completion signal (= all bookings have actual_datetime).
     case 'truck_total':      break;
-    case 'truck_pending':    extraWhere = `AND get_truck_booking_status(j.id) <> 'hoan_thanh'`; break;
+    // 2026-05-24 DD-split: "DD still has work to do" excludes 'dd_da_xong' too.
+    case 'truck_pending':    extraWhere = `AND get_truck_booking_status(j.id) NOT IN ('dd_da_xong','hoan_thanh')`; break;
     case 'truck_booked':     extraWhere = `AND get_truck_booking_status(j.id) = 'du_xe_cho_giao'`; break;
     case 'truck_not_booked': extraWhere = `AND get_truck_booking_status(j.id) = 'dat_kh_1_phan'`; break;
-    case 'truck_warning':    extraWhere = `AND get_truck_booking_status(j.id) <> 'hoan_thanh' AND j.han_lenh BETWEEN NOW() AND NOW() + INTERVAL '24 hours'`; break;
-    case 'dd_co_kh_xe':      extraWhere = `AND get_truck_booking_status(j.id) NOT IN ('chua_dat_kh','hoan_thanh')`; break;
+    case 'truck_warning':    extraWhere = `AND get_truck_booking_status(j.id) NOT IN ('dd_da_xong','hoan_thanh') AND j.han_lenh BETWEEN NOW() AND NOW() + INTERVAL '24 hours'`; break;
+    case 'dd_co_kh_xe':      extraWhere = `AND get_truck_booking_status(j.id) NOT IN ('chua_dat_kh','dd_da_xong','hoan_thanh')`; break;
     case 'dd_chua_kh_xe':    extraWhere = `AND get_truck_booking_status(j.id) = 'chua_dat_kh'`; break;
     // Phase 5 Step 1: container-level coverage drilldowns. L5-locked to the
     // ke_hoach_da_dat / ke_hoach_chua_dat stat counts above.
@@ -1089,7 +1090,7 @@ router.get('/filtered', requireAuth, async (req, res) => {
       )`;
       break;
     case 'dd_canh_bao_chua_van_tai':   extraWhere = `AND get_truck_booking_status(j.id) = 'chua_dat_kh' AND j.han_lenh BETWEEN NOW() AND NOW() + INTERVAL '24 hours'`; break;
-    case 'dd_canh_bao_chua_doi_lenh':  extraWhere = `AND get_truck_booking_status(j.id) NOT IN ('chua_dat_kh','hoan_thanh') AND j.destination = 'hai_phong' AND EXISTS (SELECT 1 FROM job_ops_task jot WHERE jot.job_id = j.id AND jot.task_type = 'doi_lenh' AND (jot.completed = FALSE OR jot.cost_entered_at IS NULL))`; break;
+    case 'dd_canh_bao_chua_doi_lenh':  extraWhere = `AND get_truck_booking_status(j.id) NOT IN ('chua_dat_kh','dd_da_xong','hoan_thanh') AND j.destination = 'hai_phong' AND EXISTS (SELECT 1 FROM job_ops_task jot WHERE jot.job_id = j.id AND jot.task_type = 'doi_lenh' AND (jot.completed = FALSE OR jot.cost_entered_at IS NULL))`; break;
     case 'dd_canh_bao_chua_hoan_thanh':extraWhere = `AND get_truck_booking_status(j.id) = 'du_xe_cho_giao'`; break;
     case 'dd_sap_han':       extraWhere = `AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '48 hours'`; break;
     // OPS filters — must match the corresponding stat-card WHERE clauses exactly (CLAUDE.md L5)
@@ -1292,6 +1293,22 @@ router.get('/', requireAuth, async (req, res) => {
             JOIN truck_bookings tb ON tb.id = tbc.booking_id
            WHERE tb.job_id = j.id AND tb.deleted_at IS NULL
         ), 0) AS truck_booked_containers_count,
+        -- DD sign-off tick aggregates (CP6.1) — supports DD's status pill
+        -- upgrade + CUS's "DD xong chưa?" cue + TP's full-detail DD column.
+        -- bookings_total_alive: count of alive bookings (denominator)
+        -- bookings_with_invoice_lifting / bookings_with_cost_entered: numerators
+        COALESCE((
+          SELECT COUNT(*)::int FROM truck_bookings
+           WHERE job_id = j.id AND deleted_at IS NULL
+        ), 0) AS bookings_total_alive,
+        COALESCE((
+          SELECT COUNT(*)::int FROM truck_bookings
+           WHERE job_id = j.id AND deleted_at IS NULL AND invoice_lifting_ticked
+        ), 0) AS bookings_with_invoice_lifting,
+        COALESCE((
+          SELECT COUNT(*)::int FROM truck_bookings
+           WHERE job_id = j.id AND deleted_at IS NULL AND cost_entered_ticked
+        ), 0) AS bookings_with_cost_entered,
         -- Phase 4.1: earliest active booking exposed as first_booking_* so the
         -- DD main grid can inline-edit it without a second fetch. Pattern matches
         -- the bbbg-data LATERAL (earliest by planned_datetime, then id).
@@ -1797,12 +1814,16 @@ router.put('/:id', requireAuth, async (req, res) => {
     const sets = []; const params = []; let idx = 1;
     const handledByGuard = new Set();
 
-    // CP4.5.1 — completed_at guard. Setting jobs.completed_at to a non-null
-    // value is the canonical "mark job as done" gesture. Validate that the
-    // job has reached du_xe_cho_giao (all vehicles assigned) or is already
-    // hoan_thanh; otherwise return 400 with a friendly Vietnamese message.
-    // Setting completed_at to null is allowed (uncomplete) — status flips
-    // back to 'pending' so the job reappears on "Đang làm" tab.
+    // 2026-05-24 DD-split — `completed_at` body is now interpreted as DD's
+    // "TH ngày giờ" stamp and writes to jobs.dd_completed_at (NOT jobs.completed_at).
+    // checkAndCompleteJob is called after the stamp; it auto-flips jobs.completed_at
+    // ONLY when CUS + DD + OPS are all done (truckDone now reads via dd_da_xong/
+    // hoan_thanh state). This decouples DD's progress from whole-job completion.
+    // Setting to null clears DD's stamp WITHOUT touching jobs.status / completed_at
+    // (matches the CUS/OPS un-tick "don't auto-uncomplete" policy).
+    let ddStampedAt = null; // 2026-05-24: tracks whether DD just stamped a non-null
+                            // dd_completed_at so we can call checkAndCompleteJob
+                            // after the UPDATE runs (CUS + OPS may already be done).
     if (req.body.completed_at !== undefined) {
       const raw = req.body.completed_at;
       const ts = (raw === '' || raw == null) ? null : raw;
@@ -1810,7 +1831,10 @@ router.put('/:id', requireAuth, async (req, res) => {
         const { rows: [s] } = await client.query(
           `SELECT get_truck_booking_status($1) AS status`, [req.params.id]
         );
-        if (!['du_xe_cho_giao', 'hoan_thanh'].includes(s.status)) {
+        // Guard #1: DD must reach du_xe_cho_giao (or already past — dd_da_xong /
+        // hoan_thanh) before stamping. dd_da_xong added so DD can re-stamp /
+        // adjust the timestamp after the first commit.
+        if (!['du_xe_cho_giao', 'dd_da_xong', 'hoan_thanh'].includes(s.status)) {
           await client.query('ROLLBACK');
           const labels = {
             chua_dat_kh:          'Chưa đặt KH',
@@ -1859,12 +1883,11 @@ router.put('/:id', requireAuth, async (req, res) => {
             code: 'MISSING_COST_ENTERED',
           });
         }
-        // Guard #4 (2026-05-23): OPS per-task gate. Closes the bypass where DD
-        // could close a truck/both HP job while OPS thong_quan/doi_lenh were
-        // still incomplete. The auto-path gate in checkAndCompleteJob is dead
-        // code for truck/both (circular truckDone='hoan_thanh'), so this is the
-        // only place the OPS gate actually fires for those jobs. Non-HP and any
-        // job without OPS task rows → ready=true (passes through).
+        // Guard #4 (2026-05-23): OPS per-task gate. DD must wait until OPS
+        // thong_quan/doi_lenh tasks are done before stamping dd_completed_at.
+        // checkAndCompleteJob will re-check this gate when deciding whether to
+        // auto-flip jobs.completed_at, but stamping dd_completed_at represents
+        // DD's commitment that their portion is fully done — OPS must finish first.
         const opsCheck = await checkOpsTasksDone(client, req.params.id);
         if (!opsCheck.ready) {
           await client.query('ROLLBACK');
@@ -1873,23 +1896,24 @@ router.put('/:id', requireAuth, async (req, res) => {
             code: 'OPS_TASKS_INCOMPLETE',
           });
         }
-        sets.push(`completed_at = $${idx++}`); params.push(ts);
-        sets.push(`status = 'completed'`);
-        await recordHistory(client, req.params.id, req.user.id, 'completed_at', cur[0].completed_at, ts);
-        if (cur[0].status !== 'completed') {
-          await recordHistory(client, req.params.id, req.user.id, 'status', cur[0].status, 'completed');
-        }
+        // 2026-05-24 DD-split — stamp dd_completed_at + dd_completed_by.
+        // Do NOT write jobs.completed_at or status here; checkAndCompleteJob
+        // below auto-flips the job to 'completed' only when CUS + DD + OPS all done.
+        sets.push(`dd_completed_at = $${idx++}`); params.push(ts);
+        sets.push(`dd_completed_by = $${idx++}`); params.push(req.user.id);
+        await recordHistory(client, req.params.id, req.user.id, 'dd_completed_at', cur[0].dd_completed_at, ts);
+        ddStampedAt = ts;
       } else {
-        // Uncomplete: clear timestamp AND flip status back to pending.
-        sets.push(`completed_at = NULL`);
-        sets.push(`status = 'pending'`);
-        await recordHistory(client, req.params.id, req.user.id, 'completed_at', cur[0].completed_at, null);
-        if (cur[0].status !== 'pending') {
-          await recordHistory(client, req.params.id, req.user.id, 'status', cur[0].status, 'pending');
-        }
+        // Uncomplete: clear DD's stamp only. Per the "don't auto-uncomplete"
+        // policy (matches CUS/OPS un-tick paths), do NOT touch jobs.completed_at
+        // or status. If the job already auto-flipped to completed, it stays
+        // completed; admin can reverse via a separate path if needed.
+        sets.push(`dd_completed_at = NULL`);
+        sets.push(`dd_completed_by = NULL`);
+        await recordHistory(client, req.params.id, req.user.id, 'dd_completed_at', cur[0].dd_completed_at, null);
       }
-      // Both branches set status as part of the completed_at flow; skip it in
-      // the generic loop so we don't get two SET clauses on the same column.
+      // status is intentionally NOT touched in the DD-stamp flow — leave it for
+      // the generic loop or checkAndCompleteJob to manage.
       handledByGuard.add('status');
     }
 
@@ -2019,8 +2043,27 @@ router.put('/:id', requireAuth, async (req, res) => {
       );
     }
 
+    // 2026-05-24 DD-split: if DD just stamped a non-null dd_completed_at, try
+    // to auto-complete the whole job. checkAndCompleteJob re-checks tkDone +
+    // truckDone (now reads dd_da_xong / hoan_thanh via the updated function) +
+    // OPS task gate. Stamps jobs.completed_at + status='completed' only when
+    // all 3 depts are done; otherwise the job stays pending and DD's pill
+    // shows 'dd_da_xong'.
+    let jobCompleted = false;
+    if (ddStampedAt) {
+      jobCompleted = await checkAndCompleteJob(client, req.params.id, req.user.id);
+    }
+
     await client.query('COMMIT');
-    res.json({ ok: true });
+    res.json({
+      ok: true,
+      // DD-stamp flow returns explicit flags so the frontend can pick the
+      // right toast ("Job hoàn thành" vs "Đã chốt TH — chờ CUS/OPS").
+      ...(req.body.completed_at !== undefined ? {
+        dd_completed: !!ddStampedAt,
+        job_completed: jobCompleted,
+      } : {}),
+    });
   } catch (err) {
     await client.query('ROLLBACK');
     res.status(500).json({ error: err.message });

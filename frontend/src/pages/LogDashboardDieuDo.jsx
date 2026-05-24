@@ -21,8 +21,62 @@ import { getJobStats, getJobs, updateJob, requestJobDelete, createJob,
          getTruckBookings, updateTruckBooking, deleteTruckBooking } from '../api';
 import {
   TRUCK_BOOKING_STATUS_LABELS, TRUCK_BOOKING_STATUS_SORT_RANK,
-  TRUCK_BOOKING_ACTIVE_STATUSES, truckBookingPillStyle,
+  TRUCK_BOOKING_ACTIVE_STATUSES, truckBookingPillStyle, pillStyleByColor,
 } from '../utils/truckBookingStatus';
+
+// 2026-05-24 DD-split helpers.
+// ddPillInfo: computes DD's pill {label, color, tooltip} from the combined state
+// (truck_booking_status + per-booking tick aggregates). Special-cases
+// 'du_xe_cho_giao' into sub-states based on which ticks are still pending.
+function ddPillInfo(j) {
+  const status = j.truck_booking_status;
+  if (status !== 'du_xe_cho_giao') {
+    return {
+      label: TRUCK_BOOKING_STATUS_LABELS[status] || status || '—',
+      color: null, // signal to use truckBookingPillStyle(status) — preserves static mapping
+    };
+  }
+  // Special handling for du_xe_cho_giao — split by per-booking tick aggregates.
+  const total = j.bookings_total_alive || 0;
+  const liftDone = j.bookings_with_invoice_lifting || 0;
+  const costDone = j.bookings_with_cost_entered || 0;
+  const liftPending = Math.max(0, total - liftDone);
+  const costPending = Math.max(0, total - costDone);
+  const tooltip = `Nâng hạ ${liftDone}/${total} · Cost hệ thống ${costDone}/${total}`;
+  if (liftPending > 0 && costPending > 0) {
+    return { label: 'Đủ xe — chưa tick nâng hạ + cost', color: 'orange', tooltip };
+  }
+  if (liftPending > 0) {
+    return { label: 'Đủ xe — chưa tick nâng hạ', color: 'orange', tooltip };
+  }
+  if (costPending > 0) {
+    return { label: 'Đủ xe — chưa nhập cost HT', color: 'orange', tooltip };
+  }
+  return { label: 'Đủ xe, đủ tick — chưa nhập TH ngày giờ', color: 'purple-dark', tooltip };
+}
+function ddPillStyle(info, fallbackStatus) {
+  return info.color ? pillStyleByColor(info.color) : truckBookingPillStyle(fallbackStatus);
+}
+
+// waitingStatus: returns the list of "Chờ ..." items for the new Chờ column.
+//   - CUS thông quan blocker if job has TK + tk_status not terminal
+//   - OPS đổi lệnh blocker if HP + doi_lenh task incomplete
+// Reflects the owner's spec: DD's row should surface CUS + OPS state without detail.
+const TK_TERMINAL_STATUSES = ['thong_quan', 'giai_phong', 'bao_quan'];
+function waitingStatus(j) {
+  const items = [];
+  const hasTk = j.service_type === 'tk' || j.service_type === 'both';
+  if (hasTk && !TK_TERMINAL_STATUSES.includes(j.tk_status)) {
+    items.push('CUS thông quan');
+  }
+  if (j.destination === 'hai_phong') {
+    const dl = (Array.isArray(j.ops_tasks) ? j.ops_tasks : []).find(t => t.task_type === 'doi_lenh');
+    if (dl && !(dl.completed === true && !!dl.cost_entered_at)) {
+      items.push('OPS đổi lệnh');
+    }
+  }
+  return items;
+}
 
 function fmtDate(val) {
   if (!val) return '—';
@@ -159,6 +213,8 @@ const DD_COLS = [
   { key: 'cost',           label: 'Cước' },
   { key: 'notes',          label: 'Ghi chú' },
   { key: 'doi_lenh',       label: 'TT đổi lệnh' },
+  // 2026-05-24 DD-split: shows what DD is waiting on (CUS thông quan, OPS đổi lệnh).
+  { key: 'waiting_status', label: 'Chờ' },
   { key: 'bbbg',           label: 'BBBG' },
 ];
 
@@ -197,17 +253,30 @@ export default function LogDashboardDieuDo() {
     enabled: tab === 'completed',
     refetchInterval: 30000,
   });
-  // CP4.5: tab filters use the 8-status truck_booking_status. "Đã có KH xe" =
-  // any booking exists (not 'chua_dat_kh' AND not 'hoan_thanh' — the latter
-  // also gets filtered by status='pending' upstream); "Chưa có KH xe" =
-  // 'chua_dat_kh'.
-  const coKhXeJobs = pendingJobs.filter(j =>
+  // 2026-05-24 DD-split: DD's view is restricted to truck/both jobs (TK-only
+  // doesn't reach DD). Partition by dd_completed_at, NOT by jobs.status:
+  //   "Đang làm"  = truck/both AND dd_completed_at IS NULL
+  //   "Hoàn thành" = truck/both AND dd_completed_at IS NOT NULL
+  //                 ∪ status='completed' truck/both (from the completed query)
+  const isDdJob = (j) => j.service_type === 'truck' || j.service_type === 'both';
+  const ddActivePending = pendingJobs.filter(j => isDdJob(j) && !j.dd_completed_at);
+  const ddCompletedFromPending = pendingJobs.filter(j => isDdJob(j) && j.dd_completed_at);
+  const ddCompletedFromDone = (completedJobs || []).filter(isDdJob);
+  // Merge sources for the "Hoàn thành" view; de-dup by id (a job in completedJobs
+  // would also satisfy the pendingJobs predicate if it briefly overlaps — guard).
+  const ddCompletedById = new Map();
+  for (const j of [...ddCompletedFromDone, ...ddCompletedFromPending]) {
+    if (!ddCompletedById.has(j.id)) ddCompletedById.set(j.id, j);
+  }
+  const ddCompletedJobs = Array.from(ddCompletedById.values());
+  // Legacy sub-tabs partition the ACTIVE list (DD still has work — exclude dd-done).
+  const coKhXeJobs = ddActivePending.filter(j =>
     j.truck_booking_status && j.truck_booking_status !== 'chua_dat_kh' && j.truck_booking_status !== 'hoan_thanh');
-  const chuaKhXeJobs = pendingJobs.filter(j => j.truck_booking_status === 'chua_dat_kh');
-  const jobs = tab === 'completed' ? completedJobs
+  const chuaKhXeJobs = ddActivePending.filter(j => j.truck_booking_status === 'chua_dat_kh');
+  const jobs = tab === 'completed' ? ddCompletedJobs
     : tab === 'co_kh_xe' ? coKhXeJobs
     : tab === 'chua_kh_xe' ? chuaKhXeJobs
-    : pendingJobs;
+    : ddActivePending;
   const isLoading = tab === 'completed' ? isLoadingCompleted : isLoadingPending;
 
   // Phase 4.1: truckMut restored — PATCHes the FIRST booking via
@@ -224,18 +293,26 @@ export default function LogDashboardDieuDo() {
     onError: (err) => toast.error(err?.error || err?.message || 'Lỗi khi cập nhật'),
   });
 
-  // CP4.5.1 — "TH ngày giờ" column in the DD main grid binds to jobs.completed_at
-  // (per-job, not per-booking). Backend guard returns 400 if the job isn't at
-  // 'du_xe_cho_giao' or 'hoan_thanh'. Success invalidates both tabs so the row
-  // hops from "Đang làm" to "Hoàn thành" without a manual refresh.
+  // 2026-05-24 DD-split: "TH ngày giờ" now stamps jobs.dd_completed_at (DD's own
+  // completion) — backend then calls checkAndCompleteJob which only flips
+  // jobs.completed_at when CUS + DD + OPS are all done. Response carries
+  // { dd_completed, job_completed } so we can pick the right toast.
   const completeJobMut = useMutation({
     mutationFn: ({ jobId, completed_at }) => updateJob(jobId, { completed_at }),
-    onSuccess: (_data, vars) => {
+    onSuccess: (data, vars) => {
       qc.invalidateQueries({ queryKey: ['jobs'] });
       qc.invalidateQueries({ queryKey: ['jobStats'] });
-      toast.success(vars.completed_at
-        ? '✅ Job đã chuyển sang Hoàn thành'
-        : 'Đã hủy hoàn thành — job quay lại tab Đang làm');
+      if (!vars.completed_at) {
+        toast.success('Đã hủy TH ngày giờ — DD quay lại Đang làm');
+        return;
+      }
+      if (data?.job_completed) {
+        toast.success('✅ Job hoàn thành (CUS + DD + OPS xong)');
+      } else if (data?.dd_completed) {
+        toast.success('✅ Đã chốt TH ngày giờ — chờ CUS/OPS xong');
+      } else {
+        toast.success('Đã cập nhật');
+      }
     },
     onError: (err) => {
       const code = err?.code;
@@ -455,11 +532,17 @@ export default function LogDashboardDieuDo() {
                         <span style={deadlineStyle(j.han_lenh)}>{hl}</span>
                       </div>
 
-                      {/* Status pill + inline metrics */}
+                      {/* Status pill + inline metrics. 2026-05-24: ddPillInfo splits
+                          du_xe_cho_giao into tick sub-states. */}
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
-                        <span style={{ ...truckBookingPillStyle(j.truck_booking_status), fontSize: 12, padding: '4px 10px' }}>
-                          {TRUCK_BOOKING_STATUS_LABELS[j.truck_booking_status] || j.truck_booking_status || '—'}
-                        </span>
+                        {(() => {
+                          const info = ddPillInfo(j);
+                          return (
+                            <span style={{ ...ddPillStyle(info, j.truck_booking_status), fontSize: 12, padding: '4px 10px' }} title={info.tooltip}>
+                              {info.label}
+                            </span>
+                          );
+                        })()}
                         <div style={{ display: 'flex', gap: 14, fontSize: 12, color: 'var(--text-2)' }}>
                           <span>Cont:{' '}
                             <strong style={{ color: total === 0 ? 'var(--text-3)' : booked < total ? 'var(--warning)' : 'var(--primary)' }}>
@@ -510,6 +593,16 @@ export default function LogDashboardDieuDo() {
                             : <span style={{ background: 'rgba(217,119,6,0.12)', color: '#b45309', borderRadius: 6, padding: '2px 8px', fontSize: 11, fontWeight: 600 }}>✗ Chưa đổi</span>;
                         })() : <span style={{ color: 'var(--text-3)' }}>—</span>}
                       </div>
+                      {/* 2026-05-24 DD-split: Chờ sub-badge surfacing CUS/OPS blockers. */}
+                      {(() => {
+                        const w = waitingStatus(j);
+                        if (!w.length) return null;
+                        return (
+                          <div style={{ fontSize: 12, color: 'var(--warning)', marginTop: 4, fontWeight: 500 }}>
+                            ⏳ Chờ {w.join(', ')}
+                          </div>
+                        );
+                      })()}
                     </div>
                   );
                 }}
@@ -566,9 +659,14 @@ export default function LogDashboardDieuDo() {
                           : '—'}
                       </td>
                       <td style={cs}>
-                        <span style={truckBookingPillStyle(j.truck_booking_status)}>
-                          {TRUCK_BOOKING_STATUS_LABELS[j.truck_booking_status] || j.truck_booking_status || '—'}
-                        </span>
+                        {(() => {
+                          const info = ddPillInfo(j);
+                          return (
+                            <span style={ddPillStyle(info, j.truck_booking_status)} title={info.tooltip}>
+                              {info.label}
+                            </span>
+                          );
+                        })()}
                       </td>
                       <td style={{ ...cs, fontWeight: 600,
                         color: total === 0 ? 'var(--text-3)' : booked < total ? 'var(--warning)' : 'var(--primary)' }}>
@@ -658,6 +756,19 @@ export default function LogDashboardDieuDo() {
                             ? <span style={{ background: 'rgba(34,197,94,0.15)', color: '#16a34a', borderRadius: 6, padding: '2px 8px', fontSize: 11, fontWeight: 600 }}>Đã đổi</span>
                             : <span style={{ background: 'rgba(217,119,6,0.12)', color: '#b45309', borderRadius: 6, padding: '2px 8px', fontSize: 11, fontWeight: 600 }}>Chưa đổi</span>;
                         })() : <span style={{ color: 'var(--text-3)' }}>—</span>}
+                      </td>
+
+                      {/* 2026-05-24 DD-split: Chờ column — what DD is waiting on. */}
+                      <td style={{ ...cs, whiteSpace: 'nowrap' }}>
+                        {(() => {
+                          const w = waitingStatus(j);
+                          if (!w.length) return <span style={{ color: 'var(--text-3)', fontSize: 12 }}>—</span>;
+                          return (
+                            <span style={{ color: 'var(--warning)', fontSize: 11, fontWeight: 500 }}>
+                              Chờ {w.join(', ')}
+                            </span>
+                          );
+                        })()}
                       </td>
 
                       <td style={{ ...cs, whiteSpace: 'nowrap' }} onClick={stop}>
@@ -841,9 +952,14 @@ function BookingRow({ j, isOpen, total, booked, ieBg, ieFg, imp,
             fontSize: 11, fontWeight: 600 }}>{imp ? 'Nhập' : 'Xuất'}</span>
         </td>
         <td style={td}>
-          <span style={truckBookingPillStyle(j.truck_booking_status)}>
-            {TRUCK_BOOKING_STATUS_LABELS[j.truck_booking_status] || j.truck_booking_status}
-          </span>
+          {(() => {
+            const info = ddPillInfo(j);
+            return (
+              <span style={ddPillStyle(info, j.truck_booking_status)} title={info.tooltip}>
+                {info.label}
+              </span>
+            );
+          })()}
         </td>
         <td style={{ ...td, fontWeight: 600, color: booked < total ? 'var(--warning)' : 'var(--primary)' }}>
           {booked}/{total}

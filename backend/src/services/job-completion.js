@@ -14,13 +14,19 @@
 //     running its own guards including `checkOpsTasksDone` (2026-05-23 fix
 //     for the OPS-gate bypass on truck/both HP jobs).
 //
-// Why `checkAndCompleteJob` is DEAD CODE for truck/both:
-//   truckDone is derived as `truck_booking_status === 'hoan_thanh'`, but the
-//   plpgsql function returns 'hoan_thanh' only when jobs.completed_at IS NOT
-//   NULL. So while the job is still pending, truckDone is structurally false
-//   → ready=false → no auto-flip. The OPS gate inside this function therefore
-//   never fires for truck/both. The OPS gate for those paths lives in PUT
-//   /:id via checkOpsTasksDone — see jobs.js completed_at branch.
+// REVIVED for truck/both (2026-05-24 DD-split):
+//   Previously truckDone was `truck_booking_status === 'hoan_thanh'` which was
+//   structurally false for pending jobs (hoan_thanh ⇐ jobs.completed_at set,
+//   which we were trying to set — circular). Now the plpgsql function returns
+//   the new state 'dd_da_xong' when dd_completed_at IS NOT NULL AND
+//   completed_at IS NULL → truckDone reaches true via the dd_da_xong branch
+//   while the job is still pending. checkAndCompleteJob now handles all 3
+//   service_types (tk/truck/both) under a single set of gates.
+//
+//   Companion entry point: PUT /api/jobs/:id sets dd_completed_at then calls
+//   this function (jobs.js completed_at branch). Either DD stamping their
+//   "TH ngày giờ" OR CUS/OPS finishing the last tick can be the trigger that
+//   flips jobs.completed_at + status='completed'.
 
 // Per-task OPS done check (2026-05-23). Re-used by both completion paths:
 //   - checkAndCompleteJob (the auto-tk path)
@@ -83,12 +89,15 @@ async function checkAndCompleteJob(client, jobId, changedBy, recordHistory) {
   // job_tk.completed_at) AND CUS's "Nhập cost" tick (job_tk.cost_entered_at).
   // Affects service_type='tk' and 'both'; 'truck' branch doesn't use tkDone.
   const tkDone    = !!j.tk_completed_at && !!j.tk_cost_entered_at;
-  const truckDone = j.truck_booking_status === 'hoan_thanh';
+  // 2026-05-24 DD-split: truckDone now reads via the new dd_da_xong state
+  // (DD has stamped dd_completed_at) OR hoan_thanh (job already completed).
+  // No longer circular — reachable for pending truck/both jobs.
+  const truckDone = ['dd_da_xong', 'hoan_thanh'].includes(j.truck_booking_status);
 
   let ready = false;
   if (j.service_type === 'tk')         ready = tkDone;
-  else if (j.service_type === 'truck') ready = truckDone;  // dead — see docstring at top
-  else if (j.service_type === 'both')  ready = tkDone && truckDone;  // dead — see docstring
+  else if (j.service_type === 'truck') ready = truckDone;
+  else if (j.service_type === 'both')  ready = tkDone && truckDone;
 
   // OPS per-task gate (delegates to checkOpsTasksDone for single-source logic).
   // Only effective for service_type='tk' here — the truck/both ready expressions
