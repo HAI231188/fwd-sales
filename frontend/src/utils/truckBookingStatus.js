@@ -66,6 +66,41 @@ export function pillStyleByColor(colorKey) {
   };
 }
 
+// 2026-05-24 DD-split, extracted 2026-05-25 for shared use across DD + TP.
+// ddPillInfo: computes DD's pill {label, color, tooltip} from the combined state
+// (truck_booking_status + per-booking tick aggregates). Special-cases
+// 'du_xe_cho_giao' into sub-states based on which ticks are still pending.
+// TP dashboard reuses this via tpStatusLines for the DD-line of its 3-dept pill.
+export function ddPillInfo(j) {
+  const status = j.truck_booking_status;
+  if (status !== 'du_xe_cho_giao') {
+    return {
+      label: TRUCK_BOOKING_STATUS_LABELS[status] || status || '—',
+      color: null, // signal to use truckBookingPillStyle(status) — preserves static mapping
+    };
+  }
+  const total = j.bookings_total_alive || 0;
+  const liftDone = j.bookings_with_invoice_lifting || 0;
+  const costDone = j.bookings_with_cost_entered || 0;
+  const liftPending = Math.max(0, total - liftDone);
+  const costPending = Math.max(0, total - costDone);
+  const tooltip = `Nâng hạ ${liftDone}/${total} · Cost hệ thống ${costDone}/${total}`;
+  if (liftPending > 0 && costPending > 0) {
+    return { label: 'Đủ xe — chưa tick nâng hạ + cost', color: 'orange', tooltip };
+  }
+  if (liftPending > 0) {
+    return { label: 'Đủ xe — chưa tick nâng hạ', color: 'orange', tooltip };
+  }
+  if (costPending > 0) {
+    return { label: 'Đủ xe — chưa nhập cost HT', color: 'orange', tooltip };
+  }
+  return { label: 'Đủ xe, đủ tick — chưa nhập TH ngày giờ', color: 'purple-dark', tooltip };
+}
+// ddPillStyle: returns the inline style for ddPillInfo's pill.
+export function ddPillStyle(info, fallbackStatus) {
+  return info.color ? pillStyleByColor(info.color) : truckBookingPillStyle(fallbackStatus);
+}
+
 // Sort priority — most-urgent first. Used to sort the "Quản lý đặt xe" table.
 // dd_da_xong + hoan_thanh sink to the bottom since DD doesn't need to act on them.
 export const TRUCK_BOOKING_STATUS_SORT_RANK = {

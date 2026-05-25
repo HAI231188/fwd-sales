@@ -22,41 +22,9 @@ import { getJobStats, getJobs, updateJob, requestJobDelete, createJob,
 import {
   TRUCK_BOOKING_STATUS_LABELS, TRUCK_BOOKING_STATUS_SORT_RANK,
   TRUCK_BOOKING_ACTIVE_STATUSES, truckBookingPillStyle, pillStyleByColor,
+  // 2026-05-25: ddPillInfo/ddPillStyle extracted to the shared utils so TP can reuse.
+  ddPillInfo, ddPillStyle,
 } from '../utils/truckBookingStatus';
-
-// 2026-05-24 DD-split helpers.
-// ddPillInfo: computes DD's pill {label, color, tooltip} from the combined state
-// (truck_booking_status + per-booking tick aggregates). Special-cases
-// 'du_xe_cho_giao' into sub-states based on which ticks are still pending.
-function ddPillInfo(j) {
-  const status = j.truck_booking_status;
-  if (status !== 'du_xe_cho_giao') {
-    return {
-      label: TRUCK_BOOKING_STATUS_LABELS[status] || status || '—',
-      color: null, // signal to use truckBookingPillStyle(status) — preserves static mapping
-    };
-  }
-  // Special handling for du_xe_cho_giao — split by per-booking tick aggregates.
-  const total = j.bookings_total_alive || 0;
-  const liftDone = j.bookings_with_invoice_lifting || 0;
-  const costDone = j.bookings_with_cost_entered || 0;
-  const liftPending = Math.max(0, total - liftDone);
-  const costPending = Math.max(0, total - costDone);
-  const tooltip = `Nâng hạ ${liftDone}/${total} · Cost hệ thống ${costDone}/${total}`;
-  if (liftPending > 0 && costPending > 0) {
-    return { label: 'Đủ xe — chưa tick nâng hạ + cost', color: 'orange', tooltip };
-  }
-  if (liftPending > 0) {
-    return { label: 'Đủ xe — chưa tick nâng hạ', color: 'orange', tooltip };
-  }
-  if (costPending > 0) {
-    return { label: 'Đủ xe — chưa nhập cost HT', color: 'orange', tooltip };
-  }
-  return { label: 'Đủ xe, đủ tick — chưa nhập TH ngày giờ', color: 'purple-dark', tooltip };
-}
-function ddPillStyle(info, fallbackStatus) {
-  return info.color ? pillStyleByColor(info.color) : truckBookingPillStyle(fallbackStatus);
-}
 
 // waitingStatus: returns the list of "Chờ ..." items for the new Chờ column.
 //   - CUS thông quan blocker if job has TK + tk_status not terminal

@@ -18,6 +18,96 @@ import {
   assignJob, setJobDeadline, reviewDeadlineRequest, createJob,
   deleteJob, reviewDeleteRequest, getJobSettings,
 } from '../api';
+// 2026-05-25: ddPillInfo shared with DD dashboard — used by tpStatusLines
+// to render the DD-line of TP's 3-dept Trạng thái pill.
+import { ddPillInfo } from '../utils/truckBookingStatus';
+
+// 2026-05-25 TP dept-level status helper.
+// tpStatusLines: returns an array of pending-dept status strings for this job.
+// Each line = one dept still has work outstanding. Empty array = all done.
+//
+//   CUS (if service_type ∈ tk/both):
+//     !tk_completed_at                    → "CUS: Chưa làm tờ khai"
+//     tk_completed_at && !cost_entered_at → "CUS: Đã làm TK — chưa nhập cost"
+//   DD  (if service_type ∈ truck/both):
+//     dd_completed_at IS NULL             → "DD: {ddPillInfo(j).label}"
+//   OPS (if destination='hai_phong'):
+//     tk/both:
+//       !terminal                                → "OPS: Chưa thông quan"
+//       terminal && !tqCost                      → "OPS: Đã thông quan — chưa nhập cost TQ"
+//       terminal && tqCost && !dlCompleted       → "OPS: Chưa đổi lệnh"
+//       dlCompleted && !dlCost                   → "OPS: Đã đổi lệnh — chưa nhập cost ĐL"
+//     truck:
+//       !dlCompleted                             → "OPS: Chưa đổi lệnh"
+//       dlCompleted && !dlCost                   → "OPS: Đã đổi lệnh — chưa nhập cost ĐL"
+const TP_TK_TERMINAL = ['thong_quan', 'giai_phong', 'bao_quan'];
+function tpStatusLines(j) {
+  const lines = [];
+  const svc = j.service_type;
+  const hasTk = svc === 'tk' || svc === 'both';
+  const hasTruck = svc === 'truck' || svc === 'both';
+  const isHp = j.destination === 'hai_phong';
+
+  // CUS line
+  if (hasTk) {
+    if (!j.tk_completed_at) {
+      lines.push('CUS: Chưa làm tờ khai');
+    } else if (!j.cost_entered_at) {
+      lines.push('CUS: Đã làm TK — chưa nhập cost');
+    }
+  }
+  // DD line
+  if (hasTruck) {
+    if (!j.dd_completed_at) {
+      lines.push(`DD: ${ddPillInfo(j).label}`);
+    }
+  }
+  // OPS line (HP only)
+  if (isHp) {
+    const tasks = Array.isArray(j.ops_tasks) ? j.ops_tasks : [];
+    const tq = tasks.find(t => t.task_type === 'thong_quan');
+    const dl = tasks.find(t => t.task_type === 'doi_lenh');
+    const terminal = TP_TK_TERMINAL.includes(j.tk_status);
+    if (hasTk) {
+      if (!terminal) {
+        lines.push('OPS: Chưa thông quan');
+      } else if (!tq?.cost_entered_at) {
+        lines.push('OPS: Đã thông quan — chưa nhập cost TQ');
+      } else if (!dl?.completed) {
+        lines.push('OPS: Chưa đổi lệnh');
+      } else if (!dl?.cost_entered_at) {
+        lines.push('OPS: Đã đổi lệnh — chưa nhập cost ĐL');
+      }
+    } else if (svc === 'truck') {
+      if (!dl?.completed) {
+        lines.push('OPS: Chưa đổi lệnh');
+      } else if (!dl?.cost_entered_at) {
+        lines.push('OPS: Đã đổi lệnh — chưa nhập cost ĐL');
+      }
+    }
+  }
+  return lines;
+}
+function TpStatusCell({ job }) {
+  const lines = tpStatusLines(job);
+  if (!lines.length) {
+    return (
+      <span style={{ background: 'rgba(34,197,94,0.15)', color: '#16a34a',
+        borderRadius: 6, padding: '2px 8px', fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap' }}>
+        Hoàn thành
+      </span>
+    );
+  }
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+      {lines.map((line, i) => (
+        <span key={i} style={{ color: 'var(--warning)', fontSize: 11, fontWeight: 500, lineHeight: 1.3 }}>
+          {line}
+        </span>
+      ))}
+    </div>
+  );
+}
 
 const SVC_LABEL = { tk: 'TK', truck: 'Xe', both: 'TK+Xe' };
 const TK_STATUS_LABEL = {
@@ -81,6 +171,8 @@ const ALL_COLS = [
   { key: 'tk_number',    label: 'Số TK' },
   { key: 'tk_datetime',  label: 'Ngày TK' },
   { key: 'tk_status',    label: 'TT TK' },
+  // 2026-05-25: TP dept-level Trạng thái pill — up to 3 lines (CUS/DD/OPS).
+  { key: 'tp_status',    label: 'Trạng thái' },
   { key: 'tq_datetime',  label: 'Ngày TQ' },
   { key: 'delivery',     label: 'Ngày giao' },
   { key: 'phan_cong',    label: 'Phân công' },
@@ -508,7 +600,20 @@ export default function LogDashboardTP() {
     enabled: tab === 'completed',
     refetchInterval: pollInterval,
   });
-  const jobs = tab === 'completed' ? completedJobs : pendingJobs;
+  // 2026-05-25 TP-split: partition by tpStatusLines (all-depts done predicate),
+  // not by jobs.status. "Đang làm" = at least one dept pending; "Hoàn thành"
+  // = all depts done. Race window: a pending job whose CUS+DD+OPS just all
+  // ticked but auto-flip hasn't fired surfaces in Hoàn thành too (rare).
+  // No service_type filter — TP sees all job types.
+  const tpDoneInPending = pendingJobs.filter(j => tpStatusLines(j).length === 0);
+  const completedAll    = completedJobs || [];
+  const completedById   = new Map();
+  for (const j of [...tpDoneInPending, ...completedAll]) {
+    if (!completedById.has(j.id)) completedById.set(j.id, j);
+  }
+  const tpCompletedView = Array.from(completedById.values());
+  const tpPendingView   = pendingJobs.filter(j => tpStatusLines(j).length > 0);
+  const jobs = tab === 'completed' ? tpCompletedView : tpPendingView;
   const isLoading = tab === 'completed' ? isLoadingCompleted : isLoadingPending;
   const { data: dlData } = useQuery({
     queryKey: ['deadlineRequests'], queryFn: getDeadlineRequests,
@@ -778,6 +883,12 @@ export default function LogDashboardTP() {
                               </div>
                             )}
 
+                            {/* 2026-05-25: TP Trạng thái block — same content as the desktop tp_status column. */}
+                            <div style={{ padding: '8px 10px', background: 'var(--bg)', borderRadius: 8, marginBottom: 8 }}>
+                              <div style={{ fontSize: 11, color: 'var(--text-2)', fontWeight: 600, marginBottom: 6 }}>Trạng thái</div>
+                              <TpStatusCell job={j} />
+                            </div>
+
                             <div style={{ padding: '8px 10px', background: 'var(--bg)', borderRadius: 8, marginBottom: 8 }}>
                               <div style={{ fontSize: 11, color: 'var(--text-2)', fontWeight: 600, marginBottom: 6 }}>Phân công</div>
                               <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: 12 }} onClick={e => e.stopPropagation()}>
@@ -925,6 +1036,8 @@ export default function LogDashboardTP() {
                         case 'tk_number':   return <td key={key} style={{ ...cs, fontSize: 12 }}>{j.tk_number || '—'}</td>;
                         case 'tk_datetime': return <td key={key} style={{ ...cs, fontSize: 12, whiteSpace: 'nowrap', color: 'var(--text-2)' }}>{j.tk_datetime ? fmtDt(j.tk_datetime) : '—'}</td>;
                         case 'tk_status':   return <td key={key} style={cs}>{j.tk_status ? <span style={{ color: TK_STATUS_COLOR[j.tk_status], fontWeight: 500, fontSize: 12 }}>{TK_STATUS_LABEL[j.tk_status]}</span> : <span style={{ color: 'var(--text-3)', fontSize: 12 }}>—</span>}</td>;
+                        // 2026-05-25: TP dept-level Trạng thái — stacked CUS/DD/OPS lines or green "Hoàn thành".
+                        case 'tp_status':   return <td key={key} style={{ ...cs, minWidth: 180 }}><TpStatusCell job={j} /></td>;
                         case 'tq_datetime': return <td key={key} style={{ ...cs, fontSize: 12, whiteSpace: 'nowrap', color: 'var(--text-2)' }}>{j.tq_datetime ? fmtDt(j.tq_datetime) : '—'}</td>;
                         case 'delivery':    return <td key={key} style={{ ...cs, fontSize: 12, whiteSpace: 'nowrap', color: 'var(--text-2)' }}>{j.delivery_datetime ? fmtDate(j.delivery_datetime) : '—'}</td>;
                         case 'phan_cong':   return <td key={key} style={cs}>{tab === 'pending' && <button className="btn btn-ghost btn-sm" style={{ fontSize: 11, padding: '3px 8px', whiteSpace: 'nowrap' }} onClick={() => setAssigningJob(j)}>{waitingAssign ? '⚡ Phân công' : '✏️ Sửa'}</button>}</td>;
