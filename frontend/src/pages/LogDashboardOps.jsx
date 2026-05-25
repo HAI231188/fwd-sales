@@ -29,6 +29,67 @@ function isDlDone(j) {
   const t = getOpsTask(j, 'doi_lenh');
   return !!t && t.completed === true && !!t.cost_entered_at;
 }
+
+// 2026-05-25 OPS dept-level status helpers.
+// Khu 1 (TQ+ĐL — for tk/both HP): column tracks tk_status + cost TQ.
+//   chua_truyen → "Chưa truyền tờ khai"           (orange)
+//   dang_lam    → "Đang làm tờ khai"              (yellow)
+//   terminal && !cost → "Đã thông quan — chưa nhập cost TQ" (warning)
+//   terminal &&  cost → "Xong"                    (green)
+const TK_TERMINAL_KHU1 = ['thong_quan', 'giai_phong', 'bao_quan'];
+function opsStatusKhu1(j) {
+  const tq = getOpsTask(j, 'thong_quan');
+  const terminal = TK_TERMINAL_KHU1.includes(j.tk_status);
+  if (!terminal) {
+    if (j.tk_status === 'chua_truyen' || !j.tk_status) {
+      return { label: 'Chưa truyền tờ khai', bg: 'rgba(217,119,6,0.12)', fg: '#d97706' };
+    }
+    if (j.tk_status === 'dang_lam') {
+      return { label: 'Đang làm tờ khai', bg: 'rgba(234,179,8,0.14)', fg: '#a16207' };
+    }
+    return { label: j.tk_status, bg: 'rgba(107,114,128,0.12)', fg: '#6b7280' };
+  }
+  if (!tq?.cost_entered_at) {
+    return { label: 'Đã thông quan — chưa nhập cost TQ', bg: 'rgba(217,119,6,0.12)', fg: '#b45309' };
+  }
+  return { label: 'Xong', bg: 'rgba(34,197,94,0.15)', fg: '#16a34a' };
+}
+// Khu 2 (ĐL — for any HP w/ doi_lenh task): column tracks đổi lệnh + cost ĐL.
+function opsStatusKhu2(j) {
+  const dl = getOpsTask(j, 'doi_lenh');
+  if (!dl?.completed) {
+    return { label: 'Chưa đổi lệnh', bg: 'rgba(217,119,6,0.12)', fg: '#d97706' };
+  }
+  if (!dl?.cost_entered_at) {
+    return { label: 'Đã đổi lệnh — chưa nhập cost ĐL', bg: 'rgba(217,119,6,0.12)', fg: '#b45309' };
+  }
+  return { label: 'Xong', bg: 'rgba(34,197,94,0.15)', fg: '#16a34a' };
+}
+// Done predicates per the spec.
+function opsKhu1Done(j) {
+  const tq = getOpsTask(j, 'thong_quan');
+  return TK_TERMINAL_KHU1.includes(j.tk_status) && !!tq?.cost_entered_at;
+}
+function opsKhu2Done(j) {
+  const dl = getOpsTask(j, 'doi_lenh');
+  return !!dl?.completed && !!dl?.cost_entered_at;
+}
+// For Hoàn thành tab filter: OPS finished their portion across whichever
+// task rows the job has. No task rows ⇒ not required ⇒ trivially done.
+function opsAllRequiredDone(j) {
+  const tqOk = !hasTqTask(j) || opsKhu1Done(j);
+  const dlOk = !hasDlTask(j) || opsKhu2Done(j);
+  return tqOk && dlOk;
+}
+function OpsStatusPill({ info }) {
+  if (!info) return <span style={{ color: 'var(--text-3)', fontSize: 12 }}>—</span>;
+  return (
+    <span style={{ background: info.bg, color: info.fg,
+      borderRadius: 6, padding: '2px 8px', fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap' }}>
+      {info.label}
+    </span>
+  );
+}
 function tqDoneAt(j) { return getOpsTask(j, 'thong_quan')?.cost_entered_at || null; }
 function dlDoneAt(j) {
   const t = getOpsTask(j, 'doi_lenh');
@@ -188,6 +249,8 @@ const TQ_COLS = [
   { key: 'han_lenh',      label: 'Hạn lệnh / Cutoff' },
   { key: 'tk_flow',       label: 'Luồng TK' },
   { key: 'tk_status',     label: 'Trạng thái TK', filterType: 'select', options: TK_STATUS_OPTS },
+  // 2026-05-25: OPS Khu 1 (TQ+ĐL) dept-level status pill.
+  { key: 'ops_status',    label: 'Trạng thái' },
   { key: 'tq_datetime',   label: 'Ngày giờ TQ' },
   { key: 'notes',         label: 'Ghi chú' },
 ];
@@ -201,6 +264,8 @@ const DL_COLS = [
   { key: 'cargo',         label: 'Cont / Loại' },
   { key: 'han_lenh',      label: 'Hạn lệnh / Cutoff' },
   { key: 'ops_task_info', label: 'Cảng / Loại công việc' },
+  // 2026-05-25: OPS Khu 2 (ĐL) dept-level status pill.
+  { key: 'ops_status',    label: 'Trạng thái' },
 ];
 
 const TODAY_COLS = [
@@ -536,6 +601,11 @@ export default function LogDashboardOps() {
                             {TK_STATUS_OPTS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                           </select>
                         </div>
+                        {/* 2026-05-25: OPS Khu 1 status pill (mobile). */}
+                        <div style={{ marginTop: 8, fontSize: 12 }}>
+                          <span style={{ color: 'var(--text-2)', marginRight: 6 }}>Trạng thái OPS:</span>
+                          <OpsStatusPill info={opsStatusKhu1(j)} />
+                        </div>
                         {j.tk_notes && (
                           <div style={{ fontSize: 12, color: 'var(--text-2)', marginTop: 6, padding: '6px 8px', background: 'var(--bg)', borderRadius: 6 }}>
                             {j.tk_notes}
@@ -580,6 +650,8 @@ export default function LogDashboardOps() {
                         {TK_STATUS_OPTS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                       </select>
                     </TD>
+                    {/* 2026-05-25: OPS Khu 1 Trạng thái pill. */}
+                    <TD><OpsStatusPill info={opsStatusKhu1(j)} /></TD>
                     <TD style={{ whiteSpace: 'nowrap', fontSize: 12 }}>{fmtDt(j.tq_datetime)}</TD>
                     <TD style={{ color: 'var(--text-2)', maxWidth: 160, fontSize: 12 }}>{j.tk_notes || '—'}</TD>
                     <TD style={{ whiteSpace: 'nowrap' }}>
@@ -615,6 +687,11 @@ export default function LogDashboardOps() {
                           <div style={{ color: 'var(--text-2)', marginBottom: 2 }}>Cảng / Loại công việc:</div>
                           {opsTaskInfo(j)}
                         </div>
+                        {/* 2026-05-25: OPS Khu 2 status pill (mobile). */}
+                        <div style={{ marginTop: 8, fontSize: 12 }}>
+                          <span style={{ color: 'var(--text-2)', marginRight: 6 }}>Trạng thái OPS:</span>
+                          <OpsStatusPill info={opsStatusKhu2(j)} />
+                        </div>
                       </>
                     }
                     actions={<>
@@ -644,6 +721,8 @@ export default function LogDashboardOps() {
                     <TD style={{ whiteSpace: 'nowrap', fontSize: 12 }}>{fmtCargo(j)}</TD>
                     <TD style={{ whiteSpace: 'nowrap', ...deadlineStyle(j.han_lenh) }}>{j.han_lenh ? (j.import_export === 'import' ? fmtDate(j.han_lenh) : fmtDt(j.han_lenh)) : '—'}</TD>
                     <TD>{opsTaskInfo(j)}</TD>
+                    {/* 2026-05-25: OPS Khu 2 Trạng thái pill. */}
+                    <TD><OpsStatusPill info={opsStatusKhu2(j)} /></TD>
                     <TD style={{ whiteSpace: 'nowrap', display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                       {dlDoneBtn(j)}
                       {dlCostBtn(j)}
@@ -775,7 +854,12 @@ export default function LogDashboardOps() {
             ) : (
               <FilteredTable
                 columns={HT_COLS}
-                data={completedJobs}
+                /* 2026-05-25 OPS-split: Hoàn thành chỉ hiện job HP + OPS xong phần mình.
+                   Khu TQ+ĐL xong = opsKhu1Done (tk terminal + cost TQ).
+                   Khu ĐL xong   = opsKhu2Done (đổi lệnh + cost ĐL).
+                   Jobs without OPS task rows (non-OPS-assigned) are excluded by the
+                   hasTqTask/hasDlTask gates inside opsAllRequiredDone. */
+                data={completedJobs.filter(j => j.destination === 'hai_phong' && (hasTqTask(j) || hasDlTask(j)) && opsAllRequiredDone(j))}
                 renderMobileCard={(j) => (
                   <OpsCard key={j.id} job={j} onOpen={() => setDetailJobId(j.id)} codeColor="var(--primary)"
                     body={
