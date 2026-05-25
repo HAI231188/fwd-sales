@@ -201,6 +201,9 @@ const DD_COLS = [
   { key: 'etd_eta',        label: 'ETD / ETA' },
   { key: 'han_lenh',       label: 'Hạn lệnh / Cutoff' },
   { key: 'booking_status', label: 'Trạng thái' },
+  // 2026-05-24 DD-split: shows what DD is waiting on (CUS thông quan, OPS đổi lệnh).
+  // 2026-05-25: moved to sit immediately after Trạng thái for visibility.
+  { key: 'waiting_status', label: 'Chờ' },
   { key: 'cont_coverage',  label: 'Cont' },
   { key: 'booking_count',  label: 'KH' },
   // ─── Restored inline-edit columns (Phase 4.1 — first booking only) ───
@@ -213,8 +216,6 @@ const DD_COLS = [
   { key: 'cost',           label: 'Cước' },
   { key: 'notes',          label: 'Ghi chú' },
   { key: 'doi_lenh',       label: 'TT đổi lệnh' },
-  // 2026-05-24 DD-split: shows what DD is waiting on (CUS thông quan, OPS đổi lệnh).
-  { key: 'waiting_status', label: 'Chờ' },
   { key: 'bbbg',           label: 'BBBG' },
 ];
 
@@ -668,6 +669,18 @@ export default function LogDashboardDieuDo() {
                           );
                         })()}
                       </td>
+                      {/* 2026-05-25: Chờ column moved next to Trạng thái for visibility. */}
+                      <td style={{ ...cs, whiteSpace: 'nowrap' }}>
+                        {(() => {
+                          const w = waitingStatus(j);
+                          if (!w.length) return <span style={{ color: 'var(--text-3)', fontSize: 12 }}>—</span>;
+                          return (
+                            <span style={{ color: 'var(--warning)', fontSize: 11, fontWeight: 500 }}>
+                              Chờ {w.join(', ')}
+                            </span>
+                          );
+                        })()}
+                      </td>
                       <td style={{ ...cs, fontWeight: 600,
                         color: total === 0 ? 'var(--text-3)' : booked < total ? 'var(--warning)' : 'var(--primary)' }}>
                         {booked}/{total}
@@ -758,18 +771,6 @@ export default function LogDashboardDieuDo() {
                         })() : <span style={{ color: 'var(--text-3)' }}>—</span>}
                       </td>
 
-                      {/* 2026-05-24 DD-split: Chờ column — what DD is waiting on. */}
-                      <td style={{ ...cs, whiteSpace: 'nowrap' }}>
-                        {(() => {
-                          const w = waitingStatus(j);
-                          if (!w.length) return <span style={{ color: 'var(--text-3)', fontSize: 12 }}>—</span>;
-                          return (
-                            <span style={{ color: 'var(--warning)', fontSize: 11, fontWeight: 500 }}>
-                              Chờ {w.join(', ')}
-                            </span>
-                          );
-                        })()}
-                      </td>
 
                       <td style={{ ...cs, whiteSpace: 'nowrap' }} onClick={stop}>
                         {isTruckJob ? (
