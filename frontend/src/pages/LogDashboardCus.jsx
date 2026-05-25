@@ -209,6 +209,45 @@ function OpsPartnerCell({ job, onSave }) {
   );
 }
 
+// 2026-05-25 CUS status helpers.
+// cusStatusInfo: CUS's own done-state (TK + cost). Returns null for truck-only.
+//   - !tk_completed_at                    → "Chưa làm tờ khai"        (orange)
+//   - tk_completed_at && !cost_entered_at → "Đã làm TK — chưa nhập cost" (warning)
+//   - tk_completed_at && cost_entered_at  → "Xong"                    (green)
+function cusStatusInfo(j) {
+  if (j.service_type === 'truck') return null;
+  if (!j.tk_completed_at) {
+    return { label: 'Chưa làm tờ khai', bg: 'rgba(217,119,6,0.12)', fg: '#d97706' };
+  }
+  if (!j.cost_entered_at) {
+    return { label: 'Đã làm TK — chưa nhập cost', bg: 'rgba(217,119,6,0.12)', fg: '#b45309' };
+  }
+  return { label: 'Xong', bg: 'rgba(34,197,94,0.15)', fg: '#16a34a' };
+}
+// cusWaitingStatus: who CUS is waiting on (per spec — just done/not-done, no detail).
+//   - tk job HP: OPS doi_lenh not done → "OPS đổi lệnh"
+//   - both job:  truck_booking_status not at DD-done/job-done → "DD đủ xe"
+function cusWaitingStatus(j) {
+  const items = [];
+  if (j.service_type === 'tk' && j.destination === 'hai_phong') {
+    const dl = (Array.isArray(j.ops_tasks) ? j.ops_tasks : []).find(t => t.task_type === 'doi_lenh');
+    if (dl && !(dl.completed === true && !!dl.cost_entered_at)) {
+      items.push('OPS đổi lệnh');
+    }
+  }
+  if (j.service_type === 'both') {
+    const ddDoneStates = ['du_xe_cho_giao', 'dd_da_xong', 'hoan_thanh'];
+    if (!ddDoneStates.includes(j.truck_booking_status)) {
+      items.push('DD đủ xe');
+    }
+  }
+  return items;
+}
+// cusIsDone: CUS's tab partition predicate.
+function cusIsDone(j) {
+  return cusStatusInfo(j)?.label === 'Xong' && cusWaitingStatus(j).length === 0;
+}
+
 const CUS_FILTER_COLS = [
   { key: 'stt',              label: 'STT' },
   { key: 'created_at',       label: 'Ngày' },
@@ -230,6 +269,9 @@ const CUS_FILTER_COLS = [
     { value: 'bao_quan', label: 'Bảo quan' },
   ]},
   { key: 'tq_datetime',      label: 'Ngày giờ TQ' },
+  // 2026-05-25: CUS dept-level status columns.
+  { key: 'cus_status',       label: 'Trạng thái' },
+  { key: 'cus_waiting',      label: 'Chờ' },
   { key: 'other_svc',        label: 'Dịch vụ khác' },
   { key: 'delivery_dt',      label: 'Ngày giao hàng' },
   { key: 'delivery_loc',     label: 'Địa điểm giao' },
@@ -344,7 +386,20 @@ export default function LogDashboardCus() {
     enabled: tab === 'completed',
     refetchInterval: 30000,
   });
-  const jobs = tab === 'completed' ? completedJobs : pendingJobs;
+  // 2026-05-25 CUS-split: restrict to tk/both jobs only (truck-only never appears
+  // in CUS view). Partition by cusIsDone (CUS work + waiting list both clear),
+  // NOT by jobs.status. "Hoàn thành" merges both sources to cover the race
+  // window between CUS's last tick and checkAndCompleteJob's auto-flip.
+  const isCusJob = (j) => j.service_type === 'tk' || j.service_type === 'both';
+  const pendingView   = pendingJobs.filter(j => isCusJob(j) && !cusIsDone(j));
+  const cusDoneInPending = pendingJobs.filter(j => isCusJob(j) && cusIsDone(j));
+  const completedAll  = (completedJobs || []).filter(isCusJob);
+  const completedById = new Map();
+  for (const j of [...cusDoneInPending, ...completedAll]) {
+    if (!completedById.has(j.id)) completedById.set(j.id, j);
+  }
+  const completedView = Array.from(completedById.values());
+  const jobs = tab === 'completed' ? completedView : pendingView;
   const isLoading = tab === 'completed' ? isLoadingCompleted : isLoadingPending;
 
   const tkMut = useMutation({
@@ -536,6 +591,28 @@ export default function LogDashboardCus() {
                                 onClick={() => setDeadlineReqJob(j)}>Điều chỉnh deadline</button>
                             </div>
                           )}
+
+                          {/* 2026-05-25: CUS Trạng thái + Chờ badges on mobile. */}
+                          {(() => {
+                            const info = cusStatusInfo(j);
+                            const w = cusWaitingStatus(j);
+                            if (!info && !w.length) return null;
+                            return (
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8, fontSize: 12 }}>
+                                {info && (
+                                  <span style={{ background: info.bg, color: info.fg,
+                                    borderRadius: 6, padding: '2px 8px', fontSize: 11, fontWeight: 600 }}>
+                                    {info.label}
+                                  </span>
+                                )}
+                                {w.length > 0 && (
+                                  <span style={{ color: 'var(--warning)', fontSize: 11, fontWeight: 500 }}>
+                                    ⏳ Chờ {w.join(', ')}
+                                  </span>
+                                )}
+                              </div>
+                            );
+                          })()}
 
                           {isTk && (
                             <div style={{ padding: '8px 10px', background: 'var(--bg)', borderRadius: 8, marginBottom: 8 }}>
@@ -744,6 +821,31 @@ export default function LogDashboardCus() {
                             Truck only
                           </td>
                         )}
+
+                        {/* 2026-05-25: CUS Trạng thái + Chờ — always rendered (independent of isTk block). */}
+                        <td style={{ padding: '8px 6px', whiteSpace: 'nowrap' }}>
+                          {(() => {
+                            const info = cusStatusInfo(j);
+                            if (!info) return <span style={{ color: 'var(--text-3)', fontSize: 12 }}>—</span>;
+                            return (
+                              <span style={{ background: info.bg, color: info.fg,
+                                borderRadius: 6, padding: '2px 8px', fontSize: 11, fontWeight: 600 }}>
+                                {info.label}
+                              </span>
+                            );
+                          })()}
+                        </td>
+                        <td style={{ padding: '8px 6px', whiteSpace: 'nowrap' }}>
+                          {(() => {
+                            const w = cusWaitingStatus(j);
+                            if (!w.length) return <span style={{ color: 'var(--text-3)', fontSize: 12 }}>—</span>;
+                            return (
+                              <span style={{ color: 'var(--warning)', fontSize: 11, fontWeight: 500 }}>
+                                Chờ {w.join(', ')}
+                              </span>
+                            );
+                          })()}
+                        </td>
 
                         {/* Other services checkboxes */}
                         <td style={{ padding: '8px 6px', minWidth: 100 }}>
