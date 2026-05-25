@@ -238,14 +238,10 @@ export default function LogDashboardDieuDo() {
     if (!ddCompletedById.has(j.id)) ddCompletedById.set(j.id, j);
   }
   const ddCompletedJobs = Array.from(ddCompletedById.values());
-  // Legacy sub-tabs partition the ACTIVE list (DD still has work — exclude dd-done).
-  const coKhXeJobs = ddActivePending.filter(j =>
-    j.truck_booking_status && j.truck_booking_status !== 'chua_dat_kh' && j.truck_booking_status !== 'hoan_thanh');
-  const chuaKhXeJobs = ddActivePending.filter(j => j.truck_booking_status === 'chua_dat_kh');
-  const jobs = tab === 'completed' ? ddCompletedJobs
-    : tab === 'co_kh_xe' ? coKhXeJobs
-    : tab === 'chua_kh_xe' ? chuaKhXeJobs
-    : ddActivePending;
+  // 2026-05-25: simplified to 2 tabs only — Đang làm / Hoàn thành. The legacy
+  // sub-tabs "Đã có KH xe" / "Chưa có KH xe" were removed (booking_status pill
+  // + the stat cards already surface that info; the sub-tabs duplicated it).
+  const jobs = tab === 'completed' ? ddCompletedJobs : ddActivePending;
   const isLoading = tab === 'completed' ? isLoadingCompleted : isLoadingPending;
 
   // Phase 4.1: truckMut restored — PATCHes the FIRST booking via
@@ -417,8 +413,6 @@ export default function LogDashboardDieuDo() {
           <div style={{ padding: '0 20px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
             <div className="tabs" style={{ marginBottom: 0 }}>
               <button className={`tab ${tab === 'pending' ? 'active' : ''}`} onClick={() => setTab('pending')}>Đang làm</button>
-              <button className={`tab ${tab === 'co_kh_xe' ? 'active' : ''}`} onClick={() => setTab('co_kh_xe')}>Đã có KH xe</button>
-              <button className={`tab ${tab === 'chua_kh_xe' ? 'active' : ''}`} onClick={() => setTab('chua_kh_xe')}>Chưa có KH xe</button>
               <button className={`tab ${tab === 'completed' ? 'active' : ''}`} onClick={() => setTab('completed')}>Hoàn thành</button>
             </div>
             {tab === 'completed' && (
