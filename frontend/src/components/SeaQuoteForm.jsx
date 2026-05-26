@@ -19,6 +19,7 @@
 //   - Grand total currency: USD / VND / (none — no total shown)
 
 import { useState, useEffect } from 'react';
+import { generateSeaQuotePdf } from '../api';
 
 const CONT_TYPES = ['20DC', '40DC', '40HC', '45HC', '20RF', '40RF'];
 const ZERO_QTY = () => Object.fromEntries(CONT_TYPES.map(t => [t, 0]));
@@ -256,8 +257,25 @@ function DefaultBar({ unitLabel, unit, vat, onUnitChange, onVatChange }) {
 
 // ─── Main component ──────────────────────────────────────────────────────
 
-export default function SeaQuoteForm({ value, onChange }) {
+export default function SeaQuoteForm({ value, onChange, quoteId }) {
   const v = value || EMPTY_SEA_QUOTE;
+  const [pdfBusy, setPdfBusy] = useState(false);
+
+  async function handleExportPdf() {
+    if (!quoteId || pdfBusy) return;
+    setPdfBusy(true);
+    try {
+      const blob = await generateSeaQuotePdf(quoteId);
+      const url = URL.createObjectURL(blob);
+      window.open(url, '_blank');
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (e) {
+      const msg = e?.response?.data?.error || e?.message || 'Không thể tạo PDF';
+      alert(`Lỗi xuất PDF: ${msg}`);
+    } finally {
+      setPdfBusy(false);
+    }
+  }
 
   // contQty is the source-of-truth for FCL row count + types.
   // Derived from v.containers on mount; serialized back via setContainers().
@@ -396,11 +414,21 @@ export default function SeaQuoteForm({ value, onChange }) {
       padding: 20, marginBottom: 12,
     }}>
       {/* ─── Header ─── */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, gap: 12 }}>
         <span style={{ fontWeight: 600, fontSize: 14, fontFamily: 'var(--font-display)' }}>
           🚢 Báo giá đường biển
+          <span style={{ fontSize: 11, color: 'var(--text-3)', fontStyle: 'italic', marginLeft: 8 }}>v2</span>
         </span>
-        <span style={{ fontSize: 11, color: 'var(--text-3)', fontStyle: 'italic' }}>v2</span>
+        {quoteId && (
+          <button type="button" className="btn btn-sm" onClick={handleExportPdf} disabled={pdfBusy}
+            style={{
+              background: pdfBusy ? 'var(--text-3)' : '#0066b3',
+              color: '#fff', border: 'none', fontSize: 12,
+              padding: '6px 12px', cursor: pdfBusy ? 'wait' : 'pointer',
+            }}>
+            {pdfBusy ? '⏳ Đang tạo…' : '📄 Xuất PDF'}
+          </button>
+        )}
       </div>
 
       {/* ─── POL / POD / cargo type ─── */}

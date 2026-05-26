@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const db = require('../db');
 const { requireAuth } = require('../middleware/auth');
+const { buildSeaQuotePdf } = require('../services/sea-quote-pdf');
 
 // Add quote to customer
 router.post('/', requireAuth, async (req, res) => {
@@ -104,6 +105,45 @@ router.put('/:id', requireAuth, async (req, res) => {
 
     res.json(rows[0]);
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 2026-05-26 C3 — sea-quote v2 PDF export.
+// Owner-only (sales who created) or lead (sees all). Returns application/pdf.
+router.post('/:id/pdf', requireAuth, async (req, res) => {
+  try {
+    const isLead = req.user.role === 'lead';
+    const { rows } = await db.query(`
+      SELECT q.id, q.quote_data, q.valid_until, q.exchange_rate, q.grand_total_currency,
+             c.company_name, c.user_id
+      FROM quotes q
+      JOIN customers c ON c.id = q.customer_id
+      WHERE q.id = $1
+      LIMIT 1
+    `, [req.params.id]);
+    const row = rows[0];
+    if (!row) return res.status(404).json({ error: 'Không tìm thấy báo giá' });
+    if (!isLead && row.user_id !== req.user.id) {
+      return res.status(403).json({ error: 'Không có quyền' });
+    }
+    if (!row.quote_data) {
+      return res.status(400).json({ error: 'Báo giá chưa có dữ liệu (chỉ hỗ trợ báo giá biển v2)' });
+    }
+    const buf = await buildSeaQuotePdf({
+      quote_data: row.quote_data,
+      customer_name: row.company_name,
+      valid_until: row.valid_until,
+      exchange_rate: row.exchange_rate,
+      grand_total_currency: row.grand_total_currency,
+    });
+    const safeName = String(row.company_name || 'quote').replace(/[^a-zA-Z0-9_-]+/g, '_').slice(0, 40);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="quote_${row.id}_${safeName}.pdf"`);
+    res.setHeader('Content-Length', buf.length);
+    res.end(buf);
+  } catch (err) {
+    console.error('[POST /api/quotes/:id/pdf]', err);
     res.status(500).json({ error: err.message });
   }
 });

@@ -141,6 +141,11 @@ export const getBbbgData = (id, bookingId) =>
 export const generateBbbgPdf = (id, payload) =>
   api.post(`/jobs/${id}/bbbg-pdf`, payload, { responseType: 'blob' });
 
+// C3 (2026-05-26) — sea-quote v2 PDF export. Quote must have quote_data set.
+// Returns Blob (binary). Caller is responsible for URL.createObjectURL + download.
+export const generateSeaQuotePdf = (quoteId) =>
+  api.post(`/quotes/${quoteId}/pdf`, {}, { responseType: 'blob' });
+
 // Global search (LOG team only)
 export const searchGlobal = (params) => api.get('/search', { params });
 
