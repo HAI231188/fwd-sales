@@ -8,6 +8,9 @@ router.post('/', requireAuth, async (req, res) => {
     customer_id, cargo_name, monthly_volume_cbm, monthly_volume_kg,
     monthly_volume_containers, route, cargo_ready_date, mode,
     carrier, transit_time, price, status, follow_up_notes, lost_reason, closing_soon,
+    // 2026-05-26 C1 — sea-quote v2 fields. quote_data is the full structured
+    // payload (JSONB); the 3 sibling columns are denormalized for queryability.
+    quote_data, valid_until, exchange_rate, grand_total_currency,
   } = req.body;
 
   try {
@@ -22,8 +25,10 @@ router.post('/', requireAuth, async (req, res) => {
       INSERT INTO quotes
         (customer_id, cargo_name, monthly_volume_cbm, monthly_volume_kg,
          monthly_volume_containers, route, cargo_ready_date, mode,
-         carrier, transit_time, price, status, follow_up_notes, lost_reason, closing_soon)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+         carrier, transit_time, price, status, follow_up_notes, lost_reason, closing_soon,
+         quote_data, valid_until, exchange_rate, grand_total_currency)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,
+              $16,$17,$18,$19)
       RETURNING *
     `, [
       customer_id, cargo_name,
@@ -31,6 +36,8 @@ router.post('/', requireAuth, async (req, res) => {
       route, cargo_ready_date || null, mode,
       carrier, transit_time, price,
       status || 'quoting', follow_up_notes, lost_reason, closing_soon || false,
+      quote_data || null, valid_until || null,
+      exchange_rate || null, grand_total_currency || null,
     ]);
 
     res.status(201).json(rows[0]);
@@ -45,6 +52,8 @@ router.put('/:id', requireAuth, async (req, res) => {
     cargo_name, monthly_volume_cbm, monthly_volume_kg, monthly_volume_containers,
     route, cargo_ready_date, mode, carrier, transit_time, price,
     status, follow_up_notes, lost_reason, closing_soon,
+    // 2026-05-26 C1 — sea-quote v2 fields (see POST for shape).
+    quote_data, valid_until, exchange_rate, grand_total_currency,
   } = req.body;
 
   try {
@@ -54,15 +63,19 @@ router.put('/:id', requireAuth, async (req, res) => {
         cargo_name=$1, monthly_volume_cbm=$2, monthly_volume_kg=$3,
         monthly_volume_containers=$4, route=$5, cargo_ready_date=$6, mode=$7,
         carrier=$8, transit_time=$9, price=$10, status=$11,
-        follow_up_notes=$12, lost_reason=$13, closing_soon=$14, updated_at=NOW()
+        follow_up_notes=$12, lost_reason=$13, closing_soon=$14,
+        quote_data=$15, valid_until=$16, exchange_rate=$17, grand_total_currency=$18,
+        updated_at=NOW()
       FROM customers c
-      WHERE q.id=$15 AND q.customer_id=c.id AND c.user_id=$16
+      WHERE q.id=$19 AND q.customer_id=c.id AND c.user_id=$20
       RETURNING q.*
     `, [
       cargo_name, monthly_volume_cbm || null, monthly_volume_kg || null,
       monthly_volume_containers, route, cargo_ready_date || null, mode,
       carrier, transit_time, price, status || 'quoting',
       follow_up_notes, lost_reason, closing_soon || false,
+      quote_data || null, valid_until || null,
+      exchange_rate || null, grand_total_currency || null,
       req.params.id, req.user.id,
     ]);
 

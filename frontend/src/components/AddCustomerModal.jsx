@@ -4,6 +4,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import { quickAddCustomer } from '../api';
 import QuoteForm, { EMPTY_QUOTE } from './QuoteForm';
+import SeaQuoteForm, { EMPTY_SEA_QUOTE } from './SeaQuoteForm';
 import { useModalZIndex } from '../hooks/useModalZIndex';
 
 const SOURCE_OPTIONS = [
@@ -26,22 +27,60 @@ const EMPTY = {
 };
 
 function serializeQuotes(quotes) {
-  return quotes.map(q => ({
-    cargo_name: q.cargo_name || null,
-    monthly_volume_cbm: q.monthly_volume_cbm || null,
-    monthly_volume_kg: q.monthly_volume_kg || null,
-    monthly_volume_containers: q.monthly_volume_containers || null,
-    route: q.route || null,
-    cargo_ready_date: q.cargo_ready_date || null,
-    mode: q.mode || 'sea',
-    carrier: q.options?.[0]?.carrier || '',
-    price: JSON.stringify(q.options || []),
-    transit_time: q.transit_time || null,
-    status: q.status || 'quoting',
-    follow_up_notes: q.follow_up_notes || null,
-    lost_reason: q.lost_reason || null,
-    closing_soon: q.closing_soon || false,
-  }));
+  return quotes.map(q => {
+    // 2026-05-26 C1 — sea-quote v2 branch. quote_data carries the full
+    // structured payload; sibling columns (valid_until/exchange_rate/
+    // grand_total_currency) are denormalized for queryability. Legacy summary
+    // columns (cargo_name/route/etc.) are filled from the v2 shape where
+    // possible so existing list views still render meaningfully.
+    if (q.version === 2 && q.mode === 'sea') {
+      const contSummary = (q.containers || [])
+        .filter(c => c.qty > 0)
+        .map(c => `${c.qty}x${c.type}`).join(', ');
+      const route = (q.pol || q.pod) ? `${q.pol || '?'} → ${q.pod || '?'}` : null;
+      return {
+        cargo_name: null,
+        monthly_volume_cbm: null,
+        monthly_volume_kg: null,
+        monthly_volume_containers: contSummary || null,
+        route,
+        cargo_ready_date: null,
+        mode: 'sea',
+        carrier: '',
+        // C1: keep price NULL on v2 (quote_data is the source of truth).
+        // Legacy displays will look it up via quote_data; fallback display
+        // ships in C4.
+        price: null,
+        transit_time: null,
+        status: q.status || 'quoting',
+        follow_up_notes: q.follow_up_notes || null,
+        lost_reason: null,
+        closing_soon: q.closing_soon || false,
+        // v2 fields persisted to dedicated columns.
+        quote_data: q,
+        valid_until: q.valid_until || null,
+        exchange_rate: q.exchange_rate ? Number(q.exchange_rate) : null,
+        grand_total_currency: q.grand_total_currency || null,
+      };
+    }
+    // Legacy 5-PA shape (air / road / pre-C1 sea).
+    return {
+      cargo_name: q.cargo_name || null,
+      monthly_volume_cbm: q.monthly_volume_cbm || null,
+      monthly_volume_kg: q.monthly_volume_kg || null,
+      monthly_volume_containers: q.monthly_volume_containers || null,
+      route: q.route || null,
+      cargo_ready_date: q.cargo_ready_date || null,
+      mode: q.mode || 'sea',
+      carrier: q.options?.[0]?.carrier || '',
+      price: JSON.stringify(q.options || []),
+      transit_time: q.transit_time || null,
+      status: q.status || 'quoting',
+      follow_up_notes: q.follow_up_notes || null,
+      lost_reason: q.lost_reason || null,
+      closing_soon: q.closing_soon || false,
+    };
+  });
 }
 
 export default function AddCustomerModal({ onClose }) {
@@ -336,25 +375,50 @@ export default function AddCustomerModal({ onClose }) {
             )}
           </div>
 
-          {/* Quotes */}
+          {/* Quotes — 2026-05-26 C1: each quote picks its mode (sea/air/road).
+              Sea quotes render the new SeaQuoteForm (structured v2); air/road
+              fall back to the legacy 5-PA QuoteForm. */}
           {form.interaction_type === 'quoted' && (
             <div>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
                 <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)' }}>📋 Báo giá</span>
-                <button type="button" className="btn btn-sm btn-primary"
-                  onClick={() => setQuotes(qs => [...qs, { ...EMPTY_QUOTE }])}>
-                  + Thêm báo giá
-                </button>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button type="button" className="btn btn-sm btn-primary"
+                    onClick={() => setQuotes(qs => [...qs, { ...EMPTY_SEA_QUOTE }])}>
+                    + Báo giá biển
+                  </button>
+                  <button type="button" className="btn btn-sm btn-ghost"
+                    onClick={() => setQuotes(qs => [...qs, { ...EMPTY_QUOTE, mode: 'air' }])}>
+                    + Air/Road (legacy)
+                  </button>
+                </div>
               </div>
-              {quotes.map((q, i) => (
-                <QuoteForm key={i} quote={q} index={i}
-                  onChange={updated => setQuotes(qs => qs.map((x, idx) => idx === i ? updated : x))}
-                  onRemove={quotes.length > 1 ? () => setQuotes(qs => qs.filter((_, idx) => idx !== i)) : undefined}
-                />
-              ))}
+              {quotes.map((q, i) => {
+                const isSeaV2 = q.version === 2 && q.mode === 'sea';
+                const remove = quotes.length > 1
+                  ? () => setQuotes(qs => qs.filter((_, idx) => idx !== i))
+                  : undefined;
+                const onChange = updated => setQuotes(qs => qs.map((x, idx) => idx === i ? updated : x));
+                return (
+                  <div key={i} style={{ marginBottom: 12 }}>
+                    {isSeaV2 ? (
+                      <div style={{ position: 'relative' }}>
+                        <SeaQuoteForm value={q} onChange={onChange} />
+                        {remove && (
+                          <button type="button" className="btn btn-danger btn-sm btn-icon"
+                            style={{ position: 'absolute', top: 12, right: 56 }}
+                            onClick={remove}>✕</button>
+                        )}
+                      </div>
+                    ) : (
+                      <QuoteForm quote={q} index={i} onChange={onChange} onRemove={remove} />
+                    )}
+                  </div>
+                );
+              })}
               {quotes.length === 0 && (
                 <div style={{ textAlign: 'center', padding: '16px 0', color: 'var(--text-3)', fontSize: 13 }}>
-                  Nhấn "+ Thêm báo giá" để thêm
+                  Nhấn "+ Báo giá biển" để thêm
                 </div>
               )}
             </div>

@@ -1125,3 +1125,20 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_job_ops_task_jobid_tasktype
   ON job_ops_task(job_id, task_type) WHERE task_type IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_job_ops_task_cost_pending
   ON job_ops_task(job_id) WHERE cost_entered_at IS NULL;
+
+-- ============================================================
+-- Sea freight quotation — structured quote_data (2026-05-26)
+-- Replaces the legacy 5-PA `price` JSON-string for sea quotes (kept for
+-- backward compat — old rows have quote_data IS NULL → frontend renders via
+-- the legacy parseOptions path). quote_data carries the full v2 shape:
+--   { version: 2, mode: 'sea', cargo_type: 'FCL'|'LCL', containers: [...],
+--     pol, pod, term, intl_charges: [...], inland_charges: [...],
+--     intl_default_unit, intl_default_vat, inland_default_unit,
+--     inland_default_vat, notes }
+-- valid_until / exchange_rate / grand_total_currency are lifted to columns
+-- so they're queryable (e.g. "show all quotes expiring this month").
+-- ============================================================
+ALTER TABLE quotes ADD COLUMN IF NOT EXISTS quote_data           JSONB;
+ALTER TABLE quotes ADD COLUMN IF NOT EXISTS valid_until          DATE;
+ALTER TABLE quotes ADD COLUMN IF NOT EXISTS exchange_rate        NUMERIC(15,4);
+ALTER TABLE quotes ADD COLUMN IF NOT EXISTS grand_total_currency VARCHAR(10);

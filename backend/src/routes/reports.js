@@ -212,12 +212,16 @@ router.post('/', requireAuth, async (req, res) => {
       );
 
       for (const q of (cust.quotes || [])) {
+        // 2026-05-26 C1 — propagate sea-quote v2 fields when present.
+        // quote_data IS NULL ⇒ legacy 5-PA shape (rendered via parseOptions).
         const { rows: qRows } = await client.query(`
           INSERT INTO quotes
             (customer_id, cargo_name, monthly_volume_cbm, monthly_volume_kg,
              monthly_volume_containers, route, cargo_ready_date, mode, carrier,
-             transit_time, price, status, follow_up_notes, lost_reason, closing_soon)
-          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+             transit_time, price, status, follow_up_notes, lost_reason, closing_soon,
+             quote_data, valid_until, exchange_rate, grand_total_currency)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,
+                  $16,$17,$18,$19)
           RETURNING id, status
         `, [
           customer.id, q.cargo_name,
@@ -227,6 +231,8 @@ router.post('/', requireAuth, async (req, res) => {
           q.carrier, q.transit_time, q.price,
           q.status || 'quoting', q.follow_up_notes,
           q.lost_reason, q.closing_soon || false,
+          q.quote_data || null, q.valid_until || null,
+          q.exchange_rate || null, q.grand_total_currency || null,
         ]);
 
         // Auto-promote pipeline to 'booked' when quote is booked
