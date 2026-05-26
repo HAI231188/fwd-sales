@@ -13,8 +13,8 @@ const path = require('path');
 const fs = require('fs');
 
 const {
-  parseNum, unitToCurrency, calcRowAmount, calcSectionTotals,
-  calcGrandTotal, fmtAmount, unitShort,
+  parseNum, unitToCurrency, calcRowAmount, calcRowVat, calcRowTotal,
+  calcSectionTotals, calcGrandTotal, fmtAmount, unitShort,
 } = require('../utils/seaQuoteCalc.cjs');
 
 // ─── Assets ──────────────────────────────────────────────────────────────
@@ -246,35 +246,47 @@ function drawChargesSection(doc, left, right, opts) {
 
   // ─ Column layout
   // Goal: no text wrap. Use unitShort for compact unit labels.
-  // FCL: Description | <cont-type cols> | Unit | VAT | Amount
-  // LCL: Description | Unit price | CBM | Unit | VAT | Amount
+  // FCL: Desc | <cont-qty cols (narrow)> | Unit | VAT% | NET | VAT AMT | LINE TOTAL
+  // LCL: Desc | Unit Price | CBM | Unit | VAT% | NET | VAT AMT | LINE TOTAL
+  // 3 money cols replace the old single Amount column.
+  const MONEY_W = 70;           // each of NET / VAT AMT / LINE TOTAL
+  const MONEY_BLOCK = MONEY_W * 3;
+  const UNIT_W = 48;
+  const VATPCT_W = 32;
   let cols;
   if (isFcl && activeTypes.length > 0) {
-    const dynW = activeTypes.length * 50;
-    const fixedW = 56 + 36 + 88;          // unit + vat + amount
-    const descW = Math.max(110, usable - dynW - fixedW);
+    // Narrow cont cols when many — cargo summary is already in CARGO line.
+    const contW = activeTypes.length > 3 ? 28 : (activeTypes.length > 1 ? 34 : 42);
+    const dynW = activeTypes.length * contW;
+    const descW = Math.max(90, usable - dynW - UNIT_W - VATPCT_W - MONEY_BLOCK);
     cols = [
       { key: 'desc',  w: descW, label: 'Description', align: 'left' },
-      ...activeTypes.map(t => ({ key: `cont-${t}`, w: 50, label: t, align: 'right' })),
-      { key: 'unit',  w: 56, label: 'Unit',   align: 'center' },
-      { key: 'vat',   w: 36, label: 'VAT',    align: 'center' },
-      { key: 'amt',   w: 88, label: 'Amount', align: 'right' },
+      ...activeTypes.map(t => ({ key: `cont-${t}`, w: contW, label: t, align: 'right' })),
+      { key: 'unit',  w: UNIT_W,   label: 'Unit',       align: 'center' },
+      { key: 'vatp',  w: VATPCT_W, label: 'VAT%',       align: 'center' },
+      { key: 'net',   w: MONEY_W,  label: 'Net',        align: 'right' },
+      { key: 'vatA',  w: MONEY_W,  label: 'VAT',        align: 'right' },
+      { key: 'tot',   w: MONEY_W,  label: 'Line Total', align: 'right' },
     ];
   } else if (isFcl) {
     cols = [
-      { key: 'desc',  w: usable - 56 - 36 - 88, label: 'Description', align: 'left' },
-      { key: 'unit',  w: 56, label: 'Unit',   align: 'center' },
-      { key: 'vat',   w: 36, label: 'VAT',    align: 'center' },
-      { key: 'amt',   w: 88, label: 'Amount', align: 'right' },
+      { key: 'desc',  w: usable - UNIT_W - VATPCT_W - MONEY_BLOCK, label: 'Description', align: 'left' },
+      { key: 'unit',  w: UNIT_W,   label: 'Unit',       align: 'center' },
+      { key: 'vatp',  w: VATPCT_W, label: 'VAT%',       align: 'center' },
+      { key: 'net',   w: MONEY_W,  label: 'Net',        align: 'right' },
+      { key: 'vatA',  w: MONEY_W,  label: 'VAT',        align: 'right' },
+      { key: 'tot',   w: MONEY_W,  label: 'Line Total', align: 'right' },
     ];
   } else {
     cols = [
-      { key: 'desc',  w: usable - 60 - 50 - 56 - 36 - 88, label: 'Description', align: 'left' },
-      { key: 'price', w: 60, label: 'Unit Price', align: 'right' },
-      { key: 'cbm',   w: 50, label: 'CBM',    align: 'right' },
-      { key: 'unit',  w: 56, label: 'Unit',   align: 'center' },
-      { key: 'vat',   w: 36, label: 'VAT',    align: 'center' },
-      { key: 'amt',   w: 88, label: 'Amount', align: 'right' },
+      { key: 'desc',  w: usable - 56 - 40 - UNIT_W - VATPCT_W - MONEY_BLOCK, label: 'Description', align: 'left' },
+      { key: 'price', w: 56,       label: 'Unit Price', align: 'right' },
+      { key: 'cbm',   w: 40,       label: 'CBM',        align: 'right' },
+      { key: 'unit',  w: UNIT_W,   label: 'Unit',       align: 'center' },
+      { key: 'vatp',  w: VATPCT_W, label: 'VAT%',       align: 'center' },
+      { key: 'net',   w: MONEY_W,  label: 'Net',        align: 'right' },
+      { key: 'vatA',  w: MONEY_W,  label: 'VAT',        align: 'right' },
+      { key: 'tot',   w: MONEY_W,  label: 'Line Total', align: 'right' },
     ];
   }
 
@@ -294,7 +306,9 @@ function drawChargesSection(doc, left, right, opts) {
   let rowIdx = 0;
   for (const r of ticked) {
     const rowY = doc.y;
-    const amount = calcRowAmount(r, ctx);
+    const net = calcRowAmount(r, ctx);
+    const vatAmt = calcRowVat(r, ctx);
+    const lineTotal = calcRowTotal(r, ctx);
     const currency = unitToCurrency(r.unit);
 
     if (rowIdx % 2 === 0) {
@@ -305,23 +319,33 @@ function drawChargesSection(doc, left, right, opts) {
     for (const c of cols) {
       let txt = '';
       let bold = false;
+      let color = COLOR.text;
       if (c.key === 'desc') { txt = r.name || ''; bold = true; }
       else if (c.key === 'price') {
         txt = r.price ? fmtAmount(parseNum(r.price), currency) : '';
       }
       else if (c.key === 'cbm') txt = r.cbm ? String(r.cbm) : '';
       else if (c.key === 'unit') txt = unitShort(r.unit);
-      else if (c.key === 'vat') txt = r.vat || '';
-      else if (c.key === 'amt') {
-        txt = amount > 0 ? `${fmtAmount(amount, currency)} ${currency}` : '';
+      else if (c.key === 'vatp') txt = r.vat || '';
+      else if (c.key === 'net') {
+        txt = net > 0 ? `${fmtAmount(net, currency)} ${currency}` : '';
+        color = COLOR.textMuted;
+      }
+      else if (c.key === 'vatA') {
+        txt = net > 0 ? `${fmtAmount(vatAmt, currency)} ${currency}` : '';
+        color = COLOR.textMuted;
+      }
+      else if (c.key === 'tot') {
+        txt = lineTotal > 0 ? `${fmtAmount(lineTotal, currency)} ${currency}` : '';
         bold = true;
+        color = COLOR.text;
       }
       else if (c.key.startsWith('cont-')) {
         const t = c.key.slice(5);
         const v = r.price_by_cont && r.price_by_cont[t];
         txt = v ? fmtAmount(parseNum(v), currency) : '';
       }
-      doc.font(bold ? 'RB' : 'R').fontSize(FS.tableCell).fillColor(COLOR.text)
+      doc.font(bold ? 'RB' : 'R').fontSize(FS.tableCell).fillColor(color)
         .text(txt, cx + 4, rowY + 5, { width: c.w - 8, align: c.align, lineBreak: false });
       cx += c.w;
     }
@@ -331,34 +355,42 @@ function drawChargesSection(doc, left, right, opts) {
     rowIdx++;
   }
 
-  // ─ Section subtotal rows (one per currency)
+  // ─ Section subtotals — Net / VAT / Section Total per currency
   const totals = calcSectionTotals(rows, ctx);
   for (const cur of Object.keys(totals)) {
-    const { subtotal, vat, total } = totals[cur];
-    const subY = doc.y + 2;
-    // Subtotal row
+    const { net, vat, total } = totals[cur];
+    const labelW = usable - 100;
+    const valX = right - 96;
+    const valW = 92;
+
+    const netY = doc.y + 2;
     doc.font('R').fontSize(FS.label).fillColor(COLOR.textMuted)
-      .text('Subtotal', left + 4, subY, { width: usable - 100, align: 'right', lineBreak: false });
+      .text('Subtotal Net', left + 4, netY, { width: labelW, align: 'right', lineBreak: false });
     doc.font('RB').fontSize(FS.body).fillColor(COLOR.text)
-      .text(`${fmtAmount(subtotal, cur)} ${cur}`, right - 96, subY, { width: 92, align: 'right', lineBreak: false });
-    doc.y = subY + 12;
+      .text(`${fmtAmount(net, cur)} ${cur}`, valX, netY, { width: valW, align: 'right', lineBreak: false });
+    doc.y = netY + 12;
     if (vat > 0) {
       const vatY = doc.y;
       doc.font('R').fontSize(FS.label).fillColor(COLOR.textMuted)
-        .text('VAT', left + 4, vatY, { width: usable - 100, align: 'right', lineBreak: false });
+        .text('VAT', left + 4, vatY, { width: labelW, align: 'right', lineBreak: false });
       doc.font('R').fontSize(FS.body).fillColor(COLOR.text)
-        .text(`${fmtAmount(vat, cur)} ${cur}`, right - 96, vatY, { width: 92, align: 'right', lineBreak: false });
+        .text(`${fmtAmount(vat, cur)} ${cur}`, valX, vatY, { width: valW, align: 'right', lineBreak: false });
       doc.y = vatY + 12;
     }
-    // Section total (bold, top-border)
+    // Section total — top border, brand color
     const totY = doc.y;
     hline(doc, right - 200, totY, right, COLOR.borderStrong, 0.8);
     doc.font('RB').fontSize(FS.body).fillColor(COLOR.text)
-      .text(`Section Total (${cur})`, left + 4, totY + 4, { width: usable - 100, align: 'right', lineBreak: false });
+      .text(`Section Total (${cur})`, left + 4, totY + 4, { width: labelW, align: 'right', lineBreak: false });
     doc.font('RB').fontSize(FS.body + 0.5).fillColor(COLOR.brandDark)
-      .text(`${fmtAmount(total, cur)} ${cur}`, right - 96, totY + 4, { width: 92, align: 'right', lineBreak: false });
+      .text(`${fmtAmount(total, cur)} ${cur}`, valX, totY + 4, { width: valW, align: 'right', lineBreak: false });
     doc.y = totY + 16;
   }
+
+  // ─ Per-line VAT explainer (small grey italic)
+  doc.font('RI').fontSize(FS.footer + 0.5).fillColor(COLOR.textFaint)
+    .text('Đơn giá theo từng dòng. VAT áp dụng theo từng loại phí (0% hoặc 8%). Line Total đã bao gồm VAT.',
+      left, doc.y + 4, { width: usable, lineGap: 1 });
   doc.moveDown(0.6);
   resetPaint(doc);
   return { byCurrency: totals };

@@ -6,8 +6,8 @@
 import { useState } from 'react';
 import { generateSeaQuotePdf } from '../api';
 import {
-  parseNum, unitToCurrency, calcRowAmount, calcSectionTotals,
-  calcGrandTotal, fmtAmount,
+  parseNum, unitToCurrency, calcRowAmount, calcRowVat, calcRowTotal,
+  calcSectionTotals, calcGrandTotal, fmtAmount,
 } from '../utils/seaQuoteCalc';
 
 function fmtDate(d) {
@@ -120,32 +120,76 @@ function ChargeBlock({ title, rows, ctx, totals }) {
       <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.3px', marginBottom: 2 }}>
         {title}
       </div>
+      {/* Mini-header for the 3 money columns */}
+      <div style={{
+        display: 'grid', gridTemplateColumns: '1fr 80px 70px 90px', gap: 8,
+        fontSize: 10, color: 'var(--text-3)', fontWeight: 700,
+        textTransform: 'uppercase', letterSpacing: '0.3px',
+        borderBottom: '1px solid var(--border)', paddingBottom: 2, marginBottom: 3,
+      }}>
+        <span>Chi phí</span>
+        <span style={{ textAlign: 'right' }}>Net</span>
+        <span style={{ textAlign: 'right' }}>VAT</span>
+        <span style={{ textAlign: 'right' }}>Line Total</span>
+      </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
         {rows.map((r, i) => {
-          const amount = calcRowAmount(r, ctx);
+          const net = calcRowAmount(r, ctx);
+          const vatAmt = calcRowVat(r, ctx);
+          const lineTotal = calcRowTotal(r, ctx);
           const cur = unitToCurrency(r.unit);
           return (
-            <div key={i} style={{ fontSize: 12, display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+            <div key={i} style={{
+              display: 'grid', gridTemplateColumns: '1fr 80px 70px 90px', gap: 8,
+              fontSize: 12, alignItems: 'baseline',
+            }}>
               <span style={{ color: 'var(--text)' }}>
                 {r.name}
-                {r.vat && <span style={{ color: 'var(--text-3)', marginLeft: 4 }}>(VAT {r.vat})</span>}
+                {r.vat && <span style={{ color: 'var(--text-3)', marginLeft: 4, fontSize: 10 }}>({r.vat})</span>}
               </span>
-              <span style={{ color: 'var(--primary)', fontWeight: 600, whiteSpace: 'nowrap' }}>
-                {amount > 0 ? `${fmtAmount(amount, cur)} ${cur}` : '—'}
+              <span style={{ color: 'var(--text-2)', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                {net > 0 ? `${fmtAmount(net, cur)} ${cur}` : '—'}
+              </span>
+              <span style={{ color: 'var(--text-2)', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                {net > 0 ? `${fmtAmount(vatAmt, cur)} ${cur}` : '—'}
+              </span>
+              <span style={{ color: 'var(--primary)', fontWeight: 700, textAlign: 'right', whiteSpace: 'nowrap' }}>
+                {lineTotal > 0 ? `${fmtAmount(lineTotal, cur)} ${cur}` : '—'}
               </span>
             </div>
           );
         })}
       </div>
-      {Object.keys(totals).map(cur => (
-        <div key={cur} style={{
-          marginTop: 3, paddingTop: 3, borderTop: '1px dashed var(--border)',
-          fontSize: 11, display: 'flex', justifyContent: 'space-between', color: 'var(--text-2)', fontWeight: 600,
-        }}>
-          <span>Tổng ({cur}):</span>
-          <span style={{ color: 'var(--text)' }}>{fmtAmount(totals[cur].total, cur)} {cur}</span>
-        </div>
-      ))}
+      {Object.keys(totals).map(cur => {
+        const { net, vat, total } = totals[cur];
+        return (
+          <div key={cur} style={{
+            marginTop: 4, paddingTop: 3, borderTop: '1px dashed var(--border)',
+            fontSize: 11, color: 'var(--text-2)',
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span>Subtotal Net ({cur}):</span>
+              <span>{fmtAmount(net, cur)} {cur}</span>
+            </div>
+            {vat > 0 && (
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>VAT ({cur}):</span>
+                <span>{fmtAmount(vat, cur)} {cur}</span>
+              </div>
+            )}
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, color: 'var(--text)' }}>
+              <span>Section Total ({cur}):</span>
+              <span>{fmtAmount(total, cur)} {cur}</span>
+            </div>
+          </div>
+        );
+      })}
+      <div style={{
+        fontSize: 10, color: 'var(--text-3)', fontStyle: 'italic',
+        marginTop: 4,
+      }}>
+        Đơn giá theo từng dòng. VAT áp dụng theo từng loại phí (0% hoặc 8%). Line Total đã bao gồm VAT.
+      </div>
     </div>
   );
 }

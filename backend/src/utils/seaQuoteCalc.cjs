@@ -55,19 +55,32 @@ function calcRowAmount(row, ctx) {
   return parseNum(row.price) * parseNum(row.cbm);
 }
 
+function rowVatPct(row) {
+  return parseNum(String((row && row.vat) || '0').replace(/[^\d.]/g, ''));
+}
+
+function calcRowVat(row, ctx) {
+  const net = calcRowAmount(row, ctx);
+  return net * rowVatPct(row) / 100;
+}
+
+function calcRowTotal(row, ctx) {
+  const net = calcRowAmount(row, ctx);
+  return net + (net * rowVatPct(row) / 100);
+}
+
 function calcSectionTotals(rows, ctx) {
   const byCur = {};
   for (const r of (rows || [])) {
     if (!r.ticked) continue;
-    const amount = calcRowAmount(r, ctx);
-    if (amount === 0) continue;
+    const net = calcRowAmount(r, ctx);
+    if (net === 0) continue;
     const cur = unitToCurrency(r.unit);
-    const vatPct = parseNum(String(r.vat || '0').replace(/[^\d.]/g, ''));
-    const vat = amount * vatPct / 100;
-    if (!byCur[cur]) byCur[cur] = { subtotal: 0, vat: 0, total: 0 };
-    byCur[cur].subtotal += amount;
+    const vat = net * rowVatPct(r) / 100;
+    if (!byCur[cur]) byCur[cur] = { net: 0, vat: 0, total: 0 };
+    byCur[cur].net += net;
     byCur[cur].vat += vat;
-    byCur[cur].total += amount + vat;
+    byCur[cur].total += net + vat;
   }
   return byCur;
 }
@@ -111,7 +124,10 @@ module.exports = {
   parseNum,
   unitToCurrency,
   unitBasis,
+  rowVatPct,
   calcRowAmount,
+  calcRowVat,
+  calcRowTotal,
   calcSectionTotals,
   calcGrandTotal,
   fmtAmount,

@@ -21,8 +21,8 @@
 import { useState, useEffect } from 'react';
 import { generateSeaQuotePdf } from '../api';
 import {
-  parseNum, unitToCurrency, calcRowAmount, calcSectionTotals,
-  calcGrandTotal, fmtAmount,
+  parseNum, unitToCurrency, calcRowAmount, calcRowVat, calcRowTotal,
+  calcSectionTotals, calcGrandTotal, fmtAmount,
 } from '../utils/seaQuoteCalc';
 
 const CONT_TYPES = ['20DC', '40DC', '40HC', '45HC', '20RF', '40RF'];
@@ -616,7 +616,7 @@ function TotalsBox({ quote, contQty }) {
         <span style={{ fontSize: 12, color: 'var(--text-2)', fontWeight: 500 }}>{label}:</span>
         <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
           {currencies.map(cur => {
-            const { subtotal, vat, total } = totals[cur];
+            const { net, vat, total } = totals[cur];
             const hasVat = vat > 0;
             return (
               <div key={cur} style={{ textAlign: 'right' }}>
@@ -625,7 +625,7 @@ function TotalsBox({ quote, contQty }) {
                 </div>
                 {hasVat && (
                   <div style={{ fontSize: 10, color: 'var(--text-3)' }}>
-                    (Subtotal {fmtAmount(subtotal, cur)} + VAT {fmtAmount(vat, cur)})
+                    (Net {fmtAmount(net, cur)} + VAT {fmtAmount(vat, cur)})
                   </div>
                 )}
               </div>
@@ -716,16 +716,20 @@ function ChargesTable({ rows, activeContTypes, defaultUnit, defaultVat, onPatch,
               </>
             )}
             <th style={TH_STYLE}>Đơn vị</th>
-            <th style={TH_STYLE}>VAT</th>
+            <th style={TH_STYLE}>VAT%</th>
             <th style={TH_STYLE}>Ghi chú</th>
-            <th style={{ ...TH_STYLE, textAlign: 'right' }}>Amount</th>
+            <th style={{ ...TH_STYLE, textAlign: 'right' }}>Net</th>
+            <th style={{ ...TH_STYLE, textAlign: 'right' }}>VAT</th>
+            <th style={{ ...TH_STYLE, textAlign: 'right' }}>Line Total</th>
           </tr>
         </thead>
         <tbody>
           {ticked.map(({ r, i }) => {
             const unitOverridden = r.unit !== defaultUnit;
             const vatOverridden = r.vat !== defaultVat;
-            const amount = calcRowAmount(r, ctx);
+            const net = calcRowAmount(r, ctx);
+            const vatAmt = calcRowVat(r, ctx);
+            const lineTotal = calcRowTotal(r, ctx);
             const currency = unitToCurrency(r.unit);
             return (
               <tr key={`${r.custom ? 'c' : 'p'}-${i}`}>
@@ -776,15 +780,29 @@ function ChargesTable({ rows, activeContTypes, defaultUnit, defaultVat, onPatch,
                     value={r.note || ''} onChange={e => onPatch(i, { note: e.target.value })}
                     style={CELL_INPUT} placeholder="—" />
                 </td>
-                <td style={{ ...TD_STYLE, textAlign: 'right', fontWeight: 600,
-                  color: amount > 0 ? 'var(--text)' : 'var(--text-3)' }}>
-                  {amount > 0 ? `${fmtAmount(amount, currency)} ${currency}` : '—'}
+                <td style={{ ...TD_STYLE, textAlign: 'right',
+                  color: net > 0 ? 'var(--text-2)' : 'var(--text-3)' }}>
+                  {net > 0 ? `${fmtAmount(net, currency)} ${currency}` : '—'}
+                </td>
+                <td style={{ ...TD_STYLE, textAlign: 'right',
+                  color: vatAmt > 0 ? 'var(--text-2)' : 'var(--text-3)' }}>
+                  {net > 0 ? `${fmtAmount(vatAmt, currency)} ${currency}` : '—'}
+                </td>
+                <td style={{ ...TD_STYLE, textAlign: 'right', fontWeight: 700,
+                  color: lineTotal > 0 ? 'var(--text)' : 'var(--text-3)' }}>
+                  {lineTotal > 0 ? `${fmtAmount(lineTotal, currency)} ${currency}` : '—'}
                 </td>
               </tr>
             );
           })}
         </tbody>
       </table>
+      <div style={{
+        fontSize: 10.5, color: 'var(--text-3)', fontStyle: 'italic',
+        marginTop: 4, paddingLeft: 4,
+      }}>
+        Đơn giá theo từng dòng. VAT áp dụng theo từng loại phí (0% hoặc 8%). Line Total đã bao gồm VAT.
+      </div>
     </div>
   );
 }

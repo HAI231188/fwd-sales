@@ -63,22 +63,39 @@ export function calcRowAmount(row, ctx) {
   return parseNum(row.price) * parseNum(row.cbm);
 }
 
-// VAT is per row, applied to the row's amount × vat%.
-// Returns { [currency]: {subtotal, vat, total} } so callers can render
-// each currency separately (mixed-currency quotes are real).
+// Per-row VAT amount = net × (vat_pct / 100). vat string may be "8%" / "0%"
+// / "KCT" / "" — anything non-digit is stripped (KCT → 0).
+export function rowVatPct(row) {
+  return parseNum(String(row?.vat || '0').replace(/[^\d.]/g, ''));
+}
+
+export function calcRowVat(row, ctx) {
+  const net = calcRowAmount(row, ctx);
+  return net * rowVatPct(row) / 100;
+}
+
+// Line total = net + VAT (the customer-facing per-line "total" column).
+export function calcRowTotal(row, ctx) {
+  const net = calcRowAmount(row, ctx);
+  return net + (net * rowVatPct(row) / 100);
+}
+
+// Section totals: { [currency]: { net, vat, total } }.
+// net = sum of unit_price × qty (no tax);
+// vat = sum of per-row VAT amounts;
+// total = net + vat (= sum of LINE TOTAL per row).
 export function calcSectionTotals(rows, ctx) {
   const byCur = {};
   for (const r of (rows || [])) {
     if (!r.ticked) continue;
-    const amount = calcRowAmount(r, ctx);
-    if (amount === 0) continue;
+    const net = calcRowAmount(r, ctx);
+    if (net === 0) continue;
     const cur = unitToCurrency(r.unit);
-    const vatPct = parseNum(String(r.vat || '0').replace(/[^\d.]/g, ''));
-    const vat = amount * vatPct / 100;
-    if (!byCur[cur]) byCur[cur] = { subtotal: 0, vat: 0, total: 0 };
-    byCur[cur].subtotal += amount;
+    const vat = net * rowVatPct(r) / 100;
+    if (!byCur[cur]) byCur[cur] = { net: 0, vat: 0, total: 0 };
+    byCur[cur].net += net;
     byCur[cur].vat += vat;
-    byCur[cur].total += amount + vat;
+    byCur[cur].total += net + vat;
   }
   return byCur;
 }
