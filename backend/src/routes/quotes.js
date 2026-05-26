@@ -116,6 +116,7 @@ router.post('/:id/pdf', requireAuth, async (req, res) => {
     const isLead = req.user.role === 'lead';
     const { rows } = await db.query(`
       SELECT q.id, q.quote_data, q.valid_until, q.exchange_rate, q.grand_total_currency,
+             q.created_at,
              c.company_name, c.user_id
       FROM quotes q
       JOIN customers c ON c.id = q.customer_id
@@ -136,6 +137,8 @@ router.post('/:id/pdf', requireAuth, async (req, res) => {
       valid_until: row.valid_until,
       exchange_rate: row.exchange_rate,
       grand_total_currency: row.grand_total_currency,
+      quote_id: row.id,
+      quote_created_at: row.created_at,
     });
     const safeName = String(row.company_name || 'quote').replace(/[^a-zA-Z0-9_-]+/g, '_').slice(0, 40);
     res.setHeader('Content-Type', 'application/pdf');

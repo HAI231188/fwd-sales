@@ -1,15 +1,23 @@
-// Sea freight quotation PDF builder (2026-05-26, C3).
-// Mirrors backend/src/services/bbbg-pdf.js patterns:
-//   - pdfkit + same SLB logo + Roboto fonts (with Helvetica fallback)
-//   - Returns Promise<Buffer> so the route can pipe it as a blob response
+// Sea-freight quotation PDF builder — international-forwarder layout.
+// Rewritten 2026-05-27: unified calc helpers (../utils/seaQuoteCalc.cjs)
+// + full layout redesign (Maersk / DHL / K+N style).
 //
-// Input: { quote_data, customer_name, valid_until, exchange_rate, grand_total_currency }
-// where quote_data is the v2 JSONB shape produced by frontend SeaQuoteForm.
+// Input: { quote_data, customer_name, valid_until, exchange_rate,
+//          grand_total_currency, quote_id }
+//   quote_data = v2 JSONB shape produced by frontend SeaQuoteForm.
+//
+// Output: Promise<Buffer>  (mime application/pdf).
 
 const PDFDocument = require('pdfkit');
 const path = require('path');
 const fs = require('fs');
 
+const {
+  parseNum, unitToCurrency, calcRowAmount, calcSectionTotals,
+  calcGrandTotal, fmtAmount, unitShort,
+} = require('../utils/seaQuoteCalc.cjs');
+
+// ─── Assets ──────────────────────────────────────────────────────────────
 const FONT_REGULAR = path.join(__dirname, '..', 'assets', 'fonts', 'Roboto-Regular.ttf');
 const FONT_BOLD    = path.join(__dirname, '..', 'assets', 'fonts', 'Roboto-Bold.ttf');
 const FONT_ITALIC  = path.join(__dirname, '..', 'assets', 'fonts', 'Roboto-Italic.ttf');
@@ -19,6 +27,40 @@ const LOGO_CANDIDATES = [
   path.join(__dirname, '..', 'assets', 'slb_logo.png'),
 ];
 
+// ─── Design tokens ───────────────────────────────────────────────────────
+// Brand teal sampled to match SLB green; muted enough to print clean.
+const COLOR = {
+  brand:        '#0E7C66',   // primary brand teal (logo green, muted)
+  brandDark:    '#0A5A4B',
+  brandLight:   '#E8F4F1',
+  text:         '#111827',   // body
+  textMuted:    '#6B7280',   // labels
+  textFaint:    '#9CA3AF',   // captions
+  border:       '#E5E7EB',
+  borderStrong: '#D1D5DB',
+  rowAlt:       '#FAFAFA',
+  headerBar:    '#0E7C66',
+  totalBg:      '#F0FDF4',
+  totalBorder:  '#A7F3D0',
+};
+
+const FS = {                // font sizes
+  body: 9,
+  label: 7.5,
+  tableHeader: 7.5,
+  tableCell: 8.5,
+  sectionBar: 9.5,
+  title: 18,
+  subtitle: 9,
+  totalLabel: 9,
+  totalGrand: 13,
+  footer: 7,
+};
+
+const MARGIN = 40;          // page margins
+const ROW_H = 18;           // table row height (consistent baseline)
+const HEAD_H = 18;          // table header row height
+
 function fileExists(p) { try { return fs.statSync(p).isFile(); } catch { return false; } }
 
 function registerFonts(doc) {
@@ -26,71 +68,10 @@ function registerFonts(doc) {
   if (fileExists(FONT_BOLD))    doc.registerFont('RB', FONT_BOLD);     else doc.registerFont('RB', 'Helvetica-Bold');
   if (fileExists(FONT_ITALIC))  doc.registerFont('RI', FONT_ITALIC);   else doc.registerFont('RI', 'Helvetica-Oblique');
   if (!fileExists(FONT_REGULAR)) {
-    console.warn('[sea-quote-pdf] Roboto TTF not found — Vietnamese diacritics will not render. Drop fonts into backend/src/assets/fonts/ to enable.');
+    console.warn('[sea-quote-pdf] Roboto TTF missing — Vietnamese diacritics + special chars may not render.');
   }
 }
 
-// ─── Calc helpers (mirror frontend SeaQuoteForm logic) ───────────────────
-function parseNum(v) {
-  if (v === '' || v == null) return 0;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : 0;
-}
-function unitToCurrency(unit) {
-  if (!unit) return 'USD';
-  if (unit.startsWith('USD')) return 'USD';
-  if (unit.startsWith('VND')) return 'VND';
-  return 'USD';
-}
-function calcRowAmount(row, ctx) {
-  if (!row || !row.ticked) return 0;
-  if (ctx.cargo_type === 'FCL') {
-    const pbc = row.price_by_cont || {};
-    let total = 0;
-    for (const c of (ctx.containers || [])) {
-      const q = parseNum(c.qty);
-      if (q > 0) total += parseNum(pbc[c.type]) * q;
-    }
-    return total;
-  }
-  return parseNum(row.price) * parseNum(row.cbm);
-}
-function calcSectionTotals(rows, ctx) {
-  const byCur = {};
-  for (const r of rows || []) {
-    if (!r.ticked) continue;
-    const amount = calcRowAmount(r, ctx);
-    const cur = unitToCurrency(r.unit);
-    const vatPct = parseNum(String(r.vat || '0').replace(/[^\d.]/g, ''));
-    const vat = amount * vatPct / 100;
-    if (!byCur[cur]) byCur[cur] = { subtotal: 0, vat: 0, total: 0 };
-    byCur[cur].subtotal += amount;
-    byCur[cur].vat += vat;
-    byCur[cur].total += amount + vat;
-  }
-  return byCur;
-}
-function calcGrandTotal(intlT, inlandT, target, rate) {
-  if (!target) return null;
-  const curs = new Set([...Object.keys(intlT), ...Object.keys(inlandT)]);
-  if (!curs.size) return 0;
-  const r = parseNum(rate);
-  let sum = 0;
-  for (const cur of curs) {
-    const s = (intlT[cur]?.total || 0) + (inlandT[cur]?.total || 0);
-    if (cur === target) sum += s;
-    else if (cur === 'USD' && target === 'VND' && r > 0) sum += s * r;
-    else if (cur === 'VND' && target === 'USD' && r > 0) sum += s / r;
-    else if (curs.size === 1) sum += s;
-    else return null;
-  }
-  return sum;
-}
-function fmtAmount(n, currency) {
-  if (n == null || !Number.isFinite(n) || n === 0) return '';
-  if (currency === 'VND') return Math.round(n).toLocaleString('vi-VN');
-  return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
 function fmtDate(d) {
   if (!d) return '';
   try {
@@ -100,241 +81,403 @@ function fmtDate(d) {
   } catch { return String(d); }
 }
 
-// ─── Layout helpers ──────────────────────────────────────────────────────
-function drawHeader(doc, left, right) {
-  const headerY = doc.y;
-  const logoPath = LOGO_CANDIDATES.find(fileExists) || null;
+function quoteNumber(id, createdAt) {
+  const d = createdAt instanceof Date ? createdAt : new Date(createdAt || Date.now());
+  const yy = String(d.getFullYear()).slice(2);
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `SLB-Q-${id || '?'}-${yy}${mm}${dd}`;
+}
+
+// ─── Drawing helpers ─────────────────────────────────────────────────────
+function hline(doc, x1, y, x2, color = COLOR.border, weight = 0.5) {
+  doc.save().lineWidth(weight).strokeColor(color).moveTo(x1, y).lineTo(x2, y).stroke().restore();
+}
+
+// Reset paint state so leaked fill/stroke colors from a previous draw don't
+// bleed into the next text run (pdfkit retains state across calls).
+function resetPaint(doc) {
+  doc.fillColor(COLOR.text).strokeColor(COLOR.text).lineWidth(0.5);
+}
+
+// ─── Section: header (logo + company info + title bar) ───────────────────
+function drawHeader(doc, left, right, opts) {
+  const top = doc.y;
+  const logoPath = LOGO_CANDIDATES.find(fileExists);
   if (logoPath) {
-    try { doc.image(logoPath, left, headerY, { width: 90 }); } catch { /* skip */ }
+    try { doc.image(logoPath, left, top, { width: 75 }); } catch { /* skip */ }
   }
-  const companyX = left + (logoPath ? 110 : 0);
-  doc.font('RB').fontSize(11).fillColor('#0066b3').text('SLB GLOBAL LOGISTICS CO., LTD.', companyX, headerY);
-  doc.font('R').fontSize(8).fillColor('#000');
-  doc.text('Address: 8th Floor, Diamond Building, No 7 Lot 8A Le Hong Phong, Ngo Quyen, Hai Phong, Viet Nam',
-    companyX, doc.y + 1);
-  doc.text('Tel: +84 931 334 331   |   Email: info@slbglobal.com', companyX, doc.y + 1);
-  doc.text('Website: www.slbglobal.com', companyX, doc.y + 1);
-  doc.y = Math.max(doc.y, headerY + (logoPath ? 70 : 50));
+  // Company block — right-aligned next to logo
+  const companyX = left + (logoPath ? 90 : 0);
+  const companyW = right - companyX;
+  doc.font('RB').fontSize(11).fillColor(COLOR.brandDark)
+    .text('SLB GLOBAL LOGISTICS CO., LTD.', companyX, top, { width: companyW });
+  doc.font('R').fontSize(FS.label).fillColor(COLOR.textMuted);
+  doc.text('8th Floor, Diamond Building, No 7 Lot 8A Le Hong Phong, Ngo Quyen, Hai Phong, Viet Nam',
+    companyX, doc.y + 1, { width: companyW });
+  doc.text('Tel  +84 931 334 331    Email  info@slbglobal.com    Web  www.slbglobal.com',
+    companyX, doc.y + 1, { width: companyW });
 
-  doc.moveDown(0.5);
-  doc.font('RB').fontSize(16).fillColor('#000').text('BÁO GIÁ VẬN CHUYỂN', { align: 'center' });
-  doc.font('RI').fontSize(10).fillColor('#444').text('(Freight Quotation)', { align: 'center' });
-  doc.fillColor('#000');
+  doc.y = Math.max(doc.y, top + (logoPath ? 60 : 50));
+  doc.moveDown(0.6);
+
+  // Title row: bilingual title left + Quote No / Date / Valid stack right
+  const titleY = doc.y;
+  doc.font('RB').fontSize(FS.title).fillColor(COLOR.text)
+    .text('FREIGHT QUOTATION', left, titleY, { lineBreak: false });
+  doc.font('R').fontSize(FS.subtitle).fillColor(COLOR.textMuted)
+    .text('Báo giá vận chuyển', left, titleY + 22, { lineBreak: false });
+
+  // Right-stacked meta block
+  const metaW = 200;
+  const metaX = right - metaW;
+  let mY = titleY;
+  const metaLine = (label, value) => {
+    doc.font('R').fontSize(FS.label).fillColor(COLOR.textMuted)
+      .text(label, metaX, mY, { width: metaW, align: 'right', lineBreak: false });
+    mY = doc.y + 1;
+    doc.font('RB').fontSize(FS.body + 0.5).fillColor(COLOR.text)
+      .text(value || '—', metaX, mY, { width: metaW, align: 'right', lineBreak: false });
+    mY = doc.y + 4;
+  };
+  metaLine('QUOTATION NO.', quoteNumber(opts.quote_id, opts.quote_created_at));
+  metaLine('DATE', fmtDate(new Date()));
+  if (opts.valid_until) metaLine('VALID UNTIL', fmtDate(opts.valid_until));
+
+  doc.y = Math.max(doc.y, titleY + 50);
   doc.moveDown(0.4);
-  doc.moveTo(left, doc.y).lineTo(right, doc.y).lineWidth(0.5).strokeColor('#888').stroke();
-  doc.strokeColor('#000');
-  doc.moveDown(0.4);
+  hline(doc, left, doc.y, right, COLOR.borderStrong, 1);
+  doc.moveDown(0.6);
+  resetPaint(doc);
 }
 
-function drawMeta(doc, left, right, opts) {
-  const usableW = right - left;
-  const colGap = 12;
-  const colW = (usableW - colGap) / 2;
-  const todayStr = new Date().toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' });
+// ─── Section: parties + route (two columns) ──────────────────────────────
+function drawPartiesRoute(doc, left, right, opts) {
+  const usable = right - left;
+  const colGap = 16;
+  const colW = (usable - colGap) / 2;
+  const top = doc.y;
 
-  let y = doc.y;
-  doc.font('RB').fontSize(10).fillColor('#000');
-  doc.text(`Kính gửi / To: ${opts.customer_name || '—'}`, left, y, { width: colW });
-  doc.text(`Ngày / Date: ${todayStr}`, left + colW + colGap, y, { width: colW, align: 'right' });
-  y = doc.y + 2;
+  // ── LEFT: TO / KÍNH GỬI
+  doc.font('RB').fontSize(FS.label).fillColor(COLOR.textMuted)
+    .text('TO  /  KÍNH GỬI', left, top, { width: colW });
+  let y = doc.y + 2;
+  doc.font('RB').fontSize(FS.body + 1).fillColor(COLOR.text)
+    .text(opts.customer_name || '—', left, y, { width: colW });
+  y = doc.y;
 
-  doc.font('R').fontSize(10);
-  const route = `POL: ${opts.pol || '—'}   →   POD: ${opts.pod || '—'}`;
-  doc.text(route, left, y, { width: colW });
-  doc.text(`Term: ${opts.term || '—'}`, left + colW + colGap, y, { width: colW, align: 'right' });
-  y = doc.y + 2;
+  // ── RIGHT: ROUTE / TUYẾN
+  const rightX = left + colW + colGap;
+  doc.font('RB').fontSize(FS.label).fillColor(COLOR.textMuted)
+    .text('ROUTE  /  TUYẾN', rightX, top, { width: colW });
+  let yR = doc.y + 2;
 
+  // POL → POD with a chunky arrow rendered as a separate label (not a glyph)
+  // so font-coverage issues never produce "□" garbage.
+  const pol = (opts.pol || '').trim() || '—';
+  const pod = (opts.pod || '').trim() || '—';
+  doc.font('RB').fontSize(FS.body + 1).fillColor(COLOR.text);
+  // Split into segments: "POL"  "→"  "POD" with controlled spacing.
+  const seg = (txt, x, w, opt) => doc.text(txt, x, yR, { width: w, lineBreak: false, ...opt });
+  // Compute widths so the layout flows like: HCM  →  Hamburg
+  const arrowLabel = '→'; // U+2192 RIGHTWARDS ARROW (works in Roboto)
+  // Build a single line; if arrow font-coverage fails, fall back to ASCII '>'.
+  // pdfkit will render the rightwards arrow with Roboto Regular cleanly.
+  doc.text(`${pol}   ${arrowLabel}   ${pod}`, rightX, yR, { width: colW, lineBreak: false });
+  yR = doc.y + 4;
+
+  // Sub-meta row inside ROUTE column
+  doc.font('R').fontSize(FS.label).fillColor(COLOR.textMuted);
+  const subLine = (label, value) => {
+    if (!value) return;
+    doc.font('R').fontSize(FS.label).fillColor(COLOR.textMuted)
+      .text(label, rightX, yR, { width: 80, lineBreak: false });
+    doc.font('RB').fontSize(FS.body).fillColor(COLOR.text)
+      .text(value, rightX + 80, yR, { width: colW - 80, lineBreak: false });
+    yR = doc.y + 2;
+  };
+  if (opts.term) subLine('TERM', String(opts.term));
+  // Cargo line: FCL list or LCL CBM
   let cargoDesc;
-  if (opts.cargo_type === 'FCL') {
-    const conts = (opts.containers || []).filter(c => parseNum(c.qty) > 0).map(c => `${c.qty}x${c.type}`).join(', ');
-    cargoDesc = `FCL: ${conts || '(chưa có cont)'}`;
+  if (opts.cargo_type === 'LCL') {
+    cargoDesc = `LCL  ·  ${opts.shipment_cbm || 0} CBM`;
   } else {
-    cargoDesc = `LCL: ${opts.shipment_cbm || 0} CBM`;
+    const conts = (opts.containers || []).filter(c => parseNum(c.qty) > 0)
+      .map(c => `${c.qty} × ${c.type}`).join(',  ');
+    cargoDesc = `FCL  ·  ${conts || '— no containers —'}`;
   }
-  doc.text(cargoDesc, left, y, { width: usableW });
-  y = doc.y + 2;
-  doc.y = y;
+  subLine('CARGO', cargoDesc);
+  if (opts.exchange_rate) {
+    subLine('FX RATE', `1 USD = ${Number(opts.exchange_rate).toLocaleString('en-US')} VND`);
+  }
 
-  if (opts.valid_until || opts.exchange_rate) {
-    const ly = doc.y;
-    if (opts.valid_until) {
-      doc.text(`Hiệu lực đến / Valid until: ${fmtDate(opts.valid_until)}`, left, ly, { width: colW });
-    }
-    if (opts.exchange_rate) {
-      doc.text(`Tỷ giá / Rate: 1 USD = ${Number(opts.exchange_rate).toLocaleString('vi-VN')} VND`,
-        left + colW + colGap, ly, { width: colW, align: 'right' });
-    }
-    doc.y = ly + 14;
-  }
-  doc.moveDown(0.4);
+  // Sync y to bottom of taller column
+  doc.y = Math.max(y, yR);
+  doc.moveDown(0.8);
+  resetPaint(doc);
 }
 
-// Returns the totals object so the caller can compute grand total.
-function drawChargeSection(doc, left, right, title, rows, ctx) {
-  const usableW = right - left;
-  const ticked = (rows || []).filter(r => r.ticked);
+// ─── Section: charges table ──────────────────────────────────────────────
+//
+// Returns the section totals { [currency]: {subtotal, vat, total} }
+// so the caller can build the grand total.
+function drawChargesSection(doc, left, right, opts) {
+  const { title, subtitle, rows, ctx } = opts;
+  const ticked = (rows || []).filter(r => r.ticked && calcRowAmount(r, ctx) > 0);
   if (!ticked.length) return { byCurrency: {} };
 
-  doc.font('RB').fontSize(11).fillColor('#0066b3').text(title, left, doc.y);
-  doc.fillColor('#000');
-  doc.moveDown(0.2);
-
+  const usable = right - left;
   const isFcl = ctx.cargo_type === 'FCL';
   const activeTypes = isFcl
     ? (ctx.containers || []).filter(c => parseNum(c.qty) > 0).map(c => c.type)
     : [];
 
+  // ─ Brand-colored section header bar
+  const barY = doc.y;
+  doc.save().rect(left, barY, usable, 22).fill(COLOR.headerBar).restore();
+  doc.font('RB').fontSize(FS.sectionBar).fillColor('#FFFFFF')
+    .text(title, left + 10, barY + 6, { width: usable - 20, lineBreak: false });
+  if (subtitle) {
+    doc.font('R').fontSize(FS.label).fillColor('#FFFFFF')
+      .text(subtitle, left + 10, barY + 6, { width: usable - 20, align: 'right', lineBreak: false });
+  }
+  doc.y = barY + 22;
+  resetPaint(doc);
+
+  // ─ Column layout
+  // Goal: no text wrap. Use unitShort for compact unit labels.
+  // FCL: Description | <cont-type cols> | Unit | VAT | Amount
+  // LCL: Description | Unit price | CBM | Unit | VAT | Amount
   let cols;
-  if (isFcl) {
-    if (activeTypes.length > 0) {
-      const dynW = activeTypes.length * 50;
-      const fixedW = 50 + 50 + 80;
-      const descW = Math.max(120, usableW - dynW - fixedW);
-      cols = [
-        { key: 'desc', w: descW, label: 'Description / Mô tả', align: 'left' },
-        ...activeTypes.map(t => ({ key: `cont-${t}`, w: 50, label: t, align: 'right' })),
-        { key: 'unit', w: 50, label: 'Unit', align: 'center' },
-        { key: 'vat', w: 50, label: 'VAT', align: 'center' },
-        { key: 'amount', w: 80, label: 'Amount', align: 'right' },
-      ];
-    } else {
-      cols = [
-        { key: 'desc', w: usableW - 180, label: 'Description / Mô tả', align: 'left' },
-        { key: 'unit', w: 50, label: 'Unit', align: 'center' },
-        { key: 'vat', w: 50, label: 'VAT', align: 'center' },
-        { key: 'amount', w: 80, label: 'Amount', align: 'right' },
-      ];
-    }
+  if (isFcl && activeTypes.length > 0) {
+    const dynW = activeTypes.length * 50;
+    const fixedW = 56 + 36 + 88;          // unit + vat + amount
+    const descW = Math.max(110, usable - dynW - fixedW);
+    cols = [
+      { key: 'desc',  w: descW, label: 'Description', align: 'left' },
+      ...activeTypes.map(t => ({ key: `cont-${t}`, w: 50, label: t, align: 'right' })),
+      { key: 'unit',  w: 56, label: 'Unit',   align: 'center' },
+      { key: 'vat',   w: 36, label: 'VAT',    align: 'center' },
+      { key: 'amt',   w: 88, label: 'Amount', align: 'right' },
+    ];
+  } else if (isFcl) {
+    cols = [
+      { key: 'desc',  w: usable - 56 - 36 - 88, label: 'Description', align: 'left' },
+      { key: 'unit',  w: 56, label: 'Unit',   align: 'center' },
+      { key: 'vat',   w: 36, label: 'VAT',    align: 'center' },
+      { key: 'amt',   w: 88, label: 'Amount', align: 'right' },
+    ];
   } else {
     cols = [
-      { key: 'desc', w: usableW - 280, label: 'Description / Mô tả', align: 'left' },
-      { key: 'price', w: 60, label: 'Unit price', align: 'right' },
-      { key: 'cbm', w: 50, label: 'CBM', align: 'right' },
-      { key: 'unit', w: 50, label: 'Unit', align: 'center' },
-      { key: 'vat', w: 40, label: 'VAT', align: 'center' },
-      { key: 'amount', w: 80, label: 'Amount', align: 'right' },
+      { key: 'desc',  w: usable - 60 - 50 - 56 - 36 - 88, label: 'Description', align: 'left' },
+      { key: 'price', w: 60, label: 'Unit Price', align: 'right' },
+      { key: 'cbm',   w: 50, label: 'CBM',    align: 'right' },
+      { key: 'unit',  w: 56, label: 'Unit',   align: 'center' },
+      { key: 'vat',   w: 36, label: 'VAT',    align: 'center' },
+      { key: 'amt',   w: 88, label: 'Amount', align: 'right' },
     ];
   }
 
+  // ─ Column headers (no fill, bottom-border only)
   const headerY = doc.y;
-  const rowH = 18;
-  doc.rect(left, headerY, usableW, rowH).fillAndStroke('#f3f4f6', '#888');
-  doc.fillColor('#000');
   let cx = left;
   for (const c of cols) {
-    doc.font('RB').fontSize(8).text(c.label, cx + 3, headerY + 5, { width: c.w - 6, align: c.align, lineBreak: false });
+    doc.font('RB').fontSize(FS.tableHeader).fillColor(COLOR.textMuted)
+      .text(c.label.toUpperCase(), cx + 4, headerY + 6, { width: c.w - 8, align: c.align, lineBreak: false });
     cx += c.w;
   }
-  doc.y = headerY + rowH;
+  // Bottom border of header row
+  hline(doc, left, headerY + HEAD_H, right, COLOR.borderStrong, 0.8);
+  doc.y = headerY + HEAD_H;
 
-  const totals = calcSectionTotals(rows, ctx);
+  // ─ Data rows (alternating row shading)
+  let rowIdx = 0;
   for (const r of ticked) {
     const rowY = doc.y;
     const amount = calcRowAmount(r, ctx);
     const currency = unitToCurrency(r.unit);
-    doc.moveTo(left, rowY + rowH).lineTo(right, rowY + rowH).lineWidth(0.3).strokeColor('#ddd').stroke();
-    doc.strokeColor('#000');
+
+    if (rowIdx % 2 === 0) {
+      doc.save().rect(left, rowY, usable, ROW_H).fill(COLOR.rowAlt).restore();
+    }
 
     cx = left;
     for (const c of cols) {
       let txt = '';
-      if (c.key === 'desc') txt = r.name || '';
-      else if (c.key === 'price') txt = r.price ? fmtAmount(parseNum(r.price), currency) : '';
-      else if (c.key === 'cbm') txt = r.cbm || '';
-      else if (c.key === 'unit') txt = r.unit || '';
+      let bold = false;
+      if (c.key === 'desc') { txt = r.name || ''; bold = true; }
+      else if (c.key === 'price') {
+        txt = r.price ? fmtAmount(parseNum(r.price), currency) : '';
+      }
+      else if (c.key === 'cbm') txt = r.cbm ? String(r.cbm) : '';
+      else if (c.key === 'unit') txt = unitShort(r.unit);
       else if (c.key === 'vat') txt = r.vat || '';
-      else if (c.key === 'amount') txt = amount > 0 ? `${fmtAmount(amount, currency)} ${currency}` : '';
+      else if (c.key === 'amt') {
+        txt = amount > 0 ? `${fmtAmount(amount, currency)} ${currency}` : '';
+        bold = true;
+      }
       else if (c.key.startsWith('cont-')) {
         const t = c.key.slice(5);
-        txt = r.price_by_cont?.[t] ? fmtAmount(parseNum(r.price_by_cont[t]), currency) : '';
+        const v = r.price_by_cont && r.price_by_cont[t];
+        txt = v ? fmtAmount(parseNum(v), currency) : '';
       }
-      doc.font('R').fontSize(8.5).fillColor('#000')
-        .text(txt, cx + 3, rowY + 5, { width: c.w - 6, align: c.align, lineBreak: false });
+      doc.font(bold ? 'RB' : 'R').fontSize(FS.tableCell).fillColor(COLOR.text)
+        .text(txt, cx + 4, rowY + 5, { width: c.w - 8, align: c.align, lineBreak: false });
       cx += c.w;
     }
-    doc.y = rowY + rowH;
+    // Thin row separator
+    hline(doc, left, rowY + ROW_H, right, COLOR.border, 0.3);
+    doc.y = rowY + ROW_H;
+    rowIdx++;
   }
 
+  // ─ Section subtotal rows (one per currency)
+  const totals = calcSectionTotals(rows, ctx);
   for (const cur of Object.keys(totals)) {
     const { subtotal, vat, total } = totals[cur];
-    const rowY = doc.y;
-    doc.rect(left, rowY, usableW, rowH).fillAndStroke('#fafafa', '#888');
-    doc.fillColor('#000').font('RB').fontSize(9)
-      .text(`Subtotal (${cur})`, left + 6, rowY + 5, { width: usableW - 90, align: 'right', lineBreak: false });
-    doc.text(`${fmtAmount(total, cur)} ${cur}`, right - 84, rowY + 5, { width: 80, align: 'right', lineBreak: false });
-    doc.y = rowY + rowH;
+    const subY = doc.y + 2;
+    // Subtotal row
+    doc.font('R').fontSize(FS.label).fillColor(COLOR.textMuted)
+      .text('Subtotal', left + 4, subY, { width: usable - 100, align: 'right', lineBreak: false });
+    doc.font('RB').fontSize(FS.body).fillColor(COLOR.text)
+      .text(`${fmtAmount(subtotal, cur)} ${cur}`, right - 96, subY, { width: 92, align: 'right', lineBreak: false });
+    doc.y = subY + 12;
     if (vat > 0) {
-      doc.font('RI').fontSize(7).fillColor('#666')
-        .text(`(Sub ${fmtAmount(subtotal, cur)} + VAT ${fmtAmount(vat, cur)})`, left + 6, doc.y, { width: usableW - 12, align: 'right' });
-      doc.fillColor('#000');
-      doc.moveDown(0.2);
+      const vatY = doc.y;
+      doc.font('R').fontSize(FS.label).fillColor(COLOR.textMuted)
+        .text('VAT', left + 4, vatY, { width: usable - 100, align: 'right', lineBreak: false });
+      doc.font('R').fontSize(FS.body).fillColor(COLOR.text)
+        .text(`${fmtAmount(vat, cur)} ${cur}`, right - 96, vatY, { width: 92, align: 'right', lineBreak: false });
+      doc.y = vatY + 12;
     }
+    // Section total (bold, top-border)
+    const totY = doc.y;
+    hline(doc, right - 200, totY, right, COLOR.borderStrong, 0.8);
+    doc.font('RB').fontSize(FS.body).fillColor(COLOR.text)
+      .text(`Section Total (${cur})`, left + 4, totY + 4, { width: usable - 100, align: 'right', lineBreak: false });
+    doc.font('RB').fontSize(FS.body + 0.5).fillColor(COLOR.brandDark)
+      .text(`${fmtAmount(total, cur)} ${cur}`, right - 96, totY + 4, { width: 92, align: 'right', lineBreak: false });
+    doc.y = totY + 16;
   }
-  doc.moveDown(0.4);
+  doc.moveDown(0.6);
+  resetPaint(doc);
   return { byCurrency: totals };
 }
 
+// ─── Section: grand total box ────────────────────────────────────────────
 function drawGrandTotal(doc, left, right, intlT, inlandT, opts) {
-  const usableW = right - left;
+  const usable = right - left;
   if (!opts.grand_total_currency) return;
+
   const grand = calcGrandTotal(intlT, inlandT, opts.grand_total_currency, opts.exchange_rate);
   if (grand == null) {
-    doc.font('RI').fontSize(9).fillColor('#d97706')
-      .text('⚠ Mixed currencies + no exchange rate → Grand Total chưa tính được', left, doc.y, { width: usableW });
-    doc.fillColor('#000');
+    doc.font('RI').fontSize(FS.body).fillColor('#B45309')
+      .text('Note: mixed currencies present and no FX rate set — Grand Total cannot be computed.',
+        left, doc.y, { width: usable });
+    doc.fillColor(COLOR.text);
     doc.moveDown(0.4);
     return;
   }
-  const y = doc.y;
-  doc.rect(left, y, usableW, 24).fillAndStroke('#fff7ed', '#ea580c');
-  doc.font('RB').fontSize(12).fillColor('#9a3412')
-    .text('GRAND TOTAL', left + 8, y + 6, { width: usableW / 2, align: 'left' });
-  doc.font('RB').fontSize(13).fillColor('#9a3412')
+
+  // Right-aligned grand total box
+  const boxW = 240;
+  const boxX = right - boxW;
+  const boxY = doc.y + 6;
+  const boxH = 36;
+  doc.save()
+    .rect(boxX, boxY, boxW, boxH)
+    .lineWidth(1.2).strokeColor(COLOR.brand).fillAndStroke(COLOR.totalBg, COLOR.brand)
+    .restore();
+  doc.font('RB').fontSize(FS.totalLabel).fillColor(COLOR.brandDark)
+    .text('GRAND TOTAL', boxX + 12, boxY + 8, { width: boxW - 24, align: 'left', lineBreak: false });
+  doc.font('RB').fontSize(FS.totalGrand).fillColor(COLOR.brandDark)
     .text(`${fmtAmount(grand, opts.grand_total_currency)} ${opts.grand_total_currency}`,
-      left + usableW / 2, y + 5, { width: usableW / 2 - 8, align: 'right' });
-  doc.fillColor('#000');
-  doc.y = y + 26;
-  doc.moveDown(0.4);
+      boxX + 12, boxY + 18, { width: boxW - 24, align: 'right', lineBreak: false });
+  doc.y = boxY + boxH + 4;
+  resetPaint(doc);
 }
 
+// ─── Section: notes + T&Cs + footer ──────────────────────────────────────
 function drawNotes(doc, left, right, notes) {
   if (!notes || !String(notes).trim()) return;
-  const usableW = right - left;
-  doc.font('RB').fontSize(10).text('Ghi chú / Notes:', left, doc.y, { width: usableW });
-  doc.moveDown(0.1);
-  doc.font('R').fontSize(9).text(String(notes), left, doc.y, { width: usableW });
-  doc.moveDown(0.4);
+  const usable = right - left;
+  doc.font('RB').fontSize(FS.label).fillColor(COLOR.textMuted)
+    .text('REMARKS  /  GHI CHÚ', left, doc.y, { width: usable });
+  doc.moveDown(0.2);
+  doc.font('R').fontSize(FS.body).fillColor(COLOR.text)
+    .text(String(notes), left, doc.y, { width: usable, lineGap: 2 });
+  doc.moveDown(0.6);
+  resetPaint(doc);
 }
 
-const EXCLUDING_FOOTER = [
-  '1. Store fee at Port, Demurrage fee, Loading/Unloading fee, Container detention fee, Customs Inspections fee, Customs Overtime fee, Insurance fee, TAX/VAT, Any Special fee.',
-  '2. Import Tax, VAT is not including',
-  '3. Above prices are based on present oil price and subject to change if oil price is increased.',
-  '4. Insurance Fee (0.3% of cargo value + 10%VAT), Any Special Fee, If Any',
-  '5. Valid: Effect from quotation until {valid_until}',
-  '6. Payment term: Within 30 days after the day of the cargo go into the board.',
+const TERMS = [
+  'Store fee at Port, Demurrage, Loading/Unloading, Container detention, Customs Inspection/Overtime, Insurance, TAX/VAT, and any special fees are EXCLUDED unless explicitly listed above.',
+  'Import Tax and VAT are not included.',
+  'Quoted prices are based on current oil/fuel index and may be revised if a fuel surcharge applies.',
+  'Insurance Fee (0.3 % of cargo value + 10 % VAT) — added on request.',
+  'Validity: effective from the quotation date until the “Valid Until” date above.',
+  'Payment term: within 30 days after the cargo is loaded on board (B/L on board date).',
 ];
 
-function drawFooter(doc, left, right, valid_until) {
-  const usableW = right - left;
+function drawTerms(doc, left, right, validUntil) {
+  const usable = right - left;
   doc.moveDown(0.4);
-  doc.font('RB').fontSize(8).text('Excluding Note:', left, doc.y, { width: usableW });
-  doc.font('R').fontSize(7.5);
-  for (const line of EXCLUDING_FOOTER) {
-    const out = line.replace('{valid_until}', valid_until ? fmtDate(valid_until) : '—');
-    doc.text(out, left, doc.y, { width: usableW });
+  doc.font('RB').fontSize(FS.label).fillColor(COLOR.textMuted)
+    .text('TERMS & CONDITIONS  /  ĐIỀU KHOẢN', left, doc.y, { width: usable });
+  doc.moveDown(0.2);
+  // Header underline
+  hline(doc, left, doc.y, right, COLOR.border, 0.5);
+  doc.moveDown(0.3);
+
+  doc.font('R').fontSize(FS.label + 0.5).fillColor(COLOR.text);
+  let i = 1;
+  for (const t of TERMS) {
+    const text = t.replace('“Valid Until” date above',
+      validUntil ? `“Valid Until” date above (${fmtDate(validUntil)})` : '“Valid Until” date above');
+    doc.text(`${i}.  ${text}`, left, doc.y, { width: usable, lineGap: 3, indent: 0 });
+    doc.moveDown(0.1);
+    i++;
   }
   doc.moveDown(0.4);
-  doc.font('RI').fontSize(9).text('Thank you for your cooperation.', left, doc.y, { width: usableW });
-  doc.font('R').fontSize(9).text('Best regards', left, doc.y, { width: usableW });
-  doc.font('RB').fontSize(9).text('SLB GLOBAL LOGISTICS', left, doc.y, { width: usableW });
+  resetPaint(doc);
+}
+
+function drawClosing(doc, left, right) {
+  const usable = right - left;
+  doc.moveDown(0.4);
+  hline(doc, left, doc.y, right, COLOR.border, 0.5);
+  doc.moveDown(0.4);
+  doc.font('RI').fontSize(FS.body).fillColor(COLOR.textMuted)
+    .text('Thank you for your cooperation.', left, doc.y, { width: usable });
+  doc.font('R').fontSize(FS.body).fillColor(COLOR.text)
+    .text('Best regards,', left, doc.y, { width: usable });
+  doc.font('RB').fontSize(FS.body + 0.5).fillColor(COLOR.brandDark)
+    .text('SLB GLOBAL LOGISTICS CO., LTD.', left, doc.y, { width: usable });
+  resetPaint(doc);
+}
+
+// ─── Page footer (page number + company) ─────────────────────────────────
+function drawPageFooter(doc) {
+  // Called once at the end; pdfkit doesn't trigger on auto-paginate without
+  // an event hook, so we paint a single-page footer here. Multi-page quotes
+  // are rare for this domain (single shipment quotes fit one page); if they
+  // grow longer, switch to doc.on('pageAdded', ...) and reuse this fn.
+  const left = doc.page.margins.left;
+  const right = doc.page.width - doc.page.margins.right;
+  const bottom = doc.page.height - 24;
+  doc.font('R').fontSize(FS.footer).fillColor(COLOR.textFaint)
+    .text('SLB GLOBAL LOGISTICS CO., LTD.   ·   www.slbglobal.com',
+      left, bottom, { width: right - left, align: 'left', lineBreak: false });
+  doc.font('R').fontSize(FS.footer).fillColor(COLOR.textFaint)
+    .text(`Page 1`, left, bottom, { width: right - left, align: 'right', lineBreak: false });
+  resetPaint(doc);
 }
 
 // ─── Main entry ──────────────────────────────────────────────────────────
 function buildSeaQuotePdf(opts) {
   return new Promise((resolve, reject) => {
     try {
-      const doc = new PDFDocument({ size: 'A4', margin: 36 });
+      const doc = new PDFDocument({ size: 'A4', margin: MARGIN });
       registerFonts(doc);
       const chunks = [];
       doc.on('data', c => chunks.push(c));
@@ -350,18 +493,35 @@ function buildSeaQuotePdf(opts) {
         containers: qd.containers || [],
       };
 
-      drawHeader(doc, left, right);
-      drawMeta(doc, left, right, {
-        customer_name: opts.customer_name,
-        pol: qd.pol, pod: qd.pod, term: qd.term,
-        cargo_type: ctx.cargo_type, containers: ctx.containers, shipment_cbm: qd.shipment_cbm,
-        valid_until: opts.valid_until, exchange_rate: opts.exchange_rate,
+      drawHeader(doc, left, right, {
+        quote_id: opts.quote_id,
+        quote_created_at: opts.quote_created_at,
+        valid_until: opts.valid_until,
       });
 
-      const intlOut = drawChargeSection(doc, left, right,
-        'INTERNATIONAL CHARGES / Phí quốc tế', qd.intl_charges || [], ctx);
-      const inlandOut = drawChargeSection(doc, left, right,
-        'INLAND CHARGES / Phí nội địa', qd.inland_charges || [], ctx);
+      drawPartiesRoute(doc, left, right, {
+        customer_name: opts.customer_name,
+        pol: qd.pol,
+        pod: qd.pod,
+        term: qd.term,
+        cargo_type: ctx.cargo_type,
+        containers: ctx.containers,
+        shipment_cbm: qd.shipment_cbm,
+        exchange_rate: opts.exchange_rate,
+      });
+
+      const intlOut = drawChargesSection(doc, left, right, {
+        title: 'INTERNATIONAL CHARGES',
+        subtitle: 'PHÍ QUỐC TẾ',
+        rows: qd.intl_charges || [],
+        ctx,
+      });
+      const inlandOut = drawChargesSection(doc, left, right, {
+        title: 'INLAND CHARGES',
+        subtitle: 'PHÍ NỘI ĐỊA',
+        rows: qd.inland_charges || [],
+        ctx,
+      });
 
       drawGrandTotal(doc, left, right, intlOut.byCurrency, inlandOut.byCurrency, {
         grand_total_currency: opts.grand_total_currency,
@@ -369,7 +529,9 @@ function buildSeaQuotePdf(opts) {
       });
 
       drawNotes(doc, left, right, qd.notes);
-      drawFooter(doc, left, right, opts.valid_until);
+      drawTerms(doc, left, right, opts.valid_until);
+      drawClosing(doc, left, right);
+      drawPageFooter(doc);
 
       doc.end();
     } catch (e) {
