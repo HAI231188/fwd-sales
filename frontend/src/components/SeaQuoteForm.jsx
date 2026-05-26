@@ -707,7 +707,11 @@ function ChargesTable({ rows, activeContTypes, defaultUnit, defaultVat, onPatch,
             <th style={TH_STYLE}>Chi phí</th>
             {isFcl ? (
               activeContTypes.length > 0
-                ? activeContTypes.map(t => <th key={t} style={TH_STYLE}>{t}</th>)
+                ? activeContTypes.map(t => (
+                    <th key={t} style={TH_STYLE} title={`Đơn giá / cont ${t}. Số lượng cont được nhập 1 lần ở phần Số lượng cont theo loại phía trên.`}>
+                      Đơn giá<br/><span style={{ fontWeight: 400, color: 'var(--text-2)' }}>{t}</span>
+                    </th>
+                  ))
                 : <th style={TH_STYLE}>Đơn giá (chưa chọn cont)</th>
             ) : (
               <>
@@ -801,7 +805,9 @@ function ChargesTable({ rows, activeContTypes, defaultUnit, defaultVat, onPatch,
         fontSize: 10.5, color: 'var(--text-3)', fontStyle: 'italic',
         marginTop: 4, paddingLeft: 4,
       }}>
-        Đơn giá theo từng dòng. VAT áp dụng theo từng loại phí (0% hoặc 8%). Line Total đã bao gồm VAT.
+        Cột {isFcl ? '20DC/40HC/…' : 'Đơn giá'} là <strong>đơn giá theo từng loại cont</strong>, không phải số lượng cont.
+        Số lượng cont nhập 1 lần ở phần "Số lượng cont theo loại" phía trên.
+        Net = đơn giá × số cont. VAT theo từng loại phí. Line Total đã bao gồm VAT.
       </div>
     </div>
   );

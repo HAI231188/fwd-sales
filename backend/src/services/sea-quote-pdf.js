@@ -173,11 +173,12 @@ function drawPartiesRoute(doc, left, right, opts) {
   let yR = doc.y + 2;
 
   // POL / POD rendered as separate labeled rows (no Unicode arrow).
-  // Earlier versions used "→" (U+2192) but PDFKit's font subset embedding
-  // sometimes drops the glyph → "□" garbage. Labeled rows are font-safe
-  // and read cleaner than a one-line "POL → POD" anyway.
-  const pol = (opts.pol || '').trim() || '—';
-  const pod = (opts.pod || '').trim() || '—';
+  // ASCII-safe fallback when empty: previous versions used "—" (em-dash,
+  // U+2014) which can itself fall outside PDFKit's embedded font subset
+  // and render as "□" — same class of glyph-coverage failure as the old
+  // "→" arrow. Stick to pure ASCII for placeholders.
+  const pol = (opts.pol || '').trim() || '(chua nhap)';
+  const pod = (opts.pod || '').trim() || '(chua nhap)';
 
   // Shared sub-meta helper: small grey label (80pt) + bold value
   const subLine = (label, value) => {
@@ -286,16 +287,28 @@ function drawChargesSection(doc, left, right, opts) {
   }
 
   // ─ Column headers (no fill, bottom-border only)
+  // Cont-type columns get a 2-line header so the customer reads them
+  // unambiguously as RATES per cont (not qty). Header row is sized to
+  // accommodate the taller cont-col labels.
+  const HEAD_H2 = 26;
   const headerY = doc.y;
   let cx = left;
   for (const c of cols) {
-    doc.font('RB').fontSize(FS.tableHeader).fillColor(COLOR.textMuted)
-      .text(c.label.toUpperCase(), cx + 4, headerY + 6, { width: c.w - 8, align: c.align, lineBreak: false });
+    const isContCol = c.key.startsWith('cont-');
+    if (isContCol) {
+      const contType = c.key.slice(5);
+      doc.font('R').fontSize(FS.label - 1).fillColor(COLOR.textFaint)
+        .text('RATE', cx + 4, headerY + 4, { width: c.w - 8, align: c.align, lineBreak: false });
+      doc.font('RB').fontSize(FS.tableHeader).fillColor(COLOR.textMuted)
+        .text(contType, cx + 4, headerY + 13, { width: c.w - 8, align: c.align, lineBreak: false });
+    } else {
+      doc.font('RB').fontSize(FS.tableHeader).fillColor(COLOR.textMuted)
+        .text(c.label.toUpperCase(), cx + 4, headerY + 10, { width: c.w - 8, align: c.align, lineBreak: false });
+    }
     cx += c.w;
   }
-  // Bottom border of header row
-  hline(doc, left, headerY + HEAD_H, right, COLOR.borderStrong, 0.8);
-  doc.y = headerY + HEAD_H;
+  hline(doc, left, headerY + HEAD_H2, right, COLOR.borderStrong, 0.8);
+  doc.y = headerY + HEAD_H2;
 
   // ─ Data rows (alternating row shading)
   let rowIdx = 0;
@@ -382,9 +395,11 @@ function drawChargesSection(doc, left, right, opts) {
     doc.y = totY + 16;
   }
 
-  // ─ Per-line VAT explainer (small grey italic)
+  // ─ Section explainer (small grey italic)
+  // Reinforces: cont-type columns are RATES, not qty. Qty lives in the
+  // CARGO line at the top. Net = rate × cargo qty.
   doc.font('RI').fontSize(FS.footer + 0.5).fillColor(COLOR.textFaint)
-    .text('Đơn giá theo từng dòng. VAT áp dụng theo từng loại phí (0% hoặc 8%). Line Total đã bao gồm VAT.',
+    .text('Cột RATE 20DC/40HC là đơn giá theo loại cont (số lượng cont xem dòng CARGO ở trên). Net = đơn giá × số cont. VAT theo từng loại phí. Line Total đã bao gồm VAT.',
       left, doc.y + 4, { width: usable, lineGap: 1 });
   doc.moveDown(0.6);
   resetPaint(doc);
