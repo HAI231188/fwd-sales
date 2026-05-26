@@ -172,30 +172,25 @@ function drawPartiesRoute(doc, left, right, opts) {
     .text('ROUTE  /  TUYẾN', rightX, top, { width: colW });
   let yR = doc.y + 2;
 
-  // POL → POD with a chunky arrow rendered as a separate label (not a glyph)
-  // so font-coverage issues never produce "□" garbage.
+  // POL / POD rendered as separate labeled rows (no Unicode arrow).
+  // Earlier versions used "→" (U+2192) but PDFKit's font subset embedding
+  // sometimes drops the glyph → "□" garbage. Labeled rows are font-safe
+  // and read cleaner than a one-line "POL → POD" anyway.
   const pol = (opts.pol || '').trim() || '—';
   const pod = (opts.pod || '').trim() || '—';
-  doc.font('RB').fontSize(FS.body + 1).fillColor(COLOR.text);
-  // Split into segments: "POL"  "→"  "POD" with controlled spacing.
-  const seg = (txt, x, w, opt) => doc.text(txt, x, yR, { width: w, lineBreak: false, ...opt });
-  // Compute widths so the layout flows like: HCM  →  Hamburg
-  const arrowLabel = '→'; // U+2192 RIGHTWARDS ARROW (works in Roboto)
-  // Build a single line; if arrow font-coverage fails, fall back to ASCII '>'.
-  // pdfkit will render the rightwards arrow with Roboto Regular cleanly.
-  doc.text(`${pol}   ${arrowLabel}   ${pod}`, rightX, yR, { width: colW, lineBreak: false });
-  yR = doc.y + 4;
 
-  // Sub-meta row inside ROUTE column
-  doc.font('R').fontSize(FS.label).fillColor(COLOR.textMuted);
+  // Shared sub-meta helper: small grey label (80pt) + bold value
   const subLine = (label, value) => {
-    if (!value) return;
+    if (value == null) return;
     doc.font('R').fontSize(FS.label).fillColor(COLOR.textMuted)
       .text(label, rightX, yR, { width: 80, lineBreak: false });
     doc.font('RB').fontSize(FS.body).fillColor(COLOR.text)
-      .text(value, rightX + 80, yR, { width: colW - 80, lineBreak: false });
+      .text(String(value), rightX + 80, yR, { width: colW - 80, lineBreak: false });
     yR = doc.y + 2;
   };
+
+  subLine('POL', pol);
+  subLine('POD', pod);
   if (opts.term) subLine('TERM', String(opts.term));
   // Cargo line: FCL list or LCL CBM
   let cargoDesc;

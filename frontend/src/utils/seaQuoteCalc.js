@@ -14,6 +14,14 @@ export function parseNum(v) {
   return Number.isFinite(n) ? n : 0;
 }
 
+// Prices and quantities in freight quotes are never negative. Defensive clamp:
+// guards old data that may have been entered before the form added min="0",
+// and ensures section totals always equal sum of displayed line nets.
+function nn(v) {
+  const n = parseNum(v);
+  return n > 0 ? n : 0;
+}
+
 export function unitToCurrency(unit) {
   if (!unit) return 'USD';
   const u = String(unit);
@@ -44,23 +52,23 @@ export function calcRowAmount(row, ctx) {
   if (basis === 'shipment') {
     if (ctx?.cargo_type === 'FCL') {
       const pbc = row.price_by_cont || {};
-      return Object.values(pbc).reduce((s, v) => s + parseNum(v), 0);
+      return Object.values(pbc).reduce((s, v) => s + nn(v), 0);
     }
-    return parseNum(row.price);
+    return nn(row.price);
   }
 
   if (ctx?.cargo_type === 'FCL') {
     const pbc = row.price_by_cont || {};
     let total = 0;
     for (const c of (ctx.containers || [])) {
-      const q = parseNum(c.qty);
-      if (q > 0) total += parseNum(pbc[c.type]) * q;
+      const q = nn(c.qty);
+      if (q > 0) total += nn(pbc[c.type]) * q;
     }
     return total;
   }
 
   // LCL
-  return parseNum(row.price) * parseNum(row.cbm);
+  return nn(row.price) * nn(row.cbm);
 }
 
 // Per-row VAT amount = net × (vat_pct / 100). vat string may be "8%" / "0%"

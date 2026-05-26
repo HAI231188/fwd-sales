@@ -737,7 +737,7 @@ function ChargesTable({ rows, activeContTypes, defaultUnit, defaultVat, onPatch,
                 {isFcl ? (
                   activeContTypes.length > 0 ? activeContTypes.map(t => (
                     <td key={t} style={TD_STYLE}>
-                      <input className="form-input" type="number"
+                      <input className="form-input" type="number" min="0" step="any"
                         value={r.price_by_cont?.[t] || ''}
                         onChange={e => onPatch(i, {
                           price_by_cont: { ...(r.price_by_cont || {}), [t]: e.target.value },
@@ -750,12 +750,12 @@ function ChargesTable({ rows, activeContTypes, defaultUnit, defaultVat, onPatch,
                 ) : (
                   <>
                     <td style={TD_STYLE}>
-                      <input className="form-input" type="number"
+                      <input className="form-input" type="number" min="0" step="any"
                         value={r.price || ''} onChange={e => onPatch(i, { price: e.target.value })}
                         style={CELL_INPUT} />
                     </td>
                     <td style={TD_STYLE}>
-                      <input className="form-input" type="number"
+                      <input className="form-input" type="number" min="0" step="any"
                         value={r.cbm || ''} onChange={e => onPatch(i, { cbm: e.target.value })}
                         style={CELL_INPUT} placeholder="—" />
                     </td>
