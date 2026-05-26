@@ -382,13 +382,19 @@ router.post('/quick-customer', requireAuth, async (req, res) => {
     await client.query(`UPDATE customers SET pipeline_id = $1 WHERE id = $2`, [pipelineId, customer.id]);
 
     // Insert quotes
+    // 2026-05-27 — propagate sea-quote v2 fields (quote_data + sibling columns).
+    // The earlier C1 edit only patched the POST `/` (full-report) path; this
+    // `/quick-customer` path was missed, causing every v2 save here to land
+    // with quote_data=NULL and render as a blank card in the thread.
     for (const q of quotes) {
       const { rows: qRows } = await client.query(`
         INSERT INTO quotes
           (customer_id, cargo_name, monthly_volume_cbm, monthly_volume_kg,
            monthly_volume_containers, route, cargo_ready_date, mode, carrier,
-           transit_time, price, status, follow_up_notes, lost_reason, closing_soon)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+           transit_time, price, status, follow_up_notes, lost_reason, closing_soon,
+           quote_data, valid_until, exchange_rate, grand_total_currency)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,
+                $16,$17,$18,$19)
         RETURNING id, status
       `, [
         customer.id, q.cargo_name || null,
@@ -398,6 +404,8 @@ router.post('/quick-customer', requireAuth, async (req, res) => {
         q.carrier || null, q.transit_time || null, q.price || null,
         q.status || 'quoting', q.follow_up_notes || null,
         q.lost_reason || null, q.closing_soon || false,
+        q.quote_data || null, q.valid_until || null,
+        q.exchange_rate || null, q.grand_total_currency || null,
       ]);
 
       if (qRows[0]?.status === 'booked') {
