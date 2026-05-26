@@ -20,6 +20,10 @@
 
 import { useState, useEffect } from 'react';
 import { generateSeaQuotePdf } from '../api';
+import {
+  parseNum, unitToCurrency, calcRowAmount, calcSectionTotals,
+  calcGrandTotal, fmtAmount,
+} from '../utils/seaQuoteCalc';
 
 const CONT_TYPES = ['20DC', '40DC', '40HC', '45HC', '20RF', '40RF'];
 const ZERO_QTY = () => Object.fromEntries(CONT_TYPES.map(t => [t, 0]));
@@ -51,74 +55,15 @@ const INTL_DEFAULT_VAT = '0%';
 const INLAND_DEFAULT_UNIT = 'VND/cont';
 const INLAND_DEFAULT_VAT = '10%';
 
-// ─── C2 calc helpers (2026-05-27) ─────────────────────────────────────────
-function parseNum(v) {
-  if (v === '' || v == null) return 0;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : 0;
-}
-function unitToCurrency(unit) {
-  if (!unit) return 'USD';
-  if (unit.startsWith('USD')) return 'USD';
-  if (unit.startsWith('VND')) return 'VND';
-  return 'USD';
-}
-// Amount calc per row.
-//   FCL: amount = SUM(price_by_cont[type] × qty[type]) across all active types.
-//   LCL: amount = price × cbm
-function calcRowAmount(row, ctx) {
-  if (!row || !row.ticked) return 0;
-  if (ctx.cargoType === 'FCL') {
-    const pbc = row.price_by_cont || {};
-    let total = 0;
-    for (const [type, qty] of Object.entries(ctx.contQty || {})) {
-      const q = parseNum(qty);
-      if (q > 0) total += parseNum(pbc[type]) * q;
-    }
-    return total;
-  }
-  // LCL
-  return parseNum(row.price) * parseNum(row.cbm);
-}
-// Section totals grouped by currency. Returns { USD: {subtotal,vat,total}, VND: {...} }.
-function calcSectionTotals(rows, ctx) {
-  const byCur = {};
-  for (const r of rows) {
-    if (!r.ticked) continue;
-    const amount = calcRowAmount(r, ctx);
-    const cur = unitToCurrency(r.unit);
-    const vatPct = parseNum((r.vat || '0').replace('%', '').replace(/[^\d.]/g, ''));
-    const vat = amount * vatPct / 100;
-    if (!byCur[cur]) byCur[cur] = { subtotal: 0, vat: 0, total: 0 };
-    byCur[cur].subtotal += amount;
-    byCur[cur].vat += vat;
-    byCur[cur].total += amount + vat;
-  }
-  return byCur;
-}
-// Grand total combining intl + inland → target currency. Needs exchange rate
-// if mixed currencies. Returns { total: number|null, needsRate: bool, mixed: bool }.
-function calcGrandTotal(intlTotals, inlandTotals, targetCurrency, exchangeRate) {
-  if (!targetCurrency) return { total: null, needsRate: false, mixed: false };
-  const currencies = new Set([...Object.keys(intlTotals), ...Object.keys(inlandTotals)]);
-  if (currencies.size === 0) return { total: 0, needsRate: false, mixed: false };
-  const rate = parseNum(exchangeRate);
-  const mixed = currencies.size > 1;
-  if (mixed && rate <= 0) return { total: null, needsRate: true, mixed: true };
-  let sum = 0;
-  for (const cur of currencies) {
-    const s = (intlTotals[cur]?.total || 0) + (inlandTotals[cur]?.total || 0);
-    if (cur === targetCurrency) sum += s;
-    else if (cur === 'USD' && targetCurrency === 'VND') sum += s * rate;
-    else if (cur === 'VND' && targetCurrency === 'USD') sum += s / rate;
-    else sum += s; // unknown currency — pass through (defensive)
-  }
-  return { total: sum, needsRate: false, mixed };
-}
-function fmtAmount(n, currency) {
-  if (n == null || !Number.isFinite(n)) return '—';
-  if (currency === 'VND') return Math.round(n).toLocaleString('vi-VN');
-  return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+// ─── Calc helpers moved to ../utils/seaQuoteCalc (2026-05-27) ────────────
+// Imported at top of file. Canonical ctx: {cargo_type, containers: [{type,qty}]}.
+
+// Build canonical containers array from contQty matrix (form internal state).
+function containersFromContQty(contQty) {
+  if (!contQty) return [];
+  return Object.entries(contQty)
+    .map(([type, qty]) => ({ type, qty: parseNum(qty) }))
+    .filter(c => c.qty > 0);
 }
 
 function buildIntlChargeRow(name, unit, vat) {
@@ -597,7 +542,7 @@ export default function SeaQuoteForm({ value, onChange, quoteId }) {
             defaultUnit={v.intl_default_unit}
             defaultVat={v.intl_default_vat}
             onPatch={patchIntlRow}
-            ctx={{ cargoType: v.cargo_type, contQty }}
+            ctx={{ cargo_type: v.cargo_type, containers: containersFromContQty(contQty) }}
           />
         )}
       </div>
@@ -627,7 +572,7 @@ export default function SeaQuoteForm({ value, onChange, quoteId }) {
             defaultUnit={v.inland_default_unit}
             defaultVat={v.inland_default_vat}
             onPatch={patchInlandRow}
-            ctx={{ cargoType: v.cargo_type, contQty }}
+            ctx={{ cargo_type: v.cargo_type, containers: containersFromContQty(contQty) }}
             activeContTypes={activeContTypes}
           />
         )}
@@ -652,10 +597,14 @@ export default function SeaQuoteForm({ value, onChange, quoteId }) {
 // the user's chosen target currency (USD/VND/none). Warns when mixed
 // currencies are present and exchange_rate is empty.
 function TotalsBox({ quote, contQty }) {
-  const ctx = { cargoType: quote.cargo_type, contQty };
+  const ctx = { cargo_type: quote.cargo_type, containers: containersFromContQty(contQty) };
   const intlT = calcSectionTotals(quote.intl_charges, ctx);
   const inlandT = calcSectionTotals(quote.inland_charges, ctx);
-  const grand = calcGrandTotal(intlT, inlandT, quote.grand_total_currency, quote.exchange_rate);
+  // calcGrandTotal returns number|null; derive presentational flags locally.
+  const currencies = new Set([...Object.keys(intlT), ...Object.keys(inlandT)]);
+  const mixed = currencies.size > 1;
+  const grandTotal = calcGrandTotal(intlT, inlandT, quote.grand_total_currency, quote.exchange_rate);
+  const needsRate = mixed && parseNum(quote.exchange_rate) <= 0 && !!quote.grand_total_currency;
   const anyTicked = quote.intl_charges.some(r => r.ticked) || quote.inland_charges.some(r => r.ticked);
   if (!anyTicked) return null;
 
@@ -705,24 +654,24 @@ function TotalsBox({ quote, contQty }) {
           Chọn tiền tệ tổng (USD/VND) để hiện Grand Total.
         </div>
       )}
-      {quote.grand_total_currency && grand.needsRate && (
+      {needsRate && (
         <div style={{ fontSize: 12, color: 'var(--warning)', fontWeight: 600, textAlign: 'right',
           padding: '6px 10px', background: 'rgba(217,119,6,0.10)', borderRadius: 6 }}>
-          ⚠ Vui lòng nhập tỷ giá để tính Grand Total ({Object.keys({ ...intlT, ...inlandT }).join(' + ')})
+          ⚠ Vui lòng nhập tỷ giá để tính Grand Total ({[...currencies].join(' + ')})
         </div>
       )}
-      {quote.grand_total_currency && grand.total != null && (
+      {quote.grand_total_currency && grandTotal != null && (
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
           <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', fontFamily: 'var(--font-display)' }}>
             GRAND TOTAL
-            {grand.mixed && (
+            {mixed && (
               <span style={{ fontSize: 10, fontWeight: 400, color: 'var(--text-3)', marginLeft: 6 }}>
                 (quy đổi tỷ giá 1 USD = {Number(quote.exchange_rate).toLocaleString('vi-VN')} VND)
               </span>
             )}
           </span>
           <span style={{ fontSize: 18, fontWeight: 700, color: 'var(--primary)', fontFamily: 'var(--font-display)' }}>
-            {fmtAmount(grand.total, quote.grand_total_currency)} {quote.grand_total_currency}
+            {fmtAmount(grandTotal, quote.grand_total_currency)} {quote.grand_total_currency}
           </span>
         </div>
       )}
@@ -749,7 +698,7 @@ const CELL_INPUT = { fontSize: 12, padding: '3px 6px', width: '100%', boxSizing:
 function ChargesTable({ rows, activeContTypes, defaultUnit, defaultVat, onPatch, ctx }) {
   const ticked = rows.map((r, i) => ({ r, i })).filter(x => x.r.ticked);
   if (!ticked.length) return null;
-  const isFcl = ctx.cargoType === 'FCL';
+  const isFcl = ctx.cargo_type === 'FCL';
   return (
     <div style={{ overflowX: 'auto', marginBottom: 8 }}>
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, background: '#fff', borderRadius: 6 }}>

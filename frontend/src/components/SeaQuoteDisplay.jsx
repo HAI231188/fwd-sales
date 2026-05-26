@@ -5,67 +5,11 @@
 
 import { useState } from 'react';
 import { generateSeaQuotePdf } from '../api';
+import {
+  parseNum, unitToCurrency, calcRowAmount, calcSectionTotals,
+  calcGrandTotal, fmtAmount,
+} from '../utils/seaQuoteCalc';
 
-function parseNum(v) {
-  if (v === '' || v == null) return 0;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : 0;
-}
-function unitToCurrency(unit) {
-  if (!unit) return 'USD';
-  if (unit.startsWith('USD')) return 'USD';
-  if (unit.startsWith('VND')) return 'VND';
-  return 'USD';
-}
-function calcRowAmount(row, ctx) {
-  if (!row || !row.ticked) return 0;
-  if (ctx.cargo_type === 'FCL') {
-    const pbc = row.price_by_cont || {};
-    let total = 0;
-    for (const c of (ctx.containers || [])) {
-      const q = parseNum(c.qty);
-      if (q > 0) total += parseNum(pbc[c.type]) * q;
-    }
-    return total;
-  }
-  return parseNum(row.price) * parseNum(row.cbm);
-}
-function calcSectionTotals(rows, ctx) {
-  const byCur = {};
-  for (const r of rows || []) {
-    if (!r.ticked) continue;
-    const amount = calcRowAmount(r, ctx);
-    const cur = unitToCurrency(r.unit);
-    const vatPct = parseNum(String(r.vat || '0').replace(/[^\d.]/g, ''));
-    const vat = amount * vatPct / 100;
-    if (!byCur[cur]) byCur[cur] = { subtotal: 0, vat: 0, total: 0 };
-    byCur[cur].subtotal += amount;
-    byCur[cur].vat += vat;
-    byCur[cur].total += amount + vat;
-  }
-  return byCur;
-}
-function calcGrandTotal(intlT, inlandT, target, rate) {
-  if (!target) return null;
-  const curs = new Set([...Object.keys(intlT), ...Object.keys(inlandT)]);
-  if (!curs.size) return 0;
-  const r = parseNum(rate);
-  let sum = 0;
-  for (const cur of curs) {
-    const s = (intlT[cur]?.total || 0) + (inlandT[cur]?.total || 0);
-    if (cur === target) sum += s;
-    else if (cur === 'USD' && target === 'VND' && r > 0) sum += s * r;
-    else if (cur === 'VND' && target === 'USD' && r > 0) sum += s / r;
-    else if (curs.size === 1) sum += s;
-    else return null;
-  }
-  return sum;
-}
-function fmtAmount(n, currency) {
-  if (n == null || !Number.isFinite(n) || n === 0) return '0';
-  if (currency === 'VND') return Math.round(n).toLocaleString('vi-VN');
-  return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
 function fmtDate(d) {
   if (!d) return '';
   try {
