@@ -85,28 +85,71 @@ export const EMPTY_SEA_QUOTE = {
 
 // ─── Shared sub-components ───────────────────────────────────────────────
 
-function TickGrid({ rows, onToggle }) {
+function TickGrid({ rows, onToggle, onEditCustomName, onDeleteCustom, onAddCustom }) {
   return (
     <div style={{
-      display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8,
       padding: 12, background: 'var(--bg)', borderRadius: 8,
       border: '1px solid var(--border)', marginBottom: 12,
     }}>
-      {rows.map((r, idx) => (
-        <label key={r.name} style={{
-          display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer',
-          padding: '6px 10px', borderRadius: 6, fontSize: 12, fontWeight: 500,
-          background: r.ticked ? 'rgba(59,130,246,0.12)' : 'transparent',
-          color: r.ticked ? '#1d4ed8' : 'var(--text-2)',
-          border: `1px solid ${r.ticked ? '#3b82f6' : 'transparent'}`,
-          transition: 'background 0.1s',
+      {/* Preset 4-col grid */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
+        {rows.map((r, idx) => r.custom ? null : (
+          <label key={`preset-${r.name}`} style={{
+            display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer',
+            padding: '6px 10px', borderRadius: 6, fontSize: 12, fontWeight: 500,
+            background: r.ticked ? 'rgba(59,130,246,0.12)' : 'transparent',
+            color: r.ticked ? '#1d4ed8' : 'var(--text-2)',
+            border: `1px solid ${r.ticked ? '#3b82f6' : 'transparent'}`,
+            transition: 'background 0.1s',
+          }}>
+            <input type="checkbox" checked={r.ticked}
+              onChange={() => onToggle(idx)}
+              style={{ width: 14, height: 14, cursor: 'pointer', accentColor: '#3b82f6' }} />
+            <span>{r.name}</span>
+          </label>
+        ))}
+      </div>
+
+      {/* Custom rows — full-width dashed cards with editable name + delete */}
+      {rows.some(r => r.custom) && (
+        <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {rows.map((r, idx) => r.custom ? (
+            <div key={`custom-${idx}`} style={{
+              display: 'flex', alignItems: 'center', gap: 8,
+              padding: '6px 10px', borderRadius: 6, fontSize: 12,
+              background: r.ticked ? 'rgba(59,130,246,0.08)' : '#fff',
+              border: `1px dashed ${r.ticked ? '#3b82f6' : 'var(--border)'}`,
+            }}>
+              <input type="checkbox" checked={r.ticked}
+                onChange={() => onToggle(idx)}
+                style={{ width: 14, height: 14, cursor: 'pointer', accentColor: '#3b82f6', flexShrink: 0 }} />
+              <input className="form-input" value={r.name}
+                onChange={e => onEditCustomName(idx, e.target.value)}
+                placeholder="Tên chi phí khác..."
+                style={{ flex: 1, fontSize: 12, padding: '3px 8px', minWidth: 0,
+                  color: r.ticked ? '#1d4ed8' : 'var(--text)', fontWeight: r.ticked ? 500 : 400 }} />
+              <button type="button"
+                onClick={() => onDeleteCustom(idx)}
+                title="Xóa chi phí này"
+                style={{ background: 'none', border: 'none', cursor: 'pointer',
+                  color: 'var(--danger)', fontSize: 14, padding: '2px 6px', flexShrink: 0 }}>
+                ✕
+              </button>
+            </div>
+          ) : null)}
+        </div>
+      )}
+
+      {/* Add-custom button */}
+      <button type="button" onClick={onAddCustom}
+        style={{
+          marginTop: 8, padding: '6px 12px', borderRadius: 6,
+          border: '1px dashed var(--primary)', background: 'transparent',
+          color: 'var(--primary)', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+          fontFamily: 'var(--font)',
         }}>
-          <input type="checkbox" checked={r.ticked}
-            onChange={() => onToggle(idx)}
-            style={{ width: 14, height: 14, cursor: 'pointer', accentColor: '#3b82f6' }} />
-          <span>{r.name}</span>
-        </label>
-      ))}
+        + Thêm chi phí khác
+      </button>
     </div>
   );
 }
@@ -224,6 +267,55 @@ export default function SeaQuoteForm({ value, onChange }) {
     onChange({
       ...v,
       inland_charges: v.inland_charges.map((r, i) => i === idx ? { ...r, ...patch } : r),
+    });
+  }
+
+  // ─── Custom-row management (2026-05-26) — { ...row, custom: true } flag
+  // distinguishes user-added rows from the preset 14/12. Custom rows are
+  // auto-ticked on add (per spec) so they immediately appear in the charge
+  // table below; the user fills in the name + amount.
+  function addCustomIntl() {
+    onChange({
+      ...v,
+      intl_charges: [
+        ...v.intl_charges,
+        { ...buildIntlChargeRow('', v.intl_default_unit, v.intl_default_vat),
+          custom: true, ticked: true },
+      ],
+    });
+  }
+  function addCustomInland() {
+    onChange({
+      ...v,
+      inland_charges: [
+        ...v.inland_charges,
+        { ...buildInlandChargeRow('', v.inland_default_unit, v.inland_default_vat),
+          custom: true, ticked: true },
+      ],
+    });
+  }
+  function editCustomIntlName(idx, name) {
+    onChange({
+      ...v,
+      intl_charges: v.intl_charges.map((r, i) => i === idx ? { ...r, name } : r),
+    });
+  }
+  function editCustomInlandName(idx, name) {
+    onChange({
+      ...v,
+      inland_charges: v.inland_charges.map((r, i) => i === idx ? { ...r, name } : r),
+    });
+  }
+  function deleteCustomIntl(idx) {
+    onChange({
+      ...v,
+      intl_charges: v.intl_charges.filter((_, i) => i !== idx),
+    });
+  }
+  function deleteCustomInland(idx) {
+    onChange({
+      ...v,
+      inland_charges: v.inland_charges.filter((_, i) => i !== idx),
     });
   }
 
@@ -373,7 +465,13 @@ export default function SeaQuoteForm({ value, onChange }) {
         <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 8, fontFamily: 'var(--font-display)' }}>
           🌐 Phí quốc tế (International Charges)
         </div>
-        <TickGrid rows={v.intl_charges} onToggle={toggleIntl} />
+        <TickGrid
+          rows={v.intl_charges}
+          onToggle={toggleIntl}
+          onEditCustomName={editCustomIntlName}
+          onDeleteCustom={deleteCustomIntl}
+          onAddCustom={addCustomIntl}
+        />
         <DefaultBar
           unitLabel="Đơn vị"
           unit={v.intl_default_unit}
@@ -397,7 +495,13 @@ export default function SeaQuoteForm({ value, onChange }) {
         <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 8, fontFamily: 'var(--font-display)' }}>
           🇻🇳 Phí nội địa (Inland Charges)
         </div>
-        <TickGrid rows={v.inland_charges} onToggle={toggleInland} />
+        <TickGrid
+          rows={v.inland_charges}
+          onToggle={toggleInland}
+          onEditCustomName={editCustomInlandName}
+          onDeleteCustom={deleteCustomInland}
+          onAddCustom={addCustomInland}
+        />
         <DefaultBar
           unitLabel="Đơn vị"
           unit={v.inland_default_unit}
