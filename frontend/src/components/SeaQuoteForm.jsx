@@ -22,7 +22,7 @@ import { useState, useEffect } from 'react';
 import { generateSeaQuotePdf } from '../api';
 import {
   parseNum, unitToCurrency, calcRowAmount, calcRowVat, calcRowTotal,
-  calcSectionTotals, calcGrandTotal, fmtAmount,
+  calcSectionTotals, calcGrandTotal, fmtAmount, formatVolume,
 } from '../utils/seaQuoteCalc';
 
 const CONT_TYPES = ['20DC', '40DC', '40HC', '45HC', '20RF', '40RF'];
@@ -453,6 +453,40 @@ export default function SeaQuoteForm({ value, onChange, quoteId }) {
           </div>
         </div>
       )}
+
+      {/* ─── VOLUME live readout (2026-05-27) ───
+          Shows the shipment scale in the same wording the PDF + display
+          card will print, so the user sees what the customer will see. */}
+      {(() => {
+        const volume = formatVolume({
+          cargo_type: v.cargo_type,
+          containers: v.cargo_type === 'FCL'
+            ? containersFromContQty(contQty)
+            : [],
+          shipment_cbm: v.shipment_cbm,
+        });
+        if (!volume) return null;
+        return (
+          <div style={{
+            padding: '10px 14px', marginBottom: 12,
+            background: 'var(--primary-dim)', border: '1px solid var(--primary)',
+            borderRadius: 8, display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap',
+          }}>
+            <span style={{
+              fontSize: 10, fontWeight: 700, color: 'var(--text-3)',
+              textTransform: 'uppercase', letterSpacing: '0.5px',
+            }}>
+              Volume / Khối lượng
+            </span>
+            <span style={{
+              fontSize: 15, fontWeight: 700, color: 'var(--primary)',
+              fontFamily: 'var(--font-display)',
+            }}>
+              {volume}
+            </span>
+          </div>
+        );
+      })()}
 
       {/* ─── Term pills + custom ─── */}
       <div className="form-group" style={{ marginBottom: 12 }}>

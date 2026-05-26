@@ -119,6 +119,24 @@ function fmtAmount(n, currency) {
   return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+// Shipment volume in human-readable form. FCL shows the cont-qty breakdown
+// plus a total count; LCL shows the total CBM. Returns '' when nothing has
+// been entered yet so callers can skip rendering.
+function formatVolume(qd) {
+  if (!qd) return '';
+  if (qd.cargo_type === 'LCL') {
+    const cbm = parseNum(qd.shipment_cbm);
+    if (cbm <= 0) return '';
+    const shown = cbm % 1 === 0 ? String(Math.round(cbm)) : String(cbm);
+    return `${shown} CBM`;
+  }
+  const conts = (qd.containers || []).filter(c => parseNum(c.qty) > 0);
+  if (!conts.length) return '';
+  const parts = conts.map(c => `${c.qty} × ${c.type}`);
+  const totalCont = conts.reduce((s, c) => s + parseNum(c.qty), 0);
+  return `${parts.join(' + ')}  (${totalCont} cont)`;
+}
+
 function unitShort(unit) {
   if (!unit) return '';
   return String(unit)
@@ -139,5 +157,6 @@ module.exports = {
   calcSectionTotals,
   calcGrandTotal,
   fmtAmount,
+  formatVolume,
   unitShort,
 };

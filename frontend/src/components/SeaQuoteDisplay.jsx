@@ -7,7 +7,7 @@ import { useState } from 'react';
 import { generateSeaQuotePdf } from '../api';
 import {
   parseNum, unitToCurrency, calcRowAmount, calcRowVat, calcRowTotal,
-  calcSectionTotals, calcGrandTotal, fmtAmount,
+  calcSectionTotals, calcGrandTotal, fmtAmount, formatVolume,
 } from '../utils/seaQuoteCalc';
 
 function fmtDate(d) {
@@ -63,7 +63,7 @@ export default function SeaQuoteDisplay({ quote }) {
           </span>
         )}
         <span style={{ fontSize: 11, padding: '1px 8px', borderRadius: 8, background: '#f3f4f6', color: '#374151', fontWeight: 600 }}>
-          {ctx.cargo_type}: {cargoLine}
+          {ctx.cargo_type}
         </span>
         <button type="button" onClick={handlePdf} disabled={pdfBusy}
           style={{
@@ -75,6 +75,32 @@ export default function SeaQuoteDisplay({ quote }) {
           {pdfBusy ? '⏳' : '📄 PDF'}
         </button>
       </div>
+
+      {(() => {
+        const volume = formatVolume(qd);
+        if (!volume) return null;
+        return (
+          <div style={{
+            marginTop: 4, marginBottom: 8,
+            padding: '6px 10px', background: 'var(--primary-dim)',
+            border: '1px solid var(--primary)', borderRadius: 6,
+            display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap',
+          }}>
+            <span style={{
+              fontSize: 9.5, fontWeight: 700, color: 'var(--text-3)',
+              textTransform: 'uppercase', letterSpacing: '0.4px',
+            }}>
+              Volume / Khối lượng
+            </span>
+            <span style={{
+              fontSize: 13, fontWeight: 700, color: 'var(--primary)',
+              fontFamily: 'var(--font-display)',
+            }}>
+              {volume}
+            </span>
+          </div>
+        );
+      })()}
 
       <ChargeBlock title="Phí quốc tế" rows={tickedIntl} ctx={ctx} totals={intlT} />
       <ChargeBlock title="Phí nội địa" rows={tickedInland} ctx={ctx} totals={inlandT} />

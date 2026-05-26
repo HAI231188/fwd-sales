@@ -14,7 +14,7 @@ const fs = require('fs');
 
 const {
   parseNum, unitToCurrency, calcRowAmount, calcRowVat, calcRowTotal,
-  calcSectionTotals, calcGrandTotal, fmtAmount, unitShort,
+  calcSectionTotals, calcGrandTotal, fmtAmount, formatVolume, unitShort,
 } = require('../utils/seaQuoteCalc.cjs');
 
 // ─── Assets ──────────────────────────────────────────────────────────────
@@ -193,16 +193,24 @@ function drawPartiesRoute(doc, left, right, opts) {
   subLine('POL', pol);
   subLine('POD', pod);
   if (opts.term) subLine('TERM', String(opts.term));
-  // Cargo line: FCL list or LCL CBM
-  let cargoDesc;
-  if (opts.cargo_type === 'LCL') {
-    cargoDesc = `LCL  ·  ${opts.shipment_cbm || 0} CBM`;
-  } else {
-    const conts = (opts.containers || []).filter(c => parseNum(c.qty) > 0)
-      .map(c => `${c.qty} × ${c.type}`).join(',  ');
-    cargoDesc = `FCL  ·  ${conts || '— no containers —'}`;
+  // CARGO line — just the cargo type (FCL / LCL). VOLUME below carries
+  // the actual quantities so the same numbers don't appear twice.
+  subLine('CARGO', String(opts.cargo_type || 'FCL'));
+
+  // VOLUME row — most prominent meta value (larger + brand color).
+  const volumeStr = formatVolume({
+    cargo_type: opts.cargo_type,
+    containers: opts.containers,
+    shipment_cbm: opts.shipment_cbm,
+  });
+  if (volumeStr) {
+    doc.font('R').fontSize(FS.label).fillColor(COLOR.textMuted)
+      .text('VOLUME', rightX, yR, { width: 80, lineBreak: false });
+    doc.font('RB').fontSize(FS.body + 2).fillColor(COLOR.brandDark)
+      .text(volumeStr, rightX + 80, yR - 1, { width: colW - 80, lineBreak: false });
+    yR = doc.y + 3;
   }
-  subLine('CARGO', cargoDesc);
+
   if (opts.exchange_rate) {
     subLine('FX RATE', `1 USD = ${Number(opts.exchange_rate).toLocaleString('en-US')} VND`);
   }
