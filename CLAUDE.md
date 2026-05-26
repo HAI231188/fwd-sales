@@ -743,6 +743,83 @@ Applies to: `checkAndCompleteJob` (current). General rule: any function found de
 
 ---
 
+### L25 — DD completion split: `dd_completed_at` separates DD-done from job-done
+
+**Architecture change (2026-05-24).** DD's "TH ngày giờ" no longer stamps `jobs.completed_at` directly. Whole-job completion is now derived from CUS+DD+OPS all done via `checkAndCompleteJob`, which is now alive for all 3 service_types (was dead for truck/both due to circular `truckDone='hoan_thanh'`).
+
+**Schema** (`jobs` table, `schema.sql:778-799`):
+- `jobs.dd_completed_at TIMESTAMPTZ NULL` — DD's "TH ngày giờ" stamp.
+- `jobs.dd_completed_by INT FK users(id) ON DELETE SET NULL` — acting DD user.
+- `idx_jobs_dd_completed_at` partial index `WHERE dd_completed_at IS NOT NULL AND deleted_at IS NULL`.
+- Backfill UPDATE: 23 historical truck/both completed jobs got `dd_completed_at = completed_at` so `get_truck_booking_status` keeps returning the right state and DD's "Hoàn thành" tab still includes them.
+
+**`get_truck_booking_status` new state** (`schema.sql:875+`):
+- `'hoan_thanh'` UNCHANGED — still driven by `jobs.completed_at IS NOT NULL` (whole-job done; KT/Sales/CUS/OPS/TP all rely on this).
+- NEW `'dd_da_xong'` — `dd_completed_at IS NOT NULL AND completed_at IS NULL` (DD finished, job still pending CUS/OPS). Frontend label "DD đã xong" (teal). This makes `truckDone` reachable for pending truck/both jobs — was previously structurally false.
+
+**`checkAndCompleteJob` revival** (`services/job-completion.js`):
+- `truckDone = ['dd_da_xong', 'hoan_thanh'].includes(j.truck_booking_status)` — no longer circular.
+- Function now handles all 3 service_types: `tk` → tkDone; `truck` → truckDone; `both` → tkDone && truckDone; plus `checkOpsTasksDone` for HP.
+- Auto-flips `jobs.status='completed'` + `completed_at=NOW()` only when ALL required depts are done.
+
+**`PUT /api/jobs/:id` body `{completed_at: <ts>}`** (`routes/jobs.js:1806-1900` area):
+- Now stamps `dd_completed_at + dd_completed_by` (NOT `completed_at + status`).
+- Guards #1-4 kept (DD prerequisites: `truck_booking_status` reached, per-booking ticks, OPS tasks done).
+- After UPDATE, calls `checkAndCompleteJob` — which may or may not flip jobs.completed_at depending on CUS+OPS state.
+- Response shape includes `{ dd_completed: bool, job_completed: bool }` so frontend picks the right toast ("Job hoàn thành" vs "Đã chốt TH — chờ CUS/OPS").
+- Uncomplete (body `completed_at: null`): clears `dd_completed_at + dd_completed_by`; does NOT touch `jobs.status/completed_at` (don't auto-uncomplete policy, matches CUS/OPS un-tick).
+
+**Companion: per-task OPS gate (PUT guard #4)** — `services/job-completion.js` exports `checkOpsTasksDone(client, jobId) → {ready, missing}`. Used by BOTH `checkAndCompleteJob` (auto path, tk) AND PUT `/:id` (DD path, truck/both). Single source of truth for per-task OPS done predicate. Returns `OPS_TASKS_INCOMPLETE` 400 with Vietnamese reasons.
+
+**Other dashboards unchanged.** CUS/OPS/TP/Sales/KT all still read `jobs.status='completed'` or `jobs.completed_at` — semantics preserved. Only DD's dashboard and `get_truck_booking_status` callers see the new state.
+
+**Rules:**
+1. Whenever you add a dept-level completion stamp, mirror this pattern: separate `*_completed_at` + `*_completed_by` on `jobs`, plus a state in `get_truck_booking_status` (or analogous derived function) if it affects truck progression.
+2. Don't conflate "this dept finished" with "the whole job finished". The two are different signals; downstream consumers (Sales revenue-tick, KT lifecycle) key off whole-job.
+3. The 23 historical backfill is one-shot and idempotent — re-running the migration block on container boot is safe.
+
+### L26 — Per-dept status columns + tab filters (cross-dashboard pattern)
+
+**Owner spec (2026-05-25):** each dashboard's "Trạng thái" column reflects ONLY that dept's scope, and the tab filter partitions by that dept's own done-state — NOT by `jobs.status`.
+
+**Per-dept scope:**
+- **OPS**: own work only (cost TQ, đổi lệnh, cost ĐL). 2 khu — Khu 1 (TQ+ĐL for tk/both HP) reads `tk_status + thong_quan cost`; Khu 2 (ĐL for any HP) reads `doi_lenh completed + cost`. No "Chờ" column (OPS doesn't wait on anyone).
+- **DD**: own work + CUS thông quan? + OPS đổi lệnh? (no cost detail). Pill upgraded to split `du_xe_cho_giao` into sub-states by tick aggregates. "Chờ" column shows blockers. 2026-05-25: "Đã có KH xe" / "Chưa có KH xe" sub-tabs removed — only "Đang làm" / "Hoàn thành" remain.
+- **CUS**: own work + (TK job → OPS xong?) or (TK+Truck → DD xong?) — just done/not-done, no detail. "Chờ" column shows downstream waits.
+- **TP**: all depts in detail, BP xong ẩn đi. Up to 3 stacked lines per job (CUS/DD/OPS); all done → "Hoàn thành" (green). No "Chờ" column (TP sees all detail).
+
+**Tab filter pattern (frontend-only partition):**
+- "Đang làm" = at least one BP in this dept's scope pending.
+- "Hoàn thành" = this dept's own scope fully done (merge `pendingJobs.filter(cusIsDone/etc) ∪ completedJobs.filter(isMyJob)` to cover the race window between last tick and auto-flip).
+- Scope to dept's `service_type` filter (DD: truck/both; CUS: tk/both; OPS: HP; TP: all).
+- No new backend tab params — backend GET tabs (`pending`/`completed`) unchanged; partition happens in the dashboard component.
+
+**Shared helpers location:**
+- `ddPillInfo(j)` + `ddPillStyle(info, fallbackStatus)` extracted to `frontend/src/utils/truckBookingStatus.js` — imported by DD + TP (TP reuses the label string for its DD-line).
+- Each dashboard has its OWN dept-status helpers (`cusStatusInfo` + `cusWaitingStatus` + `cusIsDone` in `LogDashboardCus.jsx`; `opsStatusKhu1` + `opsStatusKhu2` + `opsKhu1Done` + `opsKhu2Done` + `opsAllRequiredDone` in `LogDashboardOps.jsx`; `tpStatusLines` + `TpStatusCell` in `LogDashboardTP.jsx`; `waitingStatus` for DD's "Chờ" column in `LogDashboardDieuDo.jsx`).
+
+**GET `/api/jobs` projection additions (CP6.1 aggregates):**
+```
+bookings_total_alive          INT  -- COUNT(*) alive truck_bookings for this job
+bookings_with_invoice_lifting INT  -- with invoice_lifting_ticked=TRUE
+bookings_with_cost_entered    INT  -- with cost_entered_ticked=TRUE
+```
+Used by `ddPillInfo` to split `du_xe_cho_giao` into "chưa tick nâng hạ" / "chưa nhập cost HT" / "đủ tick — chưa nhập TH ngày giờ" sub-states.
+
+**Rules:**
+1. When adding a status column to a dashboard, define the helper at module level in that file (or extract to `utils/` if 2+ dashboards reuse it).
+2. Keep the tab filter as a frontend partition. Don't proliferate backend tab modes — backend stays `pending`/`completed`/etc. The dept-scope is dashboard concern.
+3. Per L9 + L10: each dashboard column has both a desktop `<td>` and a mobile equivalent in `renderMobileCard`. Cell count must match column array length; mismatch = visual misalignment.
+4. If a column reads a field not yet in GET projection, add the SELECT first; don't ship a column that renders `undefined`.
+
+---
+
+### Note — KT user `ketoan_cong_no` (id=2965)
+
+`role='ke_toan'`. Username `ketoan_cong_no` (renamed from `ketoan_test` on 2026-05-25). Name "Kế Toán Công Nợ". The first real KT user. Password reset to a known temporary on the same date — owner to rotate.
+
+---
+
 ## 6. Session Start Checklist
 
 1. Read this file.
