@@ -5,6 +5,7 @@ import toast from 'react-hot-toast';
 import { updateQuote, deleteQuote } from '../api';
 import QuoteForm, { EMPTY_QUOTE } from './QuoteForm';
 import CustomerDetailModal from './CustomerDetailModal';
+import SeaQuoteDisplay from './SeaQuoteDisplay';
 import { useModalZIndex } from '../hooks/useModalZIndex';
 
 const MODE_ICON = { sea: '🚢', air: '✈️', road: '🚛' };
@@ -64,6 +65,7 @@ function OptionsTable({ price, carrier }) {
 
 function QuoteCard({ q, canEdit, onEdit, onDelete }) {
   const closingSoon = q.closing_soon;
+  const isV2 = q.quote_data?.version === 2;
   return (
     <div
       className={closingSoon ? 'closing-soon-glow' : ''}
@@ -79,15 +81,20 @@ function QuoteCard({ q, canEdit, onEdit, onDelete }) {
           <span className={`badge ${MODE_CLASS[q.mode]}`}>{MODE_ICON[q.mode]} {q.mode?.toUpperCase()}</span>
           <span className={`badge ${STATUS_CLASS[q.status]}`}>{STATUS_LABEL[q.status]}</span>
           {q.closing_soon && <span className="badge badge-warning">⚡ Sắp chốt</span>}
+          {isV2 && <span className="badge" style={{ background: '#dbeafe', color: '#1d4ed8' }}>v2 biển</span>}
         </div>
         {canEdit && (
           <div style={{ display: 'flex', gap: 6 }}>
-            <button
-              type="button"
-              className="btn btn-ghost btn-sm"
-              onClick={() => onEdit(q)}
-              style={{ fontSize: 12, padding: '4px 10px' }}
-            >✏️ Sửa</button>
+            {/* v2 quotes are edited from the customer thread (CustomerDetailModal),
+                not via the legacy EditQuoteModal — hide the Edit button here. */}
+            {!isV2 && (
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                onClick={() => onEdit(q)}
+                style={{ fontSize: 12, padding: '4px 10px' }}
+              >✏️ Sửa</button>
+            )}
             <button
               type="button"
               className="btn btn-danger btn-sm"
@@ -131,7 +138,7 @@ function QuoteCard({ q, canEdit, onEdit, onDelete }) {
         )}
       </div>
 
-      <OptionsTable price={q.price} carrier={q.carrier} />
+      {isV2 ? <SeaQuoteDisplay quote={q} /> : <OptionsTable price={q.price} carrier={q.carrier} />}
 
       {q.follow_up_notes && (
         <div style={{ fontSize: 12, color: 'var(--text-2)', marginTop: 4, fontStyle: 'italic' }}>

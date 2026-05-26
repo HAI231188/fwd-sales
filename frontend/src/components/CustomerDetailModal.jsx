@@ -5,6 +5,7 @@ import { format, differenceInDays } from 'date-fns';
 import { getPipelineDetail, updateQuote, quickAddCustomer, addInteractionUpdate, updateCustomer, markUpdateComplete, undoUpdateComplete, markCustomerFollowUpComplete } from '../api';
 import QuoteForm, { EMPTY_QUOTE } from './QuoteForm';
 import SeaQuoteForm, { EMPTY_SEA_QUOTE } from './SeaQuoteForm';
+import SeaQuoteDisplay from './SeaQuoteDisplay';
 import toast from 'react-hot-toast';
 import { useModalZIndex } from '../hooks/useModalZIndex';
 
@@ -167,6 +168,111 @@ function QuoteEditForm({ quote, pipelineId, onDone }) {
           disabled={mutation.isPending}
           style={{ fontSize: 12, padding: '6px 14px', borderRadius: 6, border: 'none', background: 'var(--primary)', color: '#fff', cursor: 'pointer', fontFamily: 'var(--font)', fontWeight: 600, opacity: mutation.isPending ? 0.7 : 1 }}
         >
+          {mutation.isPending ? 'Đang lưu...' : 'Lưu'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// C4 (2026-05-26) — edit existing v2 sea-freight quote.
+// Pre-fills SeaQuoteForm from quote.quote_data; PUT sends the full v2 payload.
+function SeaQuoteV2EditForm({ quote, pipelineId, onDone }) {
+  const qc = useQueryClient();
+  const [data, setData] = useState(() => quote.quote_data || EMPTY_SEA_QUOTE);
+  const [status, setStatus] = useState(quote.status || 'quoting');
+  const [notes, setNotes] = useState(quote.follow_up_notes || '');
+  const [validUntil, setValidUntil] = useState(quote.valid_until ? String(quote.valid_until).slice(0, 10) : '');
+  const [exchangeRate, setExchangeRate] = useState(quote.exchange_rate || '');
+  const [grandCur, setGrandCur] = useState(quote.grand_total_currency || data.grand_total_currency || '');
+
+  const mutation = useMutation({
+    mutationFn: () => updateQuote(quote.id, {
+      status,
+      follow_up_notes: notes,
+      quote_data: { ...data, version: 2, mode: 'sea', grand_total_currency: grandCur },
+      valid_until: validUntil || null,
+      exchange_rate: exchangeRate || null,
+      grand_total_currency: grandCur || null,
+    }),
+    onSuccess: () => {
+      toast.success('Đã cập nhật báo giá biển');
+      qc.invalidateQueries({ queryKey: ['pipeline-detail', pipelineId] });
+      onDone();
+    },
+    onError: () => toast.error('Cập nhật thất bại'),
+  });
+
+  return (
+    <div style={{ background: '#f0f7ff', border: '1px solid #bfdbfe', borderRadius: 8, padding: '12px 14px', marginTop: 8 }}>
+      <SeaQuoteForm value={data} onChange={setData} quoteId={quote.id} />
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginTop: 10 }}>
+        <div>
+          <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.4px', display: 'block', marginBottom: 4 }}>
+            Trạng thái
+          </label>
+          <select value={status} onChange={e => setStatus(e.target.value)}
+            style={{ fontSize: 13, padding: '6px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text)', width: '100%', fontFamily: 'var(--font)' }}>
+            <option value="quoting">Nhận thông tin check giá</option>
+            <option value="follow_up">Báo giá follow</option>
+            <option value="booked">Đã Booking</option>
+            <option value="lost">Lost</option>
+          </select>
+        </div>
+        <div>
+          <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.4px', display: 'block', marginBottom: 4 }}>
+            Hiệu lực đến
+          </label>
+          <input type="date" value={validUntil} onChange={e => setValidUntil(e.target.value)}
+            style={{ fontSize: 13, padding: '6px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text)', width: '100%', fontFamily: 'var(--font)' }} />
+        </div>
+        <div>
+          <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.4px', display: 'block', marginBottom: 4 }}>
+            Tỷ giá (USD→VND)
+          </label>
+          <input type="number" value={exchangeRate} onChange={e => setExchangeRate(e.target.value)}
+            placeholder="VD: 25000"
+            style={{ fontSize: 13, padding: '6px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text)', width: '100%', fontFamily: 'var(--font)' }} />
+        </div>
+      </div>
+
+      <div style={{ marginTop: 10 }}>
+        <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.4px', display: 'block', marginBottom: 4 }}>
+          Đồng tiền Grand Total
+        </label>
+        <div style={{ display: 'flex', gap: 6 }}>
+          {['', 'USD', 'VND'].map(c => (
+            <button key={c || 'none'} type="button"
+              onClick={() => setGrandCur(c)}
+              className="btn btn-sm"
+              style={{
+                flex: 1,
+                background: grandCur === c ? 'var(--primary)' : 'transparent',
+                color: grandCur === c ? '#fff' : 'var(--text-2)',
+                border: `1px solid ${grandCur === c ? 'var(--primary)' : 'var(--border)'}`,
+                fontSize: 12,
+              }}>{c || 'Không hiện'}</button>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ marginTop: 10 }}>
+        <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.4px', display: 'block', marginBottom: 4 }}>
+          Ghi chú follow up
+        </label>
+        <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2}
+          placeholder="Tình trạng theo dõi..."
+          style={{ fontSize: 13, padding: '6px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text)', width: '100%', fontFamily: 'var(--font)', resize: 'vertical', boxSizing: 'border-box' }} />
+      </div>
+
+      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
+        <button type="button" onClick={onDone}
+          style={{ fontSize: 12, padding: '6px 14px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-2)', cursor: 'pointer', fontFamily: 'var(--font)' }}>
+          Hủy
+        </button>
+        <button type="button" onClick={() => mutation.mutate()} disabled={mutation.isPending}
+          style={{ fontSize: 12, padding: '6px 14px', borderRadius: 6, border: 'none', background: 'var(--primary)', color: '#fff', cursor: 'pointer', fontFamily: 'var(--font)', fontWeight: 600, opacity: mutation.isPending ? 0.7 : 1 }}>
           {mutation.isPending ? 'Đang lưu...' : 'Lưu'}
         </button>
       </div>
@@ -1131,7 +1237,8 @@ export default function CustomerDetailModal({ pipelineId, onClose }) {
                               Báo giá ({c.quotes.length})
                             </div>
                             {c.quotes.map(q => {
-                              const opts = parseOptions(q.price, q.carrier).filter(o => o.carrier || o.price);
+                              const isV2 = q.quote_data?.version === 2;
+                              const opts = isV2 ? [] : parseOptions(q.price, q.carrier).filter(o => o.carrier || o.price);
                               const sc = STATUS_COLOR[q.status] || '#6b7280';
                               const isEditing = editingQuoteId === q.id;
                               return (
@@ -1161,8 +1268,9 @@ export default function CustomerDetailModal({ pipelineId, onClose }) {
                                       </button>
                                     </div>
                                   </div>
-                                  {q.route && <div style={{ fontSize: 12, color: 'var(--text-2)', marginBottom: 4 }}>📍 {q.route}</div>}
-                                  {!isEditing && (
+                                  {q.route && !isV2 && <div style={{ fontSize: 12, color: 'var(--text-2)', marginBottom: 4 }}>📍 {q.route}</div>}
+                                  {!isEditing && isV2 && <SeaQuoteDisplay quote={q} />}
+                                  {!isEditing && !isV2 && (
                                     <>
                                       {opts.length > 0 && (
                                         <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
@@ -1192,7 +1300,14 @@ export default function CustomerDetailModal({ pipelineId, onClose }) {
                                       )}
                                     </>
                                   )}
-                                  {isEditing && (
+                                  {isEditing && isV2 && (
+                                    <SeaQuoteV2EditForm
+                                      quote={q}
+                                      pipelineId={pipelineId}
+                                      onDone={() => setEditingQuoteId(null)}
+                                    />
+                                  )}
+                                  {isEditing && !isV2 && (
                                     <QuoteEditForm
                                       quote={q}
                                       pipelineId={pipelineId}
