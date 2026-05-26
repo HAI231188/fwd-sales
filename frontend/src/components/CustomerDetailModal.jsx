@@ -1238,7 +1238,12 @@ export default function CustomerDetailModal({ pipelineId, onClose }) {
                             </div>
                             {c.quotes.map(q => {
                               const isV2 = q.quote_data?.version === 2;
-                              const opts = isV2 ? [] : parseOptions(q.price, q.carrier).filter(o => o.carrier || o.price);
+                              // 2026-05-27 — v2-shape-without-data fingerprint.
+                              // Saved on the buggy /quick-customer path before commit
+                              // 949b3ed dropped quote_data on the floor. Show a friendly
+                              // notice instead of an empty card; data is unrecoverable.
+                              const isV2Orphan = !isV2 && q.mode === 'sea' && !q.cargo_name && !q.quote_data;
+                              const opts = (isV2 || isV2Orphan) ? [] : parseOptions(q.price, q.carrier).filter(o => o.carrier || o.price);
                               const sc = STATUS_COLOR[q.status] || '#6b7280';
                               const isEditing = editingQuoteId === q.id;
                               return (
@@ -1252,25 +1257,36 @@ export default function CustomerDetailModal({ pipelineId, onClose }) {
                                       <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 8, background: sc + '18', color: sc }}>
                                         {STATUS_LABEL[q.status] || q.status}
                                       </span>
-                                      <button
-                                        type="button"
-                                        onClick={() => setEditingQuoteId(isEditing ? null : q.id)}
-                                        style={{
-                                          fontSize: 11, padding: '3px 10px', borderRadius: 6,
-                                          border: `1px solid ${isEditing ? '#93c5fd' : '#d1d5db'}`,
-                                          background: isEditing ? '#dbeafe' : '#f3f4f6',
-                                          color: isEditing ? '#1d4ed8' : '#374151',
-                                          cursor: 'pointer', fontFamily: 'var(--font)', fontWeight: 600,
-                                          flexShrink: 0,
-                                        }}
-                                      >
-                                        {isEditing ? '✕ Đóng' : '✏️ Sửa'}
-                                      </button>
+                                      {!isV2Orphan && (
+                                        <button
+                                          type="button"
+                                          onClick={() => setEditingQuoteId(isEditing ? null : q.id)}
+                                          style={{
+                                            fontSize: 11, padding: '3px 10px', borderRadius: 6,
+                                            border: `1px solid ${isEditing ? '#93c5fd' : '#d1d5db'}`,
+                                            background: isEditing ? '#dbeafe' : '#f3f4f6',
+                                            color: isEditing ? '#1d4ed8' : '#374151',
+                                            cursor: 'pointer', fontFamily: 'var(--font)', fontWeight: 600,
+                                            flexShrink: 0,
+                                          }}
+                                        >
+                                          {isEditing ? '✕ Đóng' : '✏️ Sửa'}
+                                        </button>
+                                      )}
                                     </div>
                                   </div>
-                                  {q.route && !isV2 && <div style={{ fontSize: 12, color: 'var(--text-2)', marginBottom: 4 }}>📍 {q.route}</div>}
+                                  {q.route && !isV2 && !isV2Orphan && <div style={{ fontSize: 12, color: 'var(--text-2)', marginBottom: 4 }}>📍 {q.route}</div>}
                                   {!isEditing && isV2 && <SeaQuoteDisplay quote={q} />}
-                                  {!isEditing && !isV2 && (
+                                  {!isEditing && isV2Orphan && (
+                                    <div style={{
+                                      fontSize: 12, color: '#92400e', background: '#fffbeb',
+                                      border: '1px solid #fde68a', borderRadius: 6,
+                                      padding: '8px 12px', marginTop: 4,
+                                    }}>
+                                      ⚠️ Báo giá biển cũ (lỗi dữ liệu) — vui lòng tạo lại
+                                    </div>
+                                  )}
+                                  {!isEditing && !isV2 && !isV2Orphan && (
                                     <>
                                       {opts.length > 0 && (
                                         <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>

@@ -66,6 +66,8 @@ function OptionsTable({ price, carrier }) {
 function QuoteCard({ q, canEdit, onEdit, onDelete }) {
   const closingSoon = q.closing_soon;
   const isV2 = q.quote_data?.version === 2;
+  // 2026-05-27 — v2-shape-without-data orphan from the pre-949b3ed bug.
+  const isV2Orphan = !isV2 && q.mode === 'sea' && !q.cargo_name && !q.quote_data;
   return (
     <div
       className={closingSoon ? 'closing-soon-glow' : ''}
@@ -82,12 +84,14 @@ function QuoteCard({ q, canEdit, onEdit, onDelete }) {
           <span className={`badge ${STATUS_CLASS[q.status]}`}>{STATUS_LABEL[q.status]}</span>
           {q.closing_soon && <span className="badge badge-warning">⚡ Sắp chốt</span>}
           {isV2 && <span className="badge" style={{ background: '#dbeafe', color: '#1d4ed8' }}>v2 biển</span>}
+          {isV2Orphan && <span className="badge" style={{ background: '#fef3c7', color: '#92400e' }}>⚠️ lỗi dữ liệu</span>}
         </div>
         {canEdit && (
           <div style={{ display: 'flex', gap: 6 }}>
             {/* v2 quotes are edited from the customer thread (CustomerDetailModal),
-                not via the legacy EditQuoteModal — hide the Edit button here. */}
-            {!isV2 && (
+                not via the legacy EditQuoteModal — hide the Edit button here.
+                Orphans (no recoverable data) also hide Edit. */}
+            {!isV2 && !isV2Orphan && (
               <button
                 type="button"
                 className="btn btn-ghost btn-sm"
@@ -138,7 +142,19 @@ function QuoteCard({ q, canEdit, onEdit, onDelete }) {
         )}
       </div>
 
-      {isV2 ? <SeaQuoteDisplay quote={q} /> : <OptionsTable price={q.price} carrier={q.carrier} />}
+      {isV2 ? (
+        <SeaQuoteDisplay quote={q} />
+      ) : isV2Orphan ? (
+        <div style={{
+          fontSize: 12, color: '#92400e', background: '#fffbeb',
+          border: '1px solid #fde68a', borderRadius: 6,
+          padding: '8px 12px', marginBottom: 8,
+        }}>
+          ⚠️ Báo giá biển cũ (lỗi dữ liệu) — vui lòng tạo lại
+        </div>
+      ) : (
+        <OptionsTable price={q.price} carrier={q.carrier} />
+      )}
 
       {q.follow_up_notes && (
         <div style={{ fontSize: 12, color: 'var(--text-2)', marginTop: 4, fontStyle: 'italic' }}>
