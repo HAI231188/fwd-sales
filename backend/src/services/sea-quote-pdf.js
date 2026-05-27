@@ -274,7 +274,9 @@ function drawChargesSection(doc, left, right, opts) {
   // to keep desc readable for 2-3 cont type quotes.
   const MONEY_W = 56;
   const MONEY_BLOCK = MONEY_W * 3;
-  const UNIT_W = 60;        // was 44 — fits USD/CONT, VND/CONT, USD/SHPT on one line
+  // UNIT widened to fit "USD/SHIPMENT"/"VND/SHIPMENT"/"VND/CHUYEN" on
+  // a single line (air units are longer than sea's USD/CONT).
+  const UNIT_W = 72;
   const VATPCT_W = 24;
   const RATE_W = 50;
   // qtyByType maps dimension key → qty (sea: cont qty, air: kg per break).
@@ -287,8 +289,15 @@ function drawChargesSection(doc, left, right, opts) {
   let contGroupCount = 0;
   if (activeTypes.length > 0) {
     contGroupCount = activeTypes.length;
-    const slW  = contGroupCount > 2 ? 12 : 16; // air kg needs slightly more digits
-    const giaW = contGroupCount > 3 ? 32 : (contGroupCount > 2 ? 36 : (contGroupCount > 1 ? 44 : 52));
+    // Air needs wider SL (4-5 digit kg) + Giá (4-digit rate). Tighten
+    // adaptively as break count grows — only render activeTypes already
+    // filtered to kg>0, so users with 1 break get a comfortable layout.
+    const slW  = isAir
+      ? (contGroupCount > 2 ? 18 : (contGroupCount > 1 ? 22 : 32))
+      : (contGroupCount > 2 ? 12 : 16);
+    const giaW = isAir
+      ? (contGroupCount > 2 ? 32 : (contGroupCount > 1 ? 40 : 56))
+      : (contGroupCount > 3 ? 32 : (contGroupCount > 2 ? 36 : (contGroupCount > 1 ? 44 : 52)));
     for (const t of activeTypes) {
       cols.push({ key: `sl-${t}`,  w: slW,  contType: t, label: isAir ? 'kg' : 'SL', align: 'center' });
       cols.push({ key: `gia-${t}`, w: giaW, contType: t, label: 'Don gia', align: 'right' });
@@ -364,7 +373,11 @@ function drawChargesSection(doc, left, right, opts) {
       else if (c.key.startsWith('sl-')) {
         const t = c.contType;                // dimension key (cont type OR break name)
         if (usesDim) {
-          txt = String(qtyByType[t] || 0);
+          const qty = qtyByType[t] || 0;
+          // Air kg can be 4-5 digits → thousand-separated; sea cont qty stays plain.
+          txt = ctx.transport === 'air'
+            ? Number(qty).toLocaleString('en-US')
+            : String(qty);
           color = COLOR.text;
           bold = true;
           sz = FS.tableCell - 0.5;

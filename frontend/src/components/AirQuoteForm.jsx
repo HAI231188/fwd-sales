@@ -22,6 +22,10 @@ import {
 // Air rate breaks per user spec (kg thresholds; +X means "X kg and over").
 const AIR_BREAKS = ['+45', '+100', '+300', '+500', '+1000'];
 
+// Multimodal Incoterms (sea-only FOB/CFR/CIF removed; CPT/CIP added).
+// Sea form uses its own list — see SeaQuoteForm.TERMS.
+const AIR_TERMS = ['EXW', 'FCA', 'CPT', 'CIP', 'DAP', 'DPU', 'DDP'];
+
 // 11 preset international air charges per user spec.
 const AIR_INTL_NAMES = [
   'EXW charge', 'FCA charge', 'DAP charge', 'DDP charge',
@@ -63,6 +67,7 @@ export const EMPTY_AIR_QUOTE = {
   mode: 'air',
   transport: 'air',
   aol: '', aod: '',
+  term: 'EXW',
   chargeable_weight: '',
   rate_breaks: [], // [{break: '+100', kg: '250'}, ...] — derived from breakKg matrix
   valid_until: '',
@@ -379,6 +384,29 @@ export default function AirQuoteForm({ value, onChange, quoteId, customerName })
         );
       })()}
 
+      {/* ─── Term pills (air multimodal Incoterms) ─── */}
+      <div className="form-group" style={{ marginBottom: 12 }}>
+        <label className="form-label">Điều kiện giao hàng (Term — multimodal)</label>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+          {AIR_TERMS.map(t => (
+            <button key={t} type="button"
+              onClick={() => set('term', t)}
+              className="btn btn-sm"
+              style={{
+                background: v.term === t ? 'var(--primary)' : 'transparent',
+                color: v.term === t ? '#fff' : 'var(--text-2)',
+                border: `1px solid ${v.term === t ? 'var(--primary)' : 'var(--border)'}`,
+                fontSize: 12, padding: '4px 12px',
+              }}>{t}</button>
+          ))}
+          <input className="form-input"
+            placeholder="Khác..."
+            value={!AIR_TERMS.includes(v.term) ? (v.term || '') : ''}
+            onChange={e => set('term', e.target.value)}
+            style={{ width: 140, fontSize: 12, padding: '4px 10px' }} />
+        </div>
+      </div>
+
       {/* ─── Exchange rate / Valid until / Grand total currency ─── */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 16 }}>
         <div className="form-group" style={{ marginBottom: 0 }}>
@@ -630,8 +658,8 @@ function ChargesTable({ rows, activeBreaks, breakKg, defaultUnit, defaultVat, on
             <tr>
               {activeBreaks.map(b => (
                 <React.Fragment key={b}>
-                  <th style={{ ...TH_STYLE, textAlign: 'center', fontSize: 10 }}>SL (kg)</th>
-                  <th style={{ ...TH_STYLE, textAlign: 'right', fontSize: 10 }}>Đơn giá</th>
+                  <th style={{ ...TH_STYLE, textAlign: 'center', fontSize: 10, minWidth: 56, whiteSpace: 'nowrap' }}>SL (kg)</th>
+                  <th style={{ ...TH_STYLE, textAlign: 'right',  fontSize: 10, minWidth: 76, whiteSpace: 'nowrap' }}>Đơn giá</th>
                 </React.Fragment>
               ))}
             </tr>
@@ -652,12 +680,12 @@ function ChargesTable({ rows, activeBreaks, breakKg, defaultUnit, defaultVat, on
                 <td style={{ ...TD_STYLE, fontWeight: 600, color: 'var(--text)' }}>{r.name}</td>
                 {showBreakCols && activeBreaks.map(b => (
                   <React.Fragment key={b}>
-                    <td style={{ ...TD_STYLE, textAlign: 'center',
+                    <td style={{ ...TD_STYLE, textAlign: 'center', whiteSpace: 'nowrap',
                       color: isKg ? 'var(--text)' : 'var(--text-3)',
-                      fontWeight: isKg ? 600 : 400 }}>
-                      {isKg ? (parseNum(breakKg[b]) || 0) : '—'}
+                      fontWeight: isKg ? 600 : 400, minWidth: 56 }}>
+                      {isKg ? parseNum(breakKg[b]).toLocaleString('en-US') : '—'}
                     </td>
-                    <td style={TD_STYLE}>
+                    <td style={{ ...TD_STYLE, whiteSpace: 'nowrap', minWidth: 76 }}>
                       {isKg ? (
                         <input className="form-input" type="number" min="0" step="any"
                           value={r.rate_by_break?.[b] || ''}
@@ -683,7 +711,7 @@ function ChargesTable({ rows, activeBreaks, breakKg, defaultUnit, defaultVat, on
                 <td style={{ ...TD_STYLE, whiteSpace: 'nowrap' }}>
                   <select value={r.unit} onChange={e => onPatch(i, { unit: e.target.value })}
                     style={{ ...CELL_INPUT, color: unitOverridden ? '#d97706' : 'inherit',
-                      fontWeight: unitOverridden ? 600 : 400, minWidth: 110, whiteSpace: 'nowrap' }}>
+                      fontWeight: unitOverridden ? 600 : 400, minWidth: 130, whiteSpace: 'nowrap' }}>
                     {AIR_UNIT_OPTIONS.map(u => <option key={u} value={u}>{u}</option>)}
                   </select>
                 </td>

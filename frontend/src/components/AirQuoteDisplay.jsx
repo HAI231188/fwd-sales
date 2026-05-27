@@ -188,8 +188,8 @@ function ChargeBlock({ title, rows, ctx, totals, activeBreaks }) {
             <tr>
               {activeBreaks.map(b => (
                 <React.Fragment key={b}>
-                  <th style={{ ...TH_SUB, textAlign: 'center' }}>kg</th>
-                  <th style={{ ...TH_SUB, textAlign: 'right' }}>Đơn giá</th>
+                  <th style={{ ...TH_SUB, textAlign: 'center', whiteSpace: 'nowrap', minWidth: 52 }}>kg</th>
+                  <th style={{ ...TH_SUB, textAlign: 'right',  whiteSpace: 'nowrap', minWidth: 72 }}>Đơn giá</th>
                 </React.Fragment>
               ))}
             </tr>
@@ -210,14 +210,14 @@ function ChargeBlock({ title, rows, ctx, totals, activeBreaks }) {
                 <td style={{ ...TD_S, color: 'var(--text)', fontWeight: 500 }}>{r.name}</td>
                 {showBreakCols && activeBreaks.map(b => (
                   <React.Fragment key={b}>
-                    <td style={{ ...TD_S, textAlign: 'center',
+                    <td style={{ ...TD_S, textAlign: 'center', whiteSpace: 'nowrap', minWidth: 52,
                       color: isKg ? 'var(--text)' : 'var(--text-3)',
                       fontWeight: isKg ? 600 : 400, fontSize: 10.5 }}>
-                      {isKg ? (qtyByBreak[b] || 0) : '—'}
+                      {isKg ? Number(qtyByBreak[b] || 0).toLocaleString('en-US') : '—'}
                     </td>
-                    <td style={{ ...TD_S, textAlign: 'right',
+                    <td style={{ ...TD_S, textAlign: 'right', whiteSpace: 'nowrap', minWidth: 72,
                       color: isKg ? 'var(--text-2)' : 'var(--text-3)',
-                      fontSize: 10.5, whiteSpace: 'nowrap' }}>
+                      fontSize: 10.5 }}>
                       {isKg
                         ? (parseNum(rbb[b]) > 0 ? fmtAmount(parseNum(rbb[b]), cur) : '—')
                         : '—'}
