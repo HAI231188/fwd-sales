@@ -375,15 +375,17 @@ function drawChargesSection(doc, left, right, opts) {
       else if (c.key === 'unit') { txt = unitShort(r.unit); sz = FS.tableCell - 0.5; }
       else if (c.key === 'vatp') txt = r.vat || '';
       else if (c.key === 'net') {
-        txt = net > 0 ? `${fmtAmount(net, currency)} ${currency}` : '';
+        // No per-row currency suffix — UNIT column already shows USD/VND.
+        // Frees ~16pt per money col so large VND (8-10 digit) fits without overlap.
+        txt = net > 0 ? fmtAmount(net, currency) : '';
         color = COLOR.textMuted;
       }
       else if (c.key === 'vatA') {
-        txt = net > 0 ? `${fmtAmount(vatAmt, currency)} ${currency}` : '';
+        txt = net > 0 ? fmtAmount(vatAmt, currency) : '';
         color = COLOR.textMuted;
       }
       else if (c.key === 'tot') {
-        txt = lineTotal > 0 ? `${fmtAmount(lineTotal, currency)} ${currency}` : '';
+        txt = lineTotal > 0 ? fmtAmount(lineTotal, currency) : '';
         bold = true;
         color = COLOR.text;
       }
@@ -442,35 +444,58 @@ function drawChargesSection(doc, left, right, opts) {
 }
 
 // ─── Section: grand total box ────────────────────────────────────────────
+// 3 render modes:
+//   - target USD/VND with valid grand → single GRAND TOTAL box
+//   - no target → per-currency TỔNG lines (no conversion)
+//   - needsRate (mixed + rate empty) → warning + per-currency TỔNG lines
 function drawGrandTotal(doc, left, right, intlT, inlandT, opts) {
   const usable = right - left;
-  if (!opts.grand_total_currency) return;
+  const { perCurrency, grand, needsRate } = calcGrandTotal(
+    intlT, inlandT, opts.grand_total_currency, opts.exchange_rate);
+  const curs = Object.keys(perCurrency);
+  if (curs.length === 0) return;
 
-  const grand = calcGrandTotal(intlT, inlandT, opts.grand_total_currency, opts.exchange_rate);
-  if (grand == null) {
-    doc.font('RI').fontSize(FS.body).fillColor('#B45309')
-      .text('Note: mixed currencies present and no FX rate set — Grand Total cannot be computed.',
-        left, doc.y, { width: usable });
-    doc.fillColor(COLOR.text);
-    doc.moveDown(0.4);
-    return;
-  }
-
-  // Right-aligned grand total box
-  const boxW = 240;
+  const boxW = 280;          // wider than before (240) — fits big VND totals
   const boxX = right - boxW;
-  const boxY = doc.y + 6;
-  const boxH = 36;
-  doc.save()
-    .rect(boxX, boxY, boxW, boxH)
-    .lineWidth(1.2).strokeColor(COLOR.brand).fillAndStroke(COLOR.totalBg, COLOR.brand)
-    .restore();
-  doc.font('RB').fontSize(FS.totalLabel).fillColor(COLOR.brandDark)
-    .text('GRAND TOTAL', boxX + 12, boxY + 8, { width: boxW - 24, align: 'left', lineBreak: false });
-  doc.font('RB').fontSize(FS.totalGrand).fillColor(COLOR.brandDark)
-    .text(`${fmtAmount(grand, opts.grand_total_currency)} ${opts.grand_total_currency}`,
-      boxX + 12, boxY + 18, { width: boxW - 24, align: 'right', lineBreak: false });
-  doc.y = boxY + boxH + 4;
+
+  if (opts.grand_total_currency && grand != null) {
+    const boxY = doc.y + 6;
+    const boxH = 36;
+    doc.save()
+      .rect(boxX, boxY, boxW, boxH)
+      .lineWidth(1.2).strokeColor(COLOR.brand).fillAndStroke(COLOR.totalBg, COLOR.brand)
+      .restore();
+    doc.font('RB').fontSize(FS.totalLabel).fillColor(COLOR.brandDark)
+      .text('GRAND TOTAL', boxX + 12, boxY + 8, { width: boxW - 24, align: 'left', lineBreak: false });
+    doc.font('RB').fontSize(FS.totalGrand).fillColor(COLOR.brandDark)
+      .text(`${fmtAmount(grand, opts.grand_total_currency)} ${opts.grand_total_currency}`,
+        boxX + 12, boxY + 18, { width: boxW - 24, align: 'right', lineBreak: false });
+    doc.y = boxY + boxH + 4;
+  } else {
+    if (needsRate) {
+      doc.font('RI').fontSize(FS.body - 0.5).fillColor('#B45309')
+        .text(`Vui long nhap ty gia de quy doi Grand Total (${curs.join(' + ')}).`,
+          left, doc.y + 2, { width: usable });
+      doc.moveDown(0.2);
+    }
+    const lineH = 18;
+    const boxH = lineH * curs.length + 8;
+    const boxY = doc.y + 4;
+    doc.save()
+      .rect(boxX, boxY, boxW, boxH)
+      .lineWidth(1).strokeColor(COLOR.brand).fillAndStroke(COLOR.totalBg, COLOR.brand)
+      .restore();
+    let lineY = boxY + 6;
+    for (const cur of curs) {
+      doc.font('RB').fontSize(FS.totalLabel).fillColor(COLOR.brandDark)
+        .text(`TỔNG ${cur}`, boxX + 12, lineY + 2, { width: 80, align: 'left', lineBreak: false });
+      doc.font('RB').fontSize(FS.totalLabel + 2).fillColor(COLOR.brandDark)
+        .text(`${fmtAmount(perCurrency[cur], cur)} ${cur}`,
+          boxX + 92, lineY, { width: boxW - 104, align: 'right', lineBreak: false });
+      lineY += lineH;
+    }
+    doc.y = boxY + boxH + 4;
+  }
   resetPaint(doc);
 }
 

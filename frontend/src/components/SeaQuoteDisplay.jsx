@@ -32,7 +32,8 @@ export default function SeaQuoteDisplay({ quote }) {
   const inlandT = calcSectionTotals(qd.inland_charges, ctx);
   const target = quote.grand_total_currency || qd.grand_total_currency;
   const rate = quote.exchange_rate || qd.exchange_rate;
-  const grand = calcGrandTotal(intlT, inlandT, target, rate);
+  const { perCurrency, grand, needsRate } = calcGrandTotal(intlT, inlandT, target, rate);
+  const currencyKeys = Object.keys(perCurrency);
 
   const [pdfBusy, setPdfBusy] = useState(false);
   async function handlePdf() {
@@ -111,6 +112,24 @@ export default function SeaQuoteDisplay({ quote }) {
       <ChargeBlock title="Phí quốc tế" rows={tickedIntl} ctx={ctx} totals={intlT} />
       <ChargeBlock title="Phí nội địa" rows={tickedInland} ctx={ctx} totals={inlandT} />
 
+      {/* Mode 'none' → per-currency totals (no conversion) */}
+      {!target && currencyKeys.length > 0 && (
+        <div style={{
+          marginTop: 8, padding: '6px 10px', background: 'var(--primary-dim)',
+          border: '1px solid var(--primary)', borderRadius: 6,
+          display: 'flex', flexDirection: 'column', gap: 3,
+        }}>
+          {currencyKeys.map(cur => (
+            <div key={cur} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+              <span style={{ fontWeight: 700, color: 'var(--text-2)', fontSize: 11 }}>TỔNG {cur}</span>
+              <span style={{ fontWeight: 700, color: 'var(--primary)', fontSize: 13 }}>
+                {fmtAmount(perCurrency[cur], cur)} {cur}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+      {/* Mode USD/VND with valid grand */}
       {target && grand != null && (
         <div style={{
           marginTop: 8, padding: '6px 10px', background: '#fff7ed',
@@ -123,9 +142,22 @@ export default function SeaQuoteDisplay({ quote }) {
           </span>
         </div>
       )}
-      {target && grand == null && (
-        <div style={{ marginTop: 6, fontSize: 11, color: '#d97706', fontStyle: 'italic' }}>
-          ⚠ Cần tỷ giá để tính Grand Total (hỗn hợp USD/VND)
+      {/* needsRate warning + per-currency totals */}
+      {needsRate && (
+        <div style={{ marginTop: 6 }}>
+          <div style={{ fontSize: 11, color: '#d97706', fontStyle: 'italic', marginBottom: 4 }}>
+            ⚠ Vui lòng nhập tỷ giá để quy đổi Grand Total ({currencyKeys.join(' + ')})
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            {currencyKeys.map(cur => (
+              <div key={cur} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
+                <span style={{ color: 'var(--text-2)', fontWeight: 600 }}>TỔNG {cur}</span>
+                <span style={{ color: 'var(--text-2)', fontWeight: 700 }}>
+                  {fmtAmount(perCurrency[cur], cur)} {cur}
+                </span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
@@ -228,13 +260,13 @@ function ChargeBlock({ title, rows, ctx, totals }) {
                 <td style={{ ...TD_S, color: 'var(--text-3)', fontSize: 10.5, whiteSpace: 'nowrap' }}>{r.unit}</td>
                 <td style={{ ...TD_S, color: 'var(--text-3)', fontSize: 10.5, whiteSpace: 'nowrap' }}>{r.vat || ''}</td>
                 <td style={{ ...TD_S, textAlign: 'right', color: 'var(--text-2)', whiteSpace: 'nowrap' }}>
-                  {net > 0 ? `${fmtAmount(net, cur)} ${cur}` : '—'}
+                  {net > 0 ? fmtAmount(net, cur) : '—'}
                 </td>
                 <td style={{ ...TD_S, textAlign: 'right', color: 'var(--text-2)', whiteSpace: 'nowrap' }}>
-                  {net > 0 ? `${fmtAmount(vatAmt, cur)} ${cur}` : '—'}
+                  {net > 0 ? fmtAmount(vatAmt, cur) : '—'}
                 </td>
                 <td style={{ ...TD_S, textAlign: 'right', color: 'var(--primary)', fontWeight: 700, whiteSpace: 'nowrap' }}>
-                  {lineTotal > 0 ? `${fmtAmount(lineTotal, cur)} ${cur}` : '—'}
+                  {lineTotal > 0 ? fmtAmount(lineTotal, cur) : '—'}
                 </td>
               </tr>
             );

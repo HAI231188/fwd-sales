@@ -693,11 +693,10 @@ function TotalsBox({ quote, contQty }) {
                 shipment_cbm: quote.shipment_cbm, shipment_kg: quote.shipment_kg };
   const intlT = calcSectionTotals(quote.intl_charges, ctx);
   const inlandT = calcSectionTotals(quote.inland_charges, ctx);
-  // calcGrandTotal returns number|null; derive presentational flags locally.
-  const currencies = new Set([...Object.keys(intlT), ...Object.keys(inlandT)]);
-  const mixed = currencies.size > 1;
-  const grandTotal = calcGrandTotal(intlT, inlandT, quote.grand_total_currency, quote.exchange_rate);
-  const needsRate = mixed && parseNum(quote.exchange_rate) <= 0 && !!quote.grand_total_currency;
+  const { perCurrency, grand, needsRate } = calcGrandTotal(
+    intlT, inlandT, quote.grand_total_currency, quote.exchange_rate);
+  const currencyKeys = Object.keys(perCurrency);
+  const mixed = currencyKeys.length > 1;
   const anyTicked = quote.intl_charges.some(r => r.ticked) || quote.inland_charges.some(r => r.ticked);
   if (!anyTicked) return null;
 
@@ -742,18 +741,43 @@ function TotalsBox({ quote, contQty }) {
       {renderSectionRow('International Total', intlT)}
       {renderSectionRow('Inland Total', inlandT)}
       <div style={{ height: 1, background: 'var(--border)', margin: '10px 0' }} />
-      {!quote.grand_total_currency && (
-        <div style={{ fontSize: 12, color: 'var(--text-3)', fontStyle: 'italic', textAlign: 'right' }}>
-          Chọn tiền tệ tổng (USD/VND) để hiện Grand Total.
+      {/* Mode 'none' → render per-currency totals (no conversion). */}
+      {!quote.grand_total_currency && currencyKeys.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {currencyKeys.map(cur => (
+            <div key={cur} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+              <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-2)', fontFamily: 'var(--font-display)' }}>
+                TỔNG {cur}
+              </span>
+              <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--primary)', fontFamily: 'var(--font-display)' }}>
+                {fmtAmount(perCurrency[cur], cur)} {cur}
+              </span>
+            </div>
+          ))}
+          <div style={{ fontSize: 10.5, color: 'var(--text-3)', fontStyle: 'italic', textAlign: 'right', marginTop: 4 }}>
+            (chọn tiền tệ tổng USD/VND ở trên để gộp về 1 con số)
+          </div>
         </div>
       )}
+      {/* needsRate → warning + still show per-currency totals */}
       {needsRate && (
-        <div style={{ fontSize: 12, color: 'var(--warning)', fontWeight: 600, textAlign: 'right',
-          padding: '6px 10px', background: 'rgba(217,119,6,0.10)', borderRadius: 6 }}>
-          ⚠ Vui lòng nhập tỷ giá để tính Grand Total ({[...currencies].join(' + ')})
-        </div>
+        <>
+          <div style={{ fontSize: 12, color: 'var(--warning)', fontWeight: 600, textAlign: 'right',
+            padding: '6px 10px', background: 'rgba(217,119,6,0.10)', borderRadius: 6, marginBottom: 6 }}>
+            ⚠ Vui lòng nhập tỷ giá để quy đổi Grand Total ({currencyKeys.join(' + ')})
+          </div>
+          {currencyKeys.map(cur => (
+            <div key={cur} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+              <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-2)' }}>TỔNG {cur}</span>
+              <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-2)' }}>
+                {fmtAmount(perCurrency[cur], cur)} {cur}
+              </span>
+            </div>
+          ))}
+        </>
       )}
-      {quote.grand_total_currency && grandTotal != null && (
+      {/* USD/VND mode with valid grand */}
+      {quote.grand_total_currency && grand != null && (
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
           <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', fontFamily: 'var(--font-display)' }}>
             GRAND TOTAL
@@ -764,7 +788,7 @@ function TotalsBox({ quote, contQty }) {
             )}
           </span>
           <span style={{ fontSize: 18, fontWeight: 700, color: 'var(--primary)', fontFamily: 'var(--font-display)' }}>
-            {fmtAmount(grandTotal, quote.grand_total_currency)} {quote.grand_total_currency}
+            {fmtAmount(grand, quote.grand_total_currency)} {quote.grand_total_currency}
           </span>
         </div>
       )}
@@ -902,17 +926,17 @@ function ChargesTable({ rows, activeContTypes, defaultUnit, defaultVat, onPatch,
                     value={r.note || ''} onChange={e => onPatch(i, { note: e.target.value })}
                     style={CELL_INPUT} placeholder="—" />
                 </td>
-                <td style={{ ...TD_STYLE, textAlign: 'right',
+                <td style={{ ...TD_STYLE, textAlign: 'right', whiteSpace: 'nowrap',
                   color: net > 0 ? 'var(--text-2)' : 'var(--text-3)' }}>
-                  {net > 0 ? `${fmtAmount(net, currency)} ${currency}` : '—'}
+                  {net > 0 ? fmtAmount(net, currency) : '—'}
                 </td>
-                <td style={{ ...TD_STYLE, textAlign: 'right',
+                <td style={{ ...TD_STYLE, textAlign: 'right', whiteSpace: 'nowrap',
                   color: vatAmt > 0 ? 'var(--text-2)' : 'var(--text-3)' }}>
-                  {net > 0 ? `${fmtAmount(vatAmt, currency)} ${currency}` : '—'}
+                  {net > 0 ? fmtAmount(vatAmt, currency) : '—'}
                 </td>
-                <td style={{ ...TD_STYLE, textAlign: 'right', fontWeight: 700,
+                <td style={{ ...TD_STYLE, textAlign: 'right', whiteSpace: 'nowrap', fontWeight: 700,
                   color: lineTotal > 0 ? 'var(--text)' : 'var(--text-3)' }}>
-                  {lineTotal > 0 ? `${fmtAmount(lineTotal, currency)} ${currency}` : '—'}
+                  {lineTotal > 0 ? fmtAmount(lineTotal, currency) : '—'}
                 </td>
               </tr>
             );

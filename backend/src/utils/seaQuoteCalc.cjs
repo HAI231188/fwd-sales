@@ -113,21 +113,30 @@ function calcSectionTotals(rows, ctx) {
 }
 
 function calcGrandTotal(intlT, inlandT, target, rate) {
-  if (!target) return null;
-  const curs = new Set([...Object.keys(intlT || {}), ...Object.keys(inlandT || {})]);
-  if (!curs.size) return 0;
-  const r = parseNum(rate);
-  let sum = 0;
-  for (const cur of curs) {
-    const s = ((intlT && intlT[cur] && intlT[cur].total) || 0)
+  const perCurrency = {};
+  for (const cur of new Set([...Object.keys(intlT || {}), ...Object.keys(inlandT || {})])) {
+    const v = ((intlT && intlT[cur] && intlT[cur].total) || 0)
             + ((inlandT && inlandT[cur] && inlandT[cur].total) || 0);
-    if (cur === target) sum += s;
-    else if (cur === 'USD' && target === 'VND' && r > 0) sum += s * r;
-    else if (cur === 'VND' && target === 'USD' && r > 0) sum += s / r;
-    else if (curs.size === 1) sum += s;
-    else return null;
+    if (v !== 0) perCurrency[cur] = v;
   }
-  return sum;
+  if (!target) {
+    return { perCurrency, grand: null, needsRate: false };
+  }
+  const curs = Object.keys(perCurrency);
+  const mixed = curs.length > 1;
+  const r = parseNum(rate);
+  if (mixed && r <= 0) {
+    return { perCurrency, grand: null, needsRate: true };
+  }
+  let grand = 0;
+  for (const cur of curs) {
+    const s = perCurrency[cur];
+    if (cur === target) grand += s;
+    else if (cur === 'USD' && target === 'VND') grand += s * r;
+    else if (cur === 'VND' && target === 'USD') grand += s / r;
+    else grand += s;
+  }
+  return { perCurrency, grand, needsRate: false };
 }
 
 function fmtAmount(n, currency) {

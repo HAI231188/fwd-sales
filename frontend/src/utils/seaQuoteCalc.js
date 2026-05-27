@@ -139,23 +139,39 @@ export function calcSectionTotals(rows, ctx) {
   return byCur;
 }
 
-// Combines intl + inland totals into target currency.
-// Returns null when mixed currencies AND no exchange rate set.
+// Combines intl + inland totals into a richer grand-total result.
+// Always returns the per-currency aggregates so callers can render
+// "two lines" mode (no conversion) regardless of the target setting.
+// `grand` is filled when target is set AND either single-currency OR
+// (mixed AND rate>0). `needsRate` flags the mixed-without-rate case.
+//
+// Returns: { perCurrency: { USD?: number, VND?: number },
+//            grand: number|null,
+//            needsRate: bool }
 export function calcGrandTotal(intlT, inlandT, target, rate) {
-  if (!target) return null;
-  const curs = new Set([...Object.keys(intlT || {}), ...Object.keys(inlandT || {})]);
-  if (!curs.size) return 0;
-  const r = parseNum(rate);
-  let sum = 0;
-  for (const cur of curs) {
-    const s = (intlT?.[cur]?.total || 0) + (inlandT?.[cur]?.total || 0);
-    if (cur === target) sum += s;
-    else if (cur === 'USD' && target === 'VND' && r > 0) sum += s * r;
-    else if (cur === 'VND' && target === 'USD' && r > 0) sum += s / r;
-    else if (curs.size === 1) sum += s;
-    else return null; // mixed currencies + no rate
+  const perCurrency = {};
+  for (const cur of new Set([...Object.keys(intlT || {}), ...Object.keys(inlandT || {})])) {
+    const v = (intlT?.[cur]?.total || 0) + (inlandT?.[cur]?.total || 0);
+    if (v !== 0) perCurrency[cur] = v;
   }
-  return sum;
+  if (!target) {
+    return { perCurrency, grand: null, needsRate: false };
+  }
+  const curs = Object.keys(perCurrency);
+  const mixed = curs.length > 1;
+  const r = parseNum(rate);
+  if (mixed && r <= 0) {
+    return { perCurrency, grand: null, needsRate: true };
+  }
+  let grand = 0;
+  for (const cur of curs) {
+    const s = perCurrency[cur];
+    if (cur === target) grand += s;
+    else if (cur === 'USD' && target === 'VND') grand += s * r;
+    else if (cur === 'VND' && target === 'USD') grand += s / r;
+    else grand += s; // unknown currency — pass-through
+  }
+  return { perCurrency, grand, needsRate: false };
 }
 
 // 1,000.00 for USD (and any non-VND); 1,000,000 for VND (integer).
