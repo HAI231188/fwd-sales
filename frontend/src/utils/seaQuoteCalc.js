@@ -62,6 +62,45 @@ export function unitBasis(unit) {
 // Backward compat: legacy v2 quotes stored `price_by_cont` / `price`; new
 // quotes may use `rate_by_cont` / `rate`. We read both so existing data still
 // renders correctly (no migration required).
+// ─── Unified dimension model (2026-05-27 L27) ────────────────────────────
+// Both sea and air price some rows over a "dimension" (sea: cont types ×
+// qty; air: rate breaks × kg). Sea historically stored these as
+// `rate_by_cont` / `price_by_cont`; air uses `rate_by_break`. Production
+// data has both names alive — read through the single `rateByDim` helper
+// so the rest of the codebase never has to know which name a row uses.
+//
+// Single source of truth: this helper is read by calcRowAmount AND by
+// the PDF cell renderer. Adding a future transport (road) = add a config
+// + storage field name to this helper; no other call sites change.
+export function rateByDim(row) {
+  return (row && (row.rate_by_break || row.rate_by_cont || row.price_by_cont)) || {};
+}
+
+// Returns the dimension list as a canonical [{key, qty}] array.
+// Used by both calc + render. ctx.transport='air' → from rate_breaks,
+// else from containers (sea).
+export function ctxDimensions(ctx) {
+  if (!ctx) return [];
+  if (ctx.transport === 'air') {
+    return (ctx.rate_breaks || []).map(b => ({ key: b.break, qty: nn(b.qty != null ? b.qty : b.kg) }));
+  }
+  return (ctx.containers || []).map(c => ({ key: c.type, qty: nn(c.qty) }));
+}
+
+// True when this row should be priced via the dimension matrix (rather
+// than a flat rate). Driven by unit basis + presence of dimension data.
+//   sea: basis='cont' OR (basis='kg' AND row has rate_by_break)
+//   air: basis='kg'   AND ctx has rate_breaks
+// Defensive: also returns true when basis='cont' for backward compat
+// with sea-cont rows that store rate_by_cont.
+export function rowUsesDimensions(row, ctx) {
+  if (!row) return false;
+  const basis = unitBasis(row.unit);
+  if (basis === 'cont') return true;
+  if (basis === 'kg' && row.rate_by_break) return true;
+  return false;
+}
+
 function rateByCont(row)  { return row.rate_by_cont  || row.price_by_cont || {}; }
 function rateByBreak(row) { return row.rate_by_break || {}; }
 function rowRate(row)     { return nn(row.rate != null ? row.rate : row.price); }
@@ -71,34 +110,25 @@ function rowRate(row)     { return nn(row.rate != null ? row.rate : row.price); 
 //                         (fallback to row.rate × ctx.shipment_kg for sea single-kg use)
 // 'cbm' basis (sea LCL):   row.rate × ctx.shipment_cbm
 // 'shipment' basis (any):  flat row.rate × 1
+// Single calc path used by sea AND air. Adding a future transport = add
+// a case to `ctxDimensions` and (if needed) a unit token to `unitBasis`.
+// Cell renderers (form, display, PDF) must read via `rateByDim` and use
+// `rowUsesDimensions` — never branch directly on transport.
 export function calcRowAmount(row, ctx) {
   if (!row || !row.ticked) return 0;
   const basis = unitBasis(row.unit);
 
-  if (basis === 'cont') {
-    const rbc = rateByCont(row);
+  if (rowUsesDimensions(row, ctx)) {
+    const rates = rateByDim(row);
+    const dims = ctxDimensions(ctx);
     let total = 0;
-    for (const c of (ctx?.containers || [])) {
-      const q = nn(c.qty);
-      if (q > 0) total += nn(rbc[c.type]) * q;
+    for (const d of dims) {
+      if (d.qty > 0) total += nn(rates[d.key]) * d.qty;
     }
     return total;
   }
-  if (basis === 'kg') {
-    // Air rate-break model: ctx.rate_breaks = [{break, kg}], row.rate_by_break.
-    // If row carries rate_by_break OR ctx has rate_breaks → use break math.
-    if (row.rate_by_break || (ctx?.rate_breaks && ctx.rate_breaks.length)) {
-      const rbb = rateByBreak(row);
-      let total = 0;
-      for (const b of (ctx?.rate_breaks || [])) {
-        const kg = nn(b.kg);
-        if (kg > 0) total += nn(rbb[b.break]) * kg;
-      }
-      return total;
-    }
-    // Sea single-kg fallback: rate × shipment_kg
-    return rowRate(row) * nn(ctx?.shipment_kg);
-  }
+  // Non-dimension basis paths
+  if (basis === 'kg')  return rowRate(row) * nn(ctx?.shipment_kg);
   if (basis === 'cbm') return rowRate(row) * nn(ctx?.shipment_cbm);
   // shipment / B/L / AWB / CHUYEN — flat per-shipment fee
   return rowRate(row);

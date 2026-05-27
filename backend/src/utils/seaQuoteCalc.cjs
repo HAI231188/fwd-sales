@@ -42,6 +42,27 @@ function unitBasis(unit) {
   return 'shipment';
 }
 
+// ─── Unified dimension model (2026-05-27 L27) ────────────────────────────
+function rateByDim(row) {
+  return (row && (row.rate_by_break || row.rate_by_cont || row.price_by_cont)) || {};
+}
+
+function ctxDimensions(ctx) {
+  if (!ctx) return [];
+  if (ctx.transport === 'air') {
+    return (ctx.rate_breaks || []).map(b => ({ key: b.break, qty: nn(b.qty != null ? b.qty : b.kg) }));
+  }
+  return (ctx.containers || []).map(c => ({ key: c.type, qty: nn(c.qty) }));
+}
+
+function rowUsesDimensions(row, ctx) {
+  if (!row) return false;
+  const basis = unitBasis(row.unit);
+  if (basis === 'cont') return true;
+  if (basis === 'kg' && row.rate_by_break) return true;
+  return false;
+}
+
 function rateByCont(row) { return row.rate_by_cont || row.price_by_cont || {}; }
 function rowRate(row)    { return nn(row.rate != null ? row.rate : row.price); }
 
@@ -51,27 +72,16 @@ function calcRowAmount(row, ctx) {
   if (!row || !row.ticked) return 0;
   const basis = unitBasis(row.unit);
 
-  if (basis === 'cont') {
-    const rbc = rateByCont(row);
+  if (rowUsesDimensions(row, ctx)) {
+    const rates = rateByDim(row);
+    const dims = ctxDimensions(ctx);
     let total = 0;
-    for (const c of ((ctx && ctx.containers) || [])) {
-      const q = nn(c.qty);
-      if (q > 0) total += nn(rbc[c.type]) * q;
+    for (const d of dims) {
+      if (d.qty > 0) total += nn(rates[d.key]) * d.qty;
     }
     return total;
   }
-  if (basis === 'kg') {
-    if (row.rate_by_break || (ctx && ctx.rate_breaks && ctx.rate_breaks.length)) {
-      const rbb = rateByBreak(row);
-      let total = 0;
-      for (const b of ((ctx && ctx.rate_breaks) || [])) {
-        const kg = nn(b.kg);
-        if (kg > 0) total += nn(rbb[b.break]) * kg;
-      }
-      return total;
-    }
-    return rowRate(row) * nn(ctx && ctx.shipment_kg);
-  }
+  if (basis === 'kg')  return rowRate(row) * nn(ctx && ctx.shipment_kg);
   if (basis === 'cbm') return rowRate(row) * nn(ctx && ctx.shipment_cbm);
   return rowRate(row);
 }
@@ -209,6 +219,10 @@ module.exports = {
   unitToCurrency,
   unitBasis,
   rowVatPct,
+  // Unified dimension helpers (L27)
+  rateByDim,
+  ctxDimensions,
+  rowUsesDimensions,
   calcRowAmount,
   calcRowVat,
   calcRowTotal,

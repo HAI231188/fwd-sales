@@ -814,6 +814,52 @@ Used by `ddPillInfo` to split `du_xe_cho_giao` into "chưa tick nâng hạ" / "c
 
 ---
 
+### L27 — Quote calc + PDF are a SINGLE parametric engine, not per-transport copies
+
+**Root cause pattern (2026-05-27 air regression):** When adding air freight v2 alongside sea v2, the easy path is "copy `sea-quote-pdf.js` → `air-quote-pdf.js`, swap labels". That path silently reintroduces every fix that lives in the sea version: the air PDF cell renderer kept `isCont = basis === 'cont'`, so air rows (basis `'kg'` with `rate_by_break`) rendered `—` in the SL/Đơn giá sub-cells and the per-break math was never displayed even though the underlying shared calc was correct. Same class as L9/L10 (fix-applied-to-one-but-not-others) but at the architectural level: copying *creates* the divergence.
+
+**Pattern (current, enforced):**
+
+1. **Shared calc (`seaQuoteCalc.{js,cjs}`)** is parametric over a dimension:
+   - sea: `dimensions = containers[{type, qty}]` (cont type × qty)
+   - air: `dimensions = rate_breaks[{break, kg}]` (break × kg)
+   - Row rate map lives in `rate_by_break` (air) OR `rate_by_cont`/`price_by_cont` (sea).
+   - Three exported helpers normalize both:
+     - `rateByDim(row)` → reads any of the 3 name variants
+     - `ctxDimensions(ctx)` → returns canonical `[{key, qty}]` from `ctx.rate_breaks` (air) or `ctx.containers` (sea)
+     - `rowUsesDimensions(row, ctx)` → predicate driven by `unitBasis(row.unit)` + presence of dim data
+   - `calcRowAmount` has ONE branch: `if (rowUsesDimensions(row, ctx)) Σ rateByDim[d.key] × d.qty`. No transport-specific code path.
+
+2. **PDF (`sea-quote-pdf.js`)** is the SINGLE generator for both transports. Air/sea differ only in:
+   - Route labels: `POL/POD` vs `AOL/AOD` (branched in `drawPartiesRoute` on `opts.transport`)
+   - CARGO label: `FCL/LCL` vs `AIR`
+   - Dimension sub-header: `SL` vs `kg`
+   - Volume line text: `formatVolume(qd)` already transport-aware
+   - Cell renderer uses `rowUsesDimensions(r, ctx)` — NOT `basis === 'cont'`. NEVER add `if (transport === 'air')` to the cell logic.
+
+3. **Form + Display** (`SeaQuoteForm`/`Display` + `AirQuoteForm`/`Display`) — separate files but both **must import the same shared calc** and any column/cell renderer that diverges is a smell. Money columns must never have transport-specific copies.
+
+**Rules:**
+
+1. **Adding a new transport (road, rail, multimodal) = add a config, NEVER copy a file.** Steps:
+   - Add unit tokens to `unitBasis()` if needed (e.g. road might add `/TON`).
+   - Add the dimension reader case to `ctxDimensions()` (e.g. road: `weight_bands`).
+   - Add a label config (POL/POD/CARGO) to `drawPartiesRoute()`.
+   - That's it. Calc + cell render + totals + grand total + PDF columns all work without new code.
+
+2. **Forbidden patterns:**
+   - `if (ctx.transport === 'air') { ... rate-break logic ... } else { ... cont logic ... }` in cell renderers. Always use `rowUsesDimensions(row, ctx)` + `rateByDim(row)` + `ctxDimensions(ctx)`.
+   - Creating `air-quote-pdf.js` next to `sea-quote-pdf.js`. There is ONE PDF module.
+   - Copy-pasting `calcRowAmount` into a transport-specific file.
+
+3. **Self-check invariant:** in any quote section, `calcSectionTotals(rows, ctx)[cur].total === Σ calcRowTotal(row, ctx)` for rows in that currency. The unified path guarantees this — if a future change ever breaks it, the unification slipped.
+
+4. **Display filter rule:** PDF + form + display show ALL `r.ticked` rows, even when `calcRowAmount === 0`. The user explicitly ticked the row; suppressing zero-net rows from display loses information (e.g. complimentary X-RAY at rate 0).
+
+**Applies to:** `frontend/src/utils/seaQuoteCalc.js`, `backend/src/utils/seaQuoteCalc.cjs`, `backend/src/services/sea-quote-pdf.js`, and any future `*QuoteForm.jsx` / `*QuoteDisplay.jsx`. Future transport additions should pass `rowUsesDimensions(row, ctx)` tests for both their dim-basis and non-dim-basis rows before being wired into the integration components.
+
+---
+
 ### Note — KT user `ketoan_cong_no` (id=2965)
 
 `role='ke_toan'`. Username `ketoan_cong_no` (renamed from `ketoan_test` on 2026-05-25). Name "Kế Toán Công Nợ". The first real KT user. Password reset to a known temporary on the same date — owner to rotate.

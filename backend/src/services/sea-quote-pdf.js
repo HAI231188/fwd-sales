@@ -14,6 +14,7 @@ const fs = require('fs');
 
 const {
   parseNum, unitToCurrency, unitBasis,
+  rateByDim, ctxDimensions, rowUsesDimensions,
   calcRowAmount, calcRowVat, calcRowTotal,
   calcSectionTotals, calcGrandTotal, fmtAmount,
   formatVolume, formatRowVol, unitShort,
@@ -238,7 +239,9 @@ function drawPartiesRoute(doc, left, right, opts) {
 // so the caller can build the grand total.
 function drawChargesSection(doc, left, right, opts) {
   const { title, subtitle, rows, ctx } = opts;
-  const ticked = (rows || []).filter(r => r.ticked && calcRowAmount(r, ctx) > 0);
+  // Show ALL ticked rows — even Net=0 (e.g. complimentary X-RAY at rate 0).
+  // The user explicitly opted them into the quote by ticking the row.
+  const ticked = (rows || []).filter(r => r.ticked);
   if (!ticked.length) return { byCurrency: {} };
 
   const usable = right - left;
@@ -336,13 +339,15 @@ function drawChargesSection(doc, left, right, opts) {
   let rowIdx = 0;
   for (const r of ticked) {
     const rowY = doc.y;
-    const basis = unitBasis(r.unit);
-    const isCont = basis === 'cont';
+    // Unified dimension predicate — true for sea cont rows AND air kg rows
+    // with rate_by_break. Cell render uses this single predicate; no
+    // transport-specific branch can drift out of sync (L27).
+    const usesDim = rowUsesDimensions(r, ctx);
     const net = calcRowAmount(r, ctx);
     const vatAmt = calcRowVat(r, ctx);
     const lineTotal = calcRowTotal(r, ctx);
     const currency = unitToCurrency(r.unit);
-    const rbc = r.rate_by_cont || r.price_by_cont || {};
+    const rates = rateByDim(r);            // unified rate-map read
     const flatRate = parseNum(r.rate != null ? r.rate : r.price);
 
     if (rowIdx % 2 === 0) {
@@ -357,8 +362,8 @@ function drawChargesSection(doc, left, right, opts) {
       let sz = FS.tableCell;
       if (c.key === 'desc') { txt = r.name || ''; bold = true; }
       else if (c.key.startsWith('sl-')) {
-        const t = c.contType;
-        if (isCont) {
+        const t = c.contType;                // dimension key (cont type OR break name)
+        if (usesDim) {
           txt = String(qtyByType[t] || 0);
           color = COLOR.text;
           bold = true;
@@ -370,8 +375,8 @@ function drawChargesSection(doc, left, right, opts) {
       }
       else if (c.key.startsWith('gia-')) {
         const t = c.contType;
-        if (isCont) {
-          const v = parseNum(rbc[t]);
+        if (usesDim) {
+          const v = parseNum(rates[t]);
           txt = v > 0 ? fmtAmount(v, currency) : '';
           color = COLOR.textMuted;
           sz = FS.tableCell - 0.5;
@@ -381,7 +386,7 @@ function drawChargesSection(doc, left, right, opts) {
         }
       }
       else if (c.key === 'rate') {
-        if (isCont) {
+        if (usesDim) {
           txt = '-';
           color = COLOR.textFaint;
         } else {
