@@ -145,8 +145,8 @@ export default function SeaQuoteDisplay({ quote }) {
   );
 }
 
-// Format the row's RATE column for display. For cont basis show per-cont
-// rates inline (compact); for other bases show the single rate value.
+// Row's RATE column: for cont basis show per-cont rates inline (compact);
+// for other bases show the single rate value.
 function formatRowRateDisplay(row, cur) {
   const basis = unitBasis(row.unit);
   if (basis === 'cont') {
@@ -160,17 +160,18 @@ function formatRowRateDisplay(row, cur) {
   return rate > 0 ? fmtAmount(rate, cur) : '—';
 }
 
-const CHARGE_GRID_COLS = '1.2fr 0.8fr 1.3fr 0.7fr 0.5fr 0.9fr 0.7fr 1fr';
+// 7-col grid (no VOL column — volume lives in the header VOLUME line).
+// Description | RATE | UNIT | VAT% | NET | VAT | LINE TOTAL
+const CHARGE_GRID_COLS = '1.3fr 1.5fr 0.7fr 0.5fr 0.9fr 0.7fr 1fr';
 
 function ChargeBlock({ title, rows, ctx, totals }) {
   if (!rows.length) return null;
-  const HEADERS = ['Chi phí', 'VOL', 'Đơn giá', 'Đơn vị', 'VAT%', 'Net', 'VAT', 'Line Total'];
+  const HEADERS = ['Chi phí', 'Đơn giá', 'Đơn vị', 'VAT%', 'Net', 'VAT', 'Line Total'];
   return (
     <div style={{ marginTop: 6 }}>
       <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.3px', marginBottom: 2 }}>
         {title}
       </div>
-      {/* Column header — 8 cols, money cols right-aligned */}
       <div style={{
         display: 'grid', gridTemplateColumns: CHARGE_GRID_COLS, gap: 8,
         fontSize: 9.5, color: 'var(--text-3)', fontWeight: 700,
@@ -178,7 +179,7 @@ function ChargeBlock({ title, rows, ctx, totals }) {
         borderBottom: '1px solid var(--border)', paddingBottom: 2, marginBottom: 3,
       }}>
         {HEADERS.map((h, i) => (
-          <span key={h} style={{ textAlign: i >= 5 ? 'right' : (i >= 1 && i <= 4 ? 'left' : 'left') }}>
+          <span key={h} style={{ textAlign: i >= 4 ? 'right' : 'left' }}>
             {h}
           </span>
         ))}
@@ -189,7 +190,6 @@ function ChargeBlock({ title, rows, ctx, totals }) {
           const vatAmt = calcRowVat(r, ctx);
           const lineTotal = calcRowTotal(r, ctx);
           const cur = unitToCurrency(r.unit);
-          const vol = formatRowVol(r, ctx);
           const rateStr = formatRowRateDisplay(r, cur);
           return (
             <div key={i} style={{
@@ -197,7 +197,6 @@ function ChargeBlock({ title, rows, ctx, totals }) {
               fontSize: 11.5, alignItems: 'baseline',
             }}>
               <span style={{ color: 'var(--text)', fontWeight: 500 }}>{r.name}</span>
-              <span style={{ color: 'var(--text-3)', fontSize: 10.5, whiteSpace: 'nowrap' }}>{vol}</span>
               <span style={{ color: 'var(--text-2)', fontSize: 10.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                 {rateStr}
               </span>
@@ -244,7 +243,8 @@ function ChargeBlock({ title, rows, ctx, totals }) {
         fontSize: 10, color: 'var(--text-3)', fontStyle: 'italic',
         marginTop: 4,
       }}>
-        VOL tự suy ra từ Đơn vị · Net = đơn giá × VOL · VAT theo từng loại phí · Line Total đã bao gồm VAT.
+        Đơn vị quyết định cách tính: CONT = theo container, SHPT/BL = trọn lô, CBM = theo khối, KG = theo trọng lượng.
+        Net = đơn giá x số lượng. Line Total đã gồm VAT.
       </div>
     </div>
   );

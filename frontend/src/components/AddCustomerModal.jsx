@@ -403,7 +403,7 @@ export default function AddCustomerModal({ onClose }) {
                   <div key={i} style={{ marginBottom: 12 }}>
                     {isSeaV2 ? (
                       <div style={{ position: 'relative' }}>
-                        <SeaQuoteForm value={q} onChange={onChange} />
+                        <SeaQuoteForm value={q} onChange={onChange} customerName={form.company_name} />
                         {remove && (
                           <button type="button" className="btn btn-danger btn-sm btn-icon"
                             style={{ position: 'absolute', top: 12, right: 56 }}

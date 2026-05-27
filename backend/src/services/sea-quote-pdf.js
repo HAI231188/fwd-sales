@@ -250,63 +250,67 @@ function drawChargesSection(doc, left, right, opts) {
   doc.y = barY + 22;
   resetPaint(doc);
 
-  // ─ Column layout — unified 8-col scheme regardless of cargo_type.
-  // Per-row basis (cont/shipment/cbm/kg) drives content of VOL + RATE only.
-  // Desc | VOL | RATE | UNIT | VAT% | NET | VAT | LINE TOTAL
+  // ─ Final column layout (2026-05-27).
+  // FCL: Desc | <per-cont rate cols> | RATE | UNIT | VAT% | NET | VAT | LINE TOTAL
+  // LCL: Desc | RATE | UNIT | VAT% | NET | VAT | LINE TOTAL  (no cont cols)
+  // NO VOL column — VOL lives only in the header VOLUME line.
   const MONEY_W = 64;
   const MONEY_BLOCK = MONEY_W * 3;
-  const UNIT_W = 50;
+  const UNIT_W = 48;
   const VATPCT_W = 30;
-  const VOL_W = 70;
-  // RATE column needs to fit per-cont rate breakdowns when basis=cont.
-  // Estimate width from active cont count; min 70pt, scales up to ~140pt.
-  const rateW = Math.min(150, Math.max(70, 28 + (activeTypes.length || 1) * 32));
-  const descW = Math.max(80, usable - VOL_W - rateW - UNIT_W - VATPCT_W - MONEY_BLOCK);
-  const cols = [
-    { key: 'desc', w: descW,    label: 'Description', align: 'left'   },
-    { key: 'vol',  w: VOL_W,    label: 'Vol',         align: 'left'   },
-    { key: 'rate', w: rateW,    label: 'Rate',        align: 'left'   },
-    { key: 'unit', w: UNIT_W,   label: 'Unit',        align: 'center' },
-    { key: 'vatp', w: VATPCT_W, label: 'VAT%',        align: 'center' },
-    { key: 'net',  w: MONEY_W,  label: 'Net',         align: 'right'  },
-    { key: 'vatA', w: MONEY_W,  label: 'VAT',         align: 'right'  },
-    { key: 'tot',  w: MONEY_W,  label: 'Line Total',  align: 'right'  },
-  ];
+  const RATE_W = 60;
+  const cols = [];
+  cols.push({ key: 'desc', w: 0 /*filled later*/, label: 'Description', align: 'left' });
+  let contCols = [];
+  if (isFcl && activeTypes.length > 0) {
+    const contW = activeTypes.length > 3 ? 38 : (activeTypes.length > 1 ? 46 : 56);
+    contCols = activeTypes.map(t => ({ key: `cont-${t}`, w: contW, label: t, align: 'right' }));
+    cols.push(...contCols);
+  }
+  cols.push({ key: 'rate', w: RATE_W,    label: 'Rate',       align: 'right' });
+  cols.push({ key: 'unit', w: UNIT_W,    label: 'Unit',       align: 'center' });
+  cols.push({ key: 'vatp', w: VATPCT_W,  label: 'VAT%',       align: 'center' });
+  cols.push({ key: 'net',  w: MONEY_W,   label: 'Net',        align: 'right' });
+  cols.push({ key: 'vatA', w: MONEY_W,   label: 'VAT',        align: 'right' });
+  cols.push({ key: 'tot',  w: MONEY_W,   label: 'Line Total', align: 'right' });
+  // Stretch Description to fill remaining width
+  const usedW = cols.slice(1).reduce((s, c) => s + c.w, 0);
+  cols[0].w = Math.max(80, usable - usedW);
 
-  // ─ Column headers (no fill, bottom-border only)
-  const HEAD_H2 = 20;
+  // ─ Column headers: cont cols get a 2-line header (TYPE / đơn giá/cont)
+  // so reader sees them unambiguously as RATES per cont.
+  const HEAD_H2 = contCols.length > 0 ? 26 : 20;
   const headerY = doc.y;
   let cx = left;
   for (const c of cols) {
-    doc.font('RB').fontSize(FS.tableHeader).fillColor(COLOR.textMuted)
-      .text(c.label.toUpperCase(), cx + 4, headerY + 7, { width: c.w - 8, align: c.align, lineBreak: false });
+    const isContCol = c.key.startsWith('cont-');
+    if (isContCol) {
+      const contType = c.key.slice(5);
+      doc.font('RB').fontSize(FS.tableHeader).fillColor(COLOR.textMuted)
+        .text(contType, cx + 4, headerY + 4, { width: c.w - 8, align: c.align, lineBreak: false });
+      doc.font('R').fontSize(FS.label - 1).fillColor(COLOR.textFaint)
+        .text('don gia/cont', cx + 4, headerY + 15, { width: c.w - 8, align: c.align, lineBreak: false });
+    } else {
+      doc.font('RB').fontSize(FS.tableHeader).fillColor(COLOR.textMuted)
+        .text(c.label.toUpperCase(), cx + 4, headerY + (HEAD_H2 - 12) / 2 + 5, { width: c.w - 8, align: c.align, lineBreak: false });
+    }
     cx += c.w;
   }
   hline(doc, left, headerY + HEAD_H2, right, COLOR.borderStrong, 0.8);
   doc.y = headerY + HEAD_H2;
 
-  // Build per-row RATE display: per-cont map for cont basis, single value otherwise.
-  function formatRateForPdf(r, currency) {
-    const basis = unitBasis(r.unit);
-    if (basis === 'cont') {
-      const rbc = r.rate_by_cont || r.price_by_cont || {};
-      const parts = Object.entries(rbc)
-        .filter(([, v]) => parseNum(v) > 0)
-        .map(([type, v]) => `${type}:${fmtAmount(parseNum(v), currency)}`);
-      return parts.length ? parts.join('  ') : '';
-    }
-    const rate = parseNum(r.rate != null ? r.rate : r.price);
-    return rate > 0 ? fmtAmount(rate, currency) : '';
-  }
-
   // ─ Data rows (alternating row shading)
   let rowIdx = 0;
   for (const r of ticked) {
     const rowY = doc.y;
+    const basis = unitBasis(r.unit);
+    const isCont = basis === 'cont';
     const net = calcRowAmount(r, ctx);
     const vatAmt = calcRowVat(r, ctx);
     const lineTotal = calcRowTotal(r, ctx);
     const currency = unitToCurrency(r.unit);
+    const rbc = r.rate_by_cont || r.price_by_cont || {};
+    const flatRate = parseNum(r.rate != null ? r.rate : r.price);
 
     if (rowIdx % 2 === 0) {
       doc.save().rect(left, rowY, usable, ROW_H).fill(COLOR.rowAlt).restore();
@@ -319,13 +323,25 @@ function drawChargesSection(doc, left, right, opts) {
       let color = COLOR.text;
       let sz = FS.tableCell;
       if (c.key === 'desc') { txt = r.name || ''; bold = true; }
-      else if (c.key === 'vol') {
-        txt = formatRowVol(r, ctx);
-        color = COLOR.textMuted; sz = FS.tableCell - 0.5;
+      else if (c.key.startsWith('cont-')) {
+        const t = c.key.slice(5);
+        if (isCont) {
+          const v = parseNum(rbc[t]);
+          txt = v > 0 ? fmtAmount(v, currency) : '';
+          color = COLOR.textMuted;
+        } else {
+          txt = '—';
+          color = COLOR.textFaint;
+        }
       }
       else if (c.key === 'rate') {
-        txt = formatRateForPdf(r, currency);
-        color = COLOR.textMuted; sz = FS.tableCell - 0.5;
+        if (isCont) {
+          txt = '—';
+          color = COLOR.textFaint;
+        } else {
+          txt = flatRate > 0 ? fmtAmount(flatRate, currency) : '';
+          color = COLOR.textMuted;
+        }
       }
       else if (c.key === 'unit') { txt = unitShort(r.unit); sz = FS.tableCell - 0.5; }
       else if (c.key === 'vatp') txt = r.vat || '';
@@ -384,11 +400,12 @@ function drawChargesSection(doc, left, right, opts) {
     doc.y = totY + 16;
   }
 
-  // ─ Section explainer (small grey italic)
-  // The per-row VOL column shows what each charge multiplies against; it's
-  // fully derived from the row's UNIT (CONT/SHPT/BL/CBM/KG).
+  // ─ Section explainer (small grey italic).
+  // Vietnamese diacritics are fine (Roboto covers full Vietnamese set).
+  // What previously broke as tofu was Unicode arrows (→) and the em-dash
+  // (—). This wording uses only ASCII punctuation + Vietnamese letters.
   doc.font('RI').fontSize(FS.footer + 0.5).fillColor(COLOR.textFaint)
-    .text('VOL tự suy ra từ Đơn vị (CONT → số cont; SHPT/BL → 1 lô; CBM → tổng CBM; KG → tổng KG). Net = đơn giá × VOL. VAT theo từng loại phí. Line Total đã bao gồm VAT.',
+    .text('Đơn vị quyết định cách tính: CONT = theo container, SHPT/BL = trọn lô, CBM = theo khối, KG = theo trọng lượng. Net = đơn giá x số lượng. Line Total đã gồm VAT.',
       left, doc.y + 4, { width: usable, lineGap: 1 });
   doc.moveDown(0.6);
   resetPaint(doc);
@@ -497,7 +514,7 @@ function drawPageFooter(doc) {
   const right = doc.page.width - doc.page.margins.right;
   const bottom = doc.page.height - 24;
   doc.font('R').fontSize(FS.footer).fillColor(COLOR.textFaint)
-    .text('SLB GLOBAL LOGISTICS CO., LTD.   ·   www.slbglobal.com',
+    .text('SLB GLOBAL LOGISTICS CO., LTD.   |   www.slbglobal.com',
       left, bottom, { width: right - left, align: 'left', lineBreak: false });
   doc.font('R').fontSize(FS.footer).fillColor(COLOR.textFaint)
     .text(`Page 1`, left, bottom, { width: right - left, align: 'right', lineBreak: false });

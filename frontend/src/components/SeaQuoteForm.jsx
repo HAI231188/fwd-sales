@@ -19,7 +19,7 @@
 //   - Grand total currency: USD / VND / (none — no total shown)
 
 import { useState, useEffect } from 'react';
-import { generateSeaQuotePdf } from '../api';
+import { generateSeaQuotePdf, generateSeaQuotePreviewPdf } from '../api';
 import {
   parseNum, unitToCurrency, unitBasis,
   calcRowAmount, calcRowVat, calcRowTotal,
@@ -216,9 +216,10 @@ function DefaultBar({ unitLabel, unit, vat, onUnitChange, onVatChange }) {
 
 // ─── Main component ──────────────────────────────────────────────────────
 
-export default function SeaQuoteForm({ value, onChange, quoteId }) {
+export default function SeaQuoteForm({ value, onChange, quoteId, customerName }) {
   const v = value || EMPTY_SEA_QUOTE;
   const [pdfBusy, setPdfBusy] = useState(false);
+  const [previewBusy, setPreviewBusy] = useState(false);
 
   async function handleExportPdf() {
     if (!quoteId || pdfBusy) return;
@@ -233,6 +234,30 @@ export default function SeaQuoteForm({ value, onChange, quoteId }) {
       alert(`Lỗi xuất PDF: ${msg}`);
     } finally {
       setPdfBusy(false);
+    }
+  }
+
+  // Preview = generate the same PDF from the CURRENT in-memory form state
+  // (no DB lookup, no save). Quotation No = SLB-Q-PREVIEW-YYMMDD.
+  async function handlePreviewPdf() {
+    if (previewBusy) return;
+    setPreviewBusy(true);
+    try {
+      const blob = await generateSeaQuotePreviewPdf({
+        quote_data: v,
+        customer_name: customerName || '(chưa lưu)',
+        valid_until: v.valid_until || null,
+        exchange_rate: v.exchange_rate || null,
+        grand_total_currency: v.grand_total_currency || null,
+      });
+      const url = URL.createObjectURL(blob);
+      window.open(url, '_blank');
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (e) {
+      const msg = e?.response?.data?.error || e?.message || 'Không thể tạo PDF';
+      alert(`Lỗi xem trước PDF: ${msg}`);
+    } finally {
+      setPreviewBusy(false);
     }
   }
 
@@ -378,16 +403,28 @@ export default function SeaQuoteForm({ value, onChange, quoteId }) {
           🚢 Báo giá đường biển
           <span style={{ fontSize: 11, color: 'var(--text-3)', fontStyle: 'italic', marginLeft: 8 }}>v2</span>
         </span>
-        {quoteId && (
-          <button type="button" className="btn btn-sm" onClick={handleExportPdf} disabled={pdfBusy}
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button type="button" className="btn btn-sm" onClick={handlePreviewPdf} disabled={previewBusy}
+            title="Xem trước PDF dùng dữ liệu đang nhập (không cần lưu)."
             style={{
-              background: pdfBusy ? 'var(--text-3)' : '#0066b3',
+              background: previewBusy ? 'var(--text-3)' : '#0E7C66',
               color: '#fff', border: 'none', fontSize: 12,
-              padding: '6px 12px', cursor: pdfBusy ? 'wait' : 'pointer',
+              padding: '6px 12px', cursor: previewBusy ? 'wait' : 'pointer',
             }}>
-            {pdfBusy ? '⏳ Đang tạo…' : '📄 Xuất PDF'}
+            {previewBusy ? '⏳ Đang tạo…' : '👁 Xem trước PDF'}
           </button>
-        )}
+          {quoteId && (
+            <button type="button" className="btn btn-sm" onClick={handleExportPdf} disabled={pdfBusy}
+              title="Xuất PDF từ bản đã lưu vào DB."
+              style={{
+                background: pdfBusy ? 'var(--text-3)' : '#0066b3',
+                color: '#fff', border: 'none', fontSize: 12,
+                padding: '6px 12px', cursor: pdfBusy ? 'wait' : 'pointer',
+              }}>
+              {pdfBusy ? '⏳ Đang tạo…' : '📄 Xuất PDF (đã lưu)'}
+            </button>
+          )}
+        </div>
       </div>
 
       {/* ─── POL / POD / cargo type ─── */}
@@ -748,23 +785,35 @@ const TD_STYLE = {
 };
 const CELL_INPUT = { fontSize: 12, padding: '3px 6px', width: '100%', boxSizing: 'border-box' };
 
-// Unified charges table (2026-05-27). Per-row basis is DERIVED from the
-// row's UNIT (cont / shipment / cbm / kg) via shared seaQuoteCalc.unitBasis.
-// Columns are stable across all rows; the RATE cell content adapts:
-//   - cont basis → 1 rate input per active cont type
-//   - shipment / cbm / kg → single rate input
-// VOL cell is read-only and reflects formatRowVol(row, ctx).
+// Final unified charges table (2026-05-27).
+// FCL: Chi phí | {one rate input per active cont type} | RATE (single) | Đơn vị | VAT% | Ghi chú | Net | VAT | Line Total
+// LCL: Chi phí | RATE | Đơn vị | VAT% | Ghi chú | Net | VAT | Line Total
+//
+// Basis (cont / shipment / cbm / kg) is DERIVED from the row's UNIT via
+// shared seaQuoteCalc.unitBasis. The basis only controls which inputs are
+// enabled in a row — cont basis → cont cells active + RATE shows "—";
+// non-cont basis → cont cells show "—" + RATE input active. Math unchanged.
 function ChargesTable({ rows, activeContTypes, defaultUnit, defaultVat, onPatch, ctx }) {
   const ticked = rows.map((r, i) => ({ r, i })).filter(x => x.r.ticked);
   if (!ticked.length) return null;
+  const isFcl = ctx.cargo_type === 'FCL';
+  // For LCL the table has NO cont columns at all (per spec).
+  const showContCols = isFcl && activeContTypes.length > 0;
   return (
     <div style={{ overflowX: 'auto', marginBottom: 8 }}>
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, background: '#fff', borderRadius: 6 }}>
         <thead>
           <tr>
             <th style={TH_STYLE}>Chi phí</th>
-            <th style={TH_STYLE} title="Khối lượng dòng — tự suy ra từ Đơn vị.">VOL</th>
-            <th style={TH_STYLE} title="Đơn giá — theo cont (cont basis) hoặc số đơn (shipment/CBM/KG)">Đơn giá</th>
+            {showContCols && activeContTypes.map(t => (
+              <th key={t} style={TH_STYLE} title={`Đơn giá / cont ${t}. Số lượng cont nhập 1 lần ở phần Số lượng cont theo loại phía trên.`}>
+                {t}
+                <div style={{ fontSize: 9, fontWeight: 400, color: 'var(--text-3)', textTransform: 'none', letterSpacing: 0 }}>
+                  đơn giá/cont
+                </div>
+              </th>
+            ))}
+            <th style={TH_STYLE} title="Đơn giá cho phí trọn lô (shipment/CBM/KG).">Đơn giá</th>
             <th style={TH_STYLE}>Đơn vị</th>
             <th style={TH_STYLE}>VAT%</th>
             <th style={TH_STYLE}>Ghi chú</th>
@@ -778,42 +827,35 @@ function ChargesTable({ rows, activeContTypes, defaultUnit, defaultVat, onPatch,
             const unitOverridden = r.unit !== defaultUnit;
             const vatOverridden = r.vat !== defaultVat;
             const basis = unitBasis(r.unit);
+            const isCont = basis === 'cont';
             const net = calcRowAmount(r, ctx);
             const vatAmt = calcRowVat(r, ctx);
             const lineTotal = calcRowTotal(r, ctx);
             const currency = unitToCurrency(r.unit);
-            const vol = formatRowVol(r, ctx);
             return (
               <tr key={`${r.custom ? 'c' : 'p'}-${i}`}>
                 <td style={{ ...TD_STYLE, fontWeight: 600, color: 'var(--text)' }}>{r.name}</td>
-                <td style={{ ...TD_STYLE, fontSize: 11, color: 'var(--text-2)', whiteSpace: 'nowrap' }}>
-                  {vol}
-                </td>
-                <td style={TD_STYLE}>
-                  {basis === 'cont' ? (
-                    activeContTypes.length > 0 ? (
-                      <div style={{ display: 'flex', gap: 4, flexWrap: 'nowrap' }}>
-                        {activeContTypes.map(t => (
-                          <div key={t} style={{ display: 'flex', flexDirection: 'column', alignItems: 'stretch', minWidth: 56 }}>
-                            <span style={{ fontSize: 9.5, color: 'var(--text-3)', textAlign: 'center', fontWeight: 600 }}>{t}</span>
-                            <input className="form-input" type="number" min="0" step="any"
-                              value={r.price_by_cont?.[t] || ''}
-                              onChange={e => onPatch(i, {
-                                price_by_cont: { ...(r.price_by_cont || {}), [t]: e.target.value },
-                              })}
-                              style={CELL_INPUT} />
-                          </div>
-                        ))}
-                      </div>
+                {showContCols && activeContTypes.map(t => (
+                  <td key={t} style={TD_STYLE}>
+                    {isCont ? (
+                      <input className="form-input" type="number" min="0" step="any"
+                        value={r.price_by_cont?.[t] || ''}
+                        onChange={e => onPatch(i, {
+                          price_by_cont: { ...(r.price_by_cont || {}), [t]: e.target.value },
+                        })}
+                        style={CELL_INPUT} />
                     ) : (
-                      <span style={{ color: 'var(--text-3)', fontStyle: 'italic', fontSize: 11 }}>
-                        (chưa chọn cont)
-                      </span>
-                    )
+                      <span style={{ color: 'var(--text-3)', fontStyle: 'italic', textAlign: 'center', display: 'block' }}>—</span>
+                    )}
+                  </td>
+                ))}
+                <td style={TD_STYLE}>
+                  {isCont ? (
+                    <span style={{ color: 'var(--text-3)', fontStyle: 'italic', textAlign: 'center', display: 'block' }}>—</span>
                   ) : (
                     <input className="form-input" type="number" min="0" step="any"
                       value={r.price || ''} onChange={e => onPatch(i, { price: e.target.value })}
-                      style={{ ...CELL_INPUT, minWidth: 90 }} />
+                      style={{ ...CELL_INPUT, minWidth: 80 }} placeholder="0" />
                   )}
                 </td>
                 <td style={TD_STYLE}>
@@ -856,8 +898,9 @@ function ChargesTable({ rows, activeContTypes, defaultUnit, defaultVat, onPatch,
         fontSize: 10.5, color: 'var(--text-3)', fontStyle: 'italic',
         marginTop: 4, paddingLeft: 4,
       }}>
-        VOL tự suy ra từ Đơn vị (CONT → số cont; SHPT/BL → 1 lô; CBM → tổng CBM lô hàng; KG → tổng KG).
-        Net = đơn giá × VOL. VAT theo từng loại phí. Line Total đã bao gồm VAT.
+        Đơn vị quyết định cách tính: CONT = theo container, SHPT/BL = trọn lô,
+        CBM = theo khối, KG = theo trọng lượng. Net = đơn giá x số lượng.
+        Line Total đã gồm VAT. Số lượng cont/CBM/KG nhập 1 lần ở phần đầu (VOLUME).
       </div>
     </div>
   );

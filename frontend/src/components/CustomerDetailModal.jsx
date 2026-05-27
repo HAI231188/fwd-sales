@@ -177,7 +177,7 @@ function QuoteEditForm({ quote, pipelineId, onDone }) {
 
 // C4 (2026-05-26) — edit existing v2 sea-freight quote.
 // Pre-fills SeaQuoteForm from quote.quote_data; PUT sends the full v2 payload.
-function SeaQuoteV2EditForm({ quote, pipelineId, onDone }) {
+function SeaQuoteV2EditForm({ quote, pipelineId, customerName, onDone }) {
   const qc = useQueryClient();
   const [data, setData] = useState(() => quote.quote_data || EMPTY_SEA_QUOTE);
   const [status, setStatus] = useState(quote.status || 'quoting');
@@ -205,7 +205,7 @@ function SeaQuoteV2EditForm({ quote, pipelineId, onDone }) {
 
   return (
     <div style={{ background: '#f0f7ff', border: '1px solid #bfdbfe', borderRadius: 8, padding: '12px 14px', marginTop: 8 }}>
-      <SeaQuoteForm value={data} onChange={setData} quoteId={quote.id} />
+      <SeaQuoteForm value={data} onChange={setData} quoteId={quote.id} customerName={customerName} />
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginTop: 10 }}>
         <div>
@@ -676,7 +676,7 @@ function TodayInteractionForm({ pipeline, pipelineId, onDone }) {
               <div key={i} style={{ marginBottom: 12 }}>
                 {isSeaV2 ? (
                   <div style={{ position: 'relative' }}>
-                    <SeaQuoteForm value={q} onChange={onChange} />
+                    <SeaQuoteForm value={q} onChange={onChange} customerName={pipeline.company_name} />
                     {remove && (
                       <button type="button" className="btn btn-danger btn-sm btn-icon"
                         style={{ position: 'absolute', top: 12, right: 56 }}
@@ -1320,6 +1320,7 @@ export default function CustomerDetailModal({ pipelineId, onClose }) {
                                     <SeaQuoteV2EditForm
                                       quote={q}
                                       pipelineId={pipelineId}
+                                      customerName={pipeline.company_name}
                                       onDone={() => setEditingQuoteId(null)}
                                     />
                                   )}

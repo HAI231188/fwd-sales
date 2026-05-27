@@ -87,7 +87,7 @@ export function formatRowVol(row, ctx) {
   if (basis === 'cont') {
     const conts = (ctx?.containers || []).filter(c => nn(c.qty) > 0);
     if (!conts.length) return '—';
-    return conts.map(c => `${c.qty}×${c.type}`).join(' ');
+    return conts.map(c => `${c.qty}x${c.type}`).join(' ');
   }
   if (basis === 'cbm') {
     const cbm = nn(ctx?.shipment_cbm);
@@ -185,7 +185,9 @@ export function formatVolume(qd) {
   // FCL — only types with qty > 0
   const conts = (qd.containers || []).filter(c => parseNum(c.qty) > 0);
   if (!conts.length) return '';
-  const parts = conts.map(c => `${c.qty} × ${c.type}`);
+  // Use ASCII 'x' instead of U+00D7 multiplication sign so PDF embedding
+  // never tofu-boxes (Roboto covers it but font subsets are unreliable).
+  const parts = conts.map(c => `${c.qty} x ${c.type}`);
   const totalCont = conts.reduce((s, c) => s + parseNum(c.qty), 0);
   return `${parts.join(' + ')}  (${totalCont} cont)`;
 }

@@ -109,6 +109,37 @@ router.put('/:id', requireAuth, async (req, res) => {
   }
 });
 
+// 2026-05-27 — preview PDF from in-memory form state (no DB lookup, no save).
+// Body: { quote_data, customer_name, valid_until, exchange_rate, grand_total_currency }.
+// Any authenticated user can preview their own quote-in-progress.
+// Quotation No on the PDF reads "SLB-Q-PREVIEW-YYMMDD" so customers can't
+// confuse a draft preview with a saved quote. Path is declared BEFORE
+// /:id/pdf so Express matches the literal route first.
+router.post('/preview-pdf', requireAuth, async (req, res) => {
+  try {
+    const { quote_data, customer_name, valid_until, exchange_rate, grand_total_currency } = req.body || {};
+    if (!quote_data || typeof quote_data !== 'object') {
+      return res.status(400).json({ error: 'quote_data là bắt buộc' });
+    }
+    const buf = await buildSeaQuotePdf({
+      quote_data,
+      customer_name: customer_name || '(chưa lưu)',
+      valid_until: valid_until || null,
+      exchange_rate: exchange_rate || null,
+      grand_total_currency: grand_total_currency || null,
+      quote_id: 'PREVIEW',
+      quote_created_at: new Date(),
+    });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'inline; filename="quote_preview.pdf"');
+    res.setHeader('Content-Length', buf.length);
+    res.end(buf);
+  } catch (err) {
+    console.error('[POST /api/quotes/preview-pdf]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // 2026-05-26 C3 — sea-quote v2 PDF export.
 // Owner-only (sales who created) or lead (sees all). Returns application/pdf.
 router.post('/:id/pdf', requireAuth, async (req, res) => {

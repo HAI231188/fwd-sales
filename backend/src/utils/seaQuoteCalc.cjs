@@ -67,7 +67,7 @@ function formatRowVol(row, ctx) {
   if (basis === 'cont') {
     const conts = ((ctx && ctx.containers) || []).filter(c => nn(c.qty) > 0);
     if (!conts.length) return '—';
-    return conts.map(c => `${c.qty}×${c.type}`).join(' ');
+    return conts.map(c => `${c.qty}x${c.type}`).join(' ');
   }
   if (basis === 'cbm') {
     const cbm = nn(ctx && ctx.shipment_cbm);
@@ -151,7 +151,7 @@ function formatVolume(qd) {
   }
   const conts = (qd.containers || []).filter(c => parseNum(c.qty) > 0);
   if (!conts.length) return '';
-  const parts = conts.map(c => `${c.qty} × ${c.type}`);
+  const parts = conts.map(c => `${c.qty} x ${c.type}`);
   const totalCont = conts.reduce((s, c) => s + parseNum(c.qty), 0);
   return `${parts.join(' + ')}  (${totalCont} cont)`;
 }

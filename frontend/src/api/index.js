@@ -146,6 +146,11 @@ export const generateBbbgPdf = (id, payload) =>
 export const generateSeaQuotePdf = (quoteId) =>
   api.post(`/quotes/${quoteId}/pdf`, {}, { responseType: 'blob' });
 
+// 2026-05-27 — preview PDF from in-memory form state (no save, no DB lookup).
+// body: { quote_data, customer_name, valid_until, exchange_rate, grand_total_currency }
+export const generateSeaQuotePreviewPdf = (body) =>
+  api.post('/quotes/preview-pdf', body, { responseType: 'blob' });
+
 // Global search (LOG team only)
 export const searchGlobal = (params) => api.get('/search', { params });
 
