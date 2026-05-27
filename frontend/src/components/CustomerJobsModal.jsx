@@ -79,8 +79,7 @@ export default function CustomerJobsModal({ pipelineId, from, to, onClose }) {
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
       style={{ zIndex, alignItems: 'flex-start', padding: 24 }}
     >
-      <div className="modal" style={{
-        maxWidth: 900,
+      <div className="modal modal-lg" style={{
         maxHeight: 'calc(100vh - 48px)',
         overflowY: 'auto',
         boxShadow: '0 12px 36px rgba(0,0,0,0.2)',
