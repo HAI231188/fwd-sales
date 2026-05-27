@@ -5,6 +5,7 @@ import toast from 'react-hot-toast';
 import { quickAddCustomer } from '../api';
 import QuoteForm, { EMPTY_QUOTE } from './QuoteForm';
 import SeaQuoteForm, { EMPTY_SEA_QUOTE } from './SeaQuoteForm';
+import AirQuoteForm, { EMPTY_AIR_QUOTE } from './AirQuoteForm';
 import { useModalZIndex } from '../hooks/useModalZIndex';
 
 const SOURCE_OPTIONS = [
@@ -47,16 +48,37 @@ function serializeQuotes(quotes) {
         cargo_ready_date: null,
         mode: 'sea',
         carrier: '',
-        // C1: keep price NULL on v2 (quote_data is the source of truth).
-        // Legacy displays will look it up via quote_data; fallback display
-        // ships in C4.
         price: null,
         transit_time: null,
         status: q.status || 'quoting',
         follow_up_notes: q.follow_up_notes || null,
         lost_reason: null,
         closing_soon: q.closing_soon || false,
-        // v2 fields persisted to dedicated columns.
+        quote_data: q,
+        valid_until: q.valid_until || null,
+        exchange_rate: q.exchange_rate ? Number(q.exchange_rate) : null,
+        grand_total_currency: q.grand_total_currency || null,
+      };
+    }
+    // 2026-05-27 — air v2 branch. Same wire-format shape as sea v2, just
+    // mode='air' and an air-shaped quote_data (aol, aod, rate_breaks, etc).
+    if (q.version === 2 && (q.transport === 'air' || q.mode === 'air')) {
+      const route = (q.aol || q.aod) ? `${q.aol || '?'} → ${q.aod || '?'}` : null;
+      return {
+        cargo_name: null,
+        monthly_volume_cbm: null,
+        monthly_volume_kg: q.chargeable_weight || null,
+        monthly_volume_containers: null,
+        route,
+        cargo_ready_date: null,
+        mode: 'air',
+        carrier: '',
+        price: null,
+        transit_time: null,
+        status: q.status || 'quoting',
+        follow_up_notes: q.follow_up_notes || null,
+        lost_reason: null,
+        closing_soon: q.closing_soon || false,
         quote_data: q,
         valid_until: q.valid_until || null,
         exchange_rate: q.exchange_rate ? Number(q.exchange_rate) : null,
@@ -381,19 +403,25 @@ export default function AddCustomerModal({ onClose }) {
             <div>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
                 <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)' }}>📋 Báo giá</span>
-                <div style={{ display: 'flex', gap: 6 }}>
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                   <button type="button" className="btn btn-sm btn-primary"
                     onClick={() => setQuotes(qs => [...qs, { ...EMPTY_SEA_QUOTE }])}>
                     + Báo giá biển
                   </button>
+                  <button type="button" className="btn btn-sm btn-primary"
+                    onClick={() => setQuotes(qs => [...qs, { ...EMPTY_AIR_QUOTE }])}
+                    style={{ background: '#2563eb' }}>
+                    + Báo giá hàng không
+                  </button>
                   <button type="button" className="btn btn-sm btn-ghost"
                     onClick={() => setQuotes(qs => [...qs, { ...EMPTY_QUOTE, mode: 'air' }])}>
-                    + Air/Road (legacy)
+                    + Road (legacy)
                   </button>
                 </div>
               </div>
               {quotes.map((q, i) => {
                 const isSeaV2 = q.version === 2 && q.mode === 'sea';
+                const isAirV2 = q.version === 2 && (q.transport === 'air' || q.mode === 'air');
                 const remove = quotes.length > 1
                   ? () => setQuotes(qs => qs.filter((_, idx) => idx !== i))
                   : undefined;
@@ -409,6 +437,15 @@ export default function AddCustomerModal({ onClose }) {
                             onClick={remove}>✕</button>
                         )}
                       </div>
+                    ) : isAirV2 ? (
+                      <div style={{ position: 'relative' }}>
+                        <AirQuoteForm value={q} onChange={onChange} customerName={form.company_name} />
+                        {remove && (
+                          <button type="button" className="btn btn-danger btn-sm btn-icon"
+                            style={{ position: 'absolute', top: 12, right: 56 }}
+                            onClick={remove}>✕</button>
+                        )}
+                      </div>
                     ) : (
                       <QuoteForm quote={q} index={i} onChange={onChange} onRemove={remove} />
                     )}
@@ -417,7 +454,7 @@ export default function AddCustomerModal({ onClose }) {
               })}
               {quotes.length === 0 && (
                 <div style={{ textAlign: 'center', padding: '16px 0', color: 'var(--text-3)', fontSize: 13 }}>
-                  Nhấn "+ Báo giá biển" để thêm
+                  Nhấn "+ Báo giá biển" hoặc "+ Báo giá hàng không" để thêm
                 </div>
               )}
             </div>

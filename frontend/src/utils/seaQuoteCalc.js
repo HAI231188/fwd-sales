@@ -33,6 +33,8 @@ export function unitToCurrency(unit) {
 // 'cont' | 'shipment' | 'cbm' | 'kg' — drives calcRowAmount + formatRowVol.
 // Case-insensitive, tolerates both new (USD/CONT, USD/SHPT, USD/BL, USD/KG)
 // and legacy (USD/cont, USD/shipment, USD/B/L) unit tokens.
+// Returns 'cont' | 'cbm' | 'kg' | 'shipment'.
+// AWB / CHUYEN are air-specific tokens (per-shipment flat fee).
 export function unitBasis(unit) {
   if (!unit) return 'shipment';
   const u = String(unit).toUpperCase();
@@ -40,6 +42,7 @@ export function unitBasis(unit) {
   if (u.includes('CBM')) return 'cbm';
   if (u.includes('/KG') || u.endsWith('KG')) return 'kg';
   if (u.includes('SHPT') || u.includes('SHIPMENT') ||
+      u.includes('AWB') || u.includes('CHUYEN') ||
       u.includes('B/L') || u.includes('/BL')) return 'shipment';
   return 'shipment';
 }
@@ -59,9 +62,15 @@ export function unitBasis(unit) {
 // Backward compat: legacy v2 quotes stored `price_by_cont` / `price`; new
 // quotes may use `rate_by_cont` / `rate`. We read both so existing data still
 // renders correctly (no migration required).
-function rateByCont(row) { return row.rate_by_cont || row.price_by_cont || {}; }
-function rowRate(row)    { return nn(row.rate != null ? row.rate : row.price); }
+function rateByCont(row)  { return row.rate_by_cont  || row.price_by_cont || {}; }
+function rateByBreak(row) { return row.rate_by_break || {}; }
+function rowRate(row)     { return nn(row.rate != null ? row.rate : row.price); }
 
+// 'cont' basis (sea FCL):  Σ ctx.containers[type].qty × row.rate_by_cont[type]
+// 'kg' basis (air):        Σ ctx.rate_breaks[break].kg × row.rate_by_break[break]
+//                         (fallback to row.rate × ctx.shipment_kg for sea single-kg use)
+// 'cbm' basis (sea LCL):   row.rate × ctx.shipment_cbm
+// 'shipment' basis (any):  flat row.rate × 1
 export function calcRowAmount(row, ctx) {
   if (!row || !row.ticked) return 0;
   const basis = unitBasis(row.unit);
@@ -75,9 +84,23 @@ export function calcRowAmount(row, ctx) {
     }
     return total;
   }
+  if (basis === 'kg') {
+    // Air rate-break model: ctx.rate_breaks = [{break, kg}], row.rate_by_break.
+    // If row carries rate_by_break OR ctx has rate_breaks → use break math.
+    if (row.rate_by_break || (ctx?.rate_breaks && ctx.rate_breaks.length)) {
+      const rbb = rateByBreak(row);
+      let total = 0;
+      for (const b of (ctx?.rate_breaks || [])) {
+        const kg = nn(b.kg);
+        if (kg > 0) total += nn(rbb[b.break]) * kg;
+      }
+      return total;
+    }
+    // Sea single-kg fallback: rate × shipment_kg
+    return rowRate(row) * nn(ctx?.shipment_kg);
+  }
   if (basis === 'cbm') return rowRate(row) * nn(ctx?.shipment_cbm);
-  if (basis === 'kg')  return rowRate(row) * nn(ctx?.shipment_kg);
-  // shipment / B/L — flat per-shipment fee
+  // shipment / B/L / AWB / CHUYEN — flat per-shipment fee
   return rowRate(row);
 }
 
@@ -95,6 +118,12 @@ export function formatRowVol(row, ctx) {
     return `${cbm % 1 === 0 ? Math.round(cbm) : cbm} CBM`;
   }
   if (basis === 'kg') {
+    // Air rate-break form first
+    if (ctx?.rate_breaks && ctx.rate_breaks.length) {
+      const breaks = ctx.rate_breaks.filter(b => nn(b.kg) > 0);
+      if (!breaks.length) return '— kg';
+      return breaks.map(b => `${b.kg}kg/${b.break}`).join(' + ');
+    }
     const kg = nn(ctx?.shipment_kg);
     if (kg <= 0) return '— kg';
     return `${kg % 1 === 0 ? Math.round(kg) : kg} kg`;
@@ -191,18 +220,27 @@ export function fmtAmount(n, currency) {
 // been entered yet so callers can skip rendering.
 export function formatVolume(qd) {
   if (!qd) return '';
+  // Air: chargeable weight + selected rate breaks
+  if (qd.transport === 'air' || qd.mode === 'air') {
+    const cw = parseNum(qd.chargeable_weight);
+    const breaks = (qd.rate_breaks || []).filter(b => parseNum(b.kg) > 0);
+    const breaksStr = breaks.length
+      ? breaks.map(b => `${b.kg}kg/${b.break}`).join(' + ')
+      : '';
+    if (cw > 0 && breaksStr) return `CW: ${cw} kg  (${breaksStr})`;
+    if (cw > 0) return `CW: ${cw} kg`;
+    if (breaksStr) return breaksStr;
+    return '';
+  }
   if (qd.cargo_type === 'LCL') {
     const cbm = parseNum(qd.shipment_cbm);
     if (cbm <= 0) return '';
-    // Trim trailing zeros: 45.00 → 45, 12.5 → 12.5
     const shown = cbm % 1 === 0 ? String(Math.round(cbm)) : String(cbm);
     return `${shown} CBM`;
   }
   // FCL — only types with qty > 0
   const conts = (qd.containers || []).filter(c => parseNum(c.qty) > 0);
   if (!conts.length) return '';
-  // Use ASCII 'x' instead of U+00D7 multiplication sign so PDF embedding
-  // never tofu-boxes (Roboto covers it but font subsets are unreliable).
   const parts = conts.map(c => `${c.qty} x ${c.type}`);
   const totalCont = conts.reduce((s, c) => s + parseNum(c.qty), 0);
   return `${parts.join(' + ')}  (${totalCont} cont)`;

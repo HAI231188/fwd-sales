@@ -6,6 +6,7 @@ import { updateQuote, deleteQuote } from '../api';
 import QuoteForm, { EMPTY_QUOTE } from './QuoteForm';
 import CustomerDetailModal from './CustomerDetailModal';
 import SeaQuoteDisplay from './SeaQuoteDisplay';
+import AirQuoteDisplay from './AirQuoteDisplay';
 import { useModalZIndex } from '../hooks/useModalZIndex';
 
 const MODE_ICON = { sea: '🚢', air: '✈️', road: '🚛' };
@@ -66,7 +67,8 @@ function OptionsTable({ price, carrier }) {
 function QuoteCard({ q, canEdit, onEdit, onDelete }) {
   const closingSoon = q.closing_soon;
   const isV2 = q.quote_data?.version === 2;
-  // 2026-05-27 — v2-shape-without-data orphan from the pre-949b3ed bug.
+  const isAir = isV2 && (q.quote_data?.transport === 'air' || q.quote_data?.mode === 'air');
+  const isV2Sea = isV2 && !isAir;
   const isV2Orphan = !isV2 && q.mode === 'sea' && !q.cargo_name && !q.quote_data;
   return (
     <div
@@ -142,7 +144,9 @@ function QuoteCard({ q, canEdit, onEdit, onDelete }) {
         )}
       </div>
 
-      {isV2 ? (
+      {isAir ? (
+        <AirQuoteDisplay quote={q} />
+      ) : isV2Sea ? (
         <SeaQuoteDisplay quote={q} />
       ) : isV2Orphan ? (
         <div style={{

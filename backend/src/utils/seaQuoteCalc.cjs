@@ -37,12 +37,15 @@ function unitBasis(unit) {
   if (u.includes('CBM')) return 'cbm';
   if (u.includes('/KG') || u.endsWith('KG')) return 'kg';
   if (u.includes('SHPT') || u.includes('SHIPMENT') ||
+      u.includes('AWB') || u.includes('CHUYEN') ||
       u.includes('B/L') || u.includes('/BL')) return 'shipment';
   return 'shipment';
 }
 
 function rateByCont(row) { return row.rate_by_cont || row.price_by_cont || {}; }
 function rowRate(row)    { return nn(row.rate != null ? row.rate : row.price); }
+
+function rateByBreak(row) { return row.rate_by_break || {}; }
 
 function calcRowAmount(row, ctx) {
   if (!row || !row.ticked) return 0;
@@ -57,8 +60,19 @@ function calcRowAmount(row, ctx) {
     }
     return total;
   }
+  if (basis === 'kg') {
+    if (row.rate_by_break || (ctx && ctx.rate_breaks && ctx.rate_breaks.length)) {
+      const rbb = rateByBreak(row);
+      let total = 0;
+      for (const b of ((ctx && ctx.rate_breaks) || [])) {
+        const kg = nn(b.kg);
+        if (kg > 0) total += nn(rbb[b.break]) * kg;
+      }
+      return total;
+    }
+    return rowRate(row) * nn(ctx && ctx.shipment_kg);
+  }
   if (basis === 'cbm') return rowRate(row) * nn(ctx && ctx.shipment_cbm);
-  if (basis === 'kg')  return rowRate(row) * nn(ctx && ctx.shipment_kg);
   return rowRate(row);
 }
 
@@ -75,6 +89,11 @@ function formatRowVol(row, ctx) {
     return `${cbm % 1 === 0 ? Math.round(cbm) : cbm} CBM`;
   }
   if (basis === 'kg') {
+    if (ctx && ctx.rate_breaks && ctx.rate_breaks.length) {
+      const breaks = ctx.rate_breaks.filter(b => nn(b.kg) > 0);
+      if (!breaks.length) return '— kg';
+      return breaks.map(b => `${b.kg}kg/${b.break}`).join(' + ');
+    }
     const kg = nn(ctx && ctx.shipment_kg);
     if (kg <= 0) return '— kg';
     return `${kg % 1 === 0 ? Math.round(kg) : kg} kg`;
@@ -152,6 +171,17 @@ function fmtAmount(n, currency) {
 // been entered yet so callers can skip rendering.
 function formatVolume(qd) {
   if (!qd) return '';
+  if (qd.transport === 'air' || qd.mode === 'air') {
+    const cw = parseNum(qd.chargeable_weight);
+    const breaks = (qd.rate_breaks || []).filter(b => parseNum(b.kg) > 0);
+    const breaksStr = breaks.length
+      ? breaks.map(b => `${b.kg}kg/${b.break}`).join(' + ')
+      : '';
+    if (cw > 0 && breaksStr) return `CW: ${cw} kg  (${breaksStr})`;
+    if (cw > 0) return `CW: ${cw} kg`;
+    if (breaksStr) return breaksStr;
+    return '';
+  }
   if (qd.cargo_type === 'LCL') {
     const cbm = parseNum(qd.shipment_cbm);
     if (cbm <= 0) return '';
