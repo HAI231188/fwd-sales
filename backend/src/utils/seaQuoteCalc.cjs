@@ -36,6 +36,7 @@ function unitBasis(unit) {
   if (u.includes('CONT')) return 'cont';
   if (u.includes('CBM')) return 'cbm';
   if (u.includes('/KG') || u.endsWith('KG')) return 'kg';
+  if (u.includes('/XE') || u.endsWith('XE')) return 'xe';
   if (u.includes('SHPT') || u.includes('SHIPMENT') ||
       u.includes('AWB') || u.includes('CHUYEN') ||
       u.includes('B/L') || u.includes('/BL')) return 'shipment';
@@ -52,6 +53,9 @@ function ctxDimensions(ctx) {
   if (ctx.transport === 'air') {
     return (ctx.rate_breaks || []).map(b => ({ key: b.break, qty: nn(b.qty != null ? b.qty : b.kg) }));
   }
+  if (ctx.transport === 'road') {
+    return (ctx.vehicles || []).map(v => ({ key: v.type, qty: nn(v.qty) }));
+  }
   return (ctx.containers || []).map(c => ({ key: c.type, qty: nn(c.qty) }));
 }
 
@@ -60,6 +64,7 @@ function rowUsesDimensions(row, ctx) {
   const basis = unitBasis(row.unit);
   if (basis === 'cont') return true;
   if (basis === 'kg' && row.rate_by_break) return true;
+  if (basis === 'xe') return true;
   return false;
 }
 
@@ -107,6 +112,11 @@ function formatRowVol(row, ctx) {
     const kg = nn(ctx && ctx.shipment_kg);
     if (kg <= 0) return '— kg';
     return `${kg % 1 === 0 ? Math.round(kg) : kg} kg`;
+  }
+  if (basis === 'xe') {
+    const vehs = ((ctx && ctx.vehicles) || []).filter(v => nn(v.qty) > 0);
+    if (!vehs.length) return '— xe';
+    return vehs.map(v => `${v.qty}x${v.type}`).join(' ');
   }
   return '1 lô';
 }
@@ -181,6 +191,13 @@ function fmtAmount(n, currency) {
 // been entered yet so callers can skip rendering.
 function formatVolume(qd) {
   if (!qd) return '';
+  if (qd.transport === 'road' || qd.mode === 'road') {
+    const vehs = (qd.vehicles || []).filter(v => parseNum(v.qty) > 0);
+    if (!vehs.length) return '';
+    const parts = vehs.map(v => `${v.qty} x ${v.type}`);
+    const totalQty = vehs.reduce((s, v) => s + parseNum(v.qty), 0);
+    return `${parts.join(' + ')}  (${totalQty} xe)`;
+  }
   if (qd.transport === 'air' || qd.mode === 'air') {
     const cw = parseNum(qd.chargeable_weight);
     const breaks = (qd.rate_breaks || []).filter(b => parseNum(b.kg) > 0);

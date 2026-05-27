@@ -3,11 +3,13 @@ import { createPortal } from 'react-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { format, differenceInDays } from 'date-fns';
 import { getPipelineDetail, updateQuote, quickAddCustomer, addInteractionUpdate, updateCustomer, markUpdateComplete, undoUpdateComplete, markCustomerFollowUpComplete } from '../api';
-import QuoteForm, { EMPTY_QUOTE } from './QuoteForm';
+import QuoteForm from './QuoteForm';
 import SeaQuoteForm, { EMPTY_SEA_QUOTE } from './SeaQuoteForm';
 import SeaQuoteDisplay from './SeaQuoteDisplay';
 import AirQuoteForm, { EMPTY_AIR_QUOTE } from './AirQuoteForm';
 import AirQuoteDisplay from './AirQuoteDisplay';
+import RoadQuoteForm, { EMPTY_ROAD_QUOTE } from './RoadQuoteForm';
+import RoadQuoteDisplay from './RoadQuoteDisplay';
 import toast from 'react-hot-toast';
 import { useModalZIndex } from '../hooks/useModalZIndex';
 
@@ -381,6 +383,95 @@ function AirQuoteV2EditForm({ quote, pipelineId, customerName, onDone }) {
   );
 }
 
+// 2026-05-27 — edit existing v2 road-freight quote (mirrors AirQuoteV2EditForm).
+function RoadQuoteV2EditForm({ quote, pipelineId, customerName, onDone }) {
+  const qc = useQueryClient();
+  const [data, setData] = useState(() => quote.quote_data || EMPTY_ROAD_QUOTE);
+  const [status, setStatus] = useState(quote.status || 'quoting');
+  const [notes, setNotes] = useState(quote.follow_up_notes || '');
+  const [validUntil, setValidUntil] = useState(quote.valid_until ? String(quote.valid_until).slice(0, 10) : '');
+  const [exchangeRate, setExchangeRate] = useState(quote.exchange_rate || '');
+  const [grandCur, setGrandCur] = useState(quote.grand_total_currency || data.grand_total_currency || '');
+
+  const mutation = useMutation({
+    mutationFn: () => updateQuote(quote.id, {
+      status,
+      follow_up_notes: notes,
+      quote_data: { ...data, version: 2, mode: 'road', transport: 'road', grand_total_currency: grandCur },
+      valid_until: validUntil || null,
+      exchange_rate: exchangeRate || null,
+      grand_total_currency: grandCur || null,
+    }),
+    onSuccess: () => {
+      toast.success('Đã cập nhật báo giá đường bộ');
+      qc.invalidateQueries({ queryKey: ['pipeline-detail', pipelineId] });
+      onDone();
+    },
+    onError: () => toast.error('Cập nhật thất bại'),
+  });
+
+  return (
+    <div style={{ background: '#ecfeff', border: '1px solid #a5f3fc', borderRadius: 8, padding: '12px 14px', marginTop: 8 }}>
+      <RoadQuoteForm value={data} onChange={setData} quoteId={quote.id} customerName={customerName} />
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginTop: 10 }}>
+        <div>
+          <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.4px', display: 'block', marginBottom: 4 }}>Trạng thái</label>
+          <select value={status} onChange={e => setStatus(e.target.value)}
+            style={{ fontSize: 13, padding: '6px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text)', width: '100%', fontFamily: 'var(--font)' }}>
+            <option value="quoting">Nhận thông tin check giá</option>
+            <option value="follow_up">Báo giá follow</option>
+            <option value="booked">Đã Booking</option>
+            <option value="lost">Lost</option>
+          </select>
+        </div>
+        <div>
+          <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.4px', display: 'block', marginBottom: 4 }}>Hiệu lực đến</label>
+          <input type="date" value={validUntil} onChange={e => setValidUntil(e.target.value)}
+            style={{ fontSize: 13, padding: '6px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text)', width: '100%', fontFamily: 'var(--font)' }} />
+        </div>
+        <div>
+          <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.4px', display: 'block', marginBottom: 4 }}>Tỷ giá (USD→VND)</label>
+          <input type="number" value={exchangeRate} onChange={e => setExchangeRate(e.target.value)}
+            placeholder="VD: 26000"
+            style={{ fontSize: 13, padding: '6px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text)', width: '100%', fontFamily: 'var(--font)' }} />
+        </div>
+      </div>
+      <div style={{ marginTop: 10 }}>
+        <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.4px', display: 'block', marginBottom: 4 }}>Đồng tiền Grand Total</label>
+        <div style={{ display: 'flex', gap: 6 }}>
+          {['', 'USD', 'VND'].map(c => (
+            <button key={c || 'none'} type="button" onClick={() => setGrandCur(c)}
+              className="btn btn-sm"
+              style={{
+                flex: 1,
+                background: grandCur === c ? 'var(--primary)' : 'transparent',
+                color: grandCur === c ? '#fff' : 'var(--text-2)',
+                border: `1px solid ${grandCur === c ? 'var(--primary)' : 'var(--border)'}`,
+                fontSize: 12,
+              }}>{c || 'Không hiện'}</button>
+          ))}
+        </div>
+      </div>
+      <div style={{ marginTop: 10 }}>
+        <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.4px', display: 'block', marginBottom: 4 }}>Ghi chú follow up</label>
+        <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2}
+          placeholder="Tình trạng theo dõi..."
+          style={{ fontSize: 13, padding: '6px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text)', width: '100%', fontFamily: 'var(--font)', resize: 'vertical', boxSizing: 'border-box' }} />
+      </div>
+      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
+        <button type="button" onClick={onDone}
+          style={{ fontSize: 12, padding: '6px 14px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-2)', cursor: 'pointer', fontFamily: 'var(--font)' }}>
+          Hủy
+        </button>
+        <button type="button" onClick={() => mutation.mutate()} disabled={mutation.isPending}
+          style={{ fontSize: 12, padding: '6px 14px', borderRadius: 6, border: 'none', background: 'var(--primary)', color: '#fff', cursor: 'pointer', fontFamily: 'var(--font)', fontWeight: 600, opacity: mutation.isPending ? 0.7 : 1 }}>
+          {mutation.isPending ? 'Đang lưu...' : 'Lưu'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function InfoEditForm({ pipeline, latest, pipelineId, customerId, customerCode, onDone }) {
   const qc = useQueryClient();
   const [form, setForm] = useState({
@@ -678,6 +769,32 @@ function TodayInteractionForm({ pipeline, pipelineId, onDone }) {
             grand_total_currency: q.grand_total_currency || null,
           };
         }
+        if (q.version === 2 && (q.transport === 'road' || q.mode === 'road')) {
+          const vehSummary = (q.vehicles || [])
+            .filter(v => Number(v.qty) > 0)
+            .map(v => `${v.qty}x${v.type}`).join(', ');
+          const route = (q.pickup || q.delivery) ? `${q.pickup || '?'} → ${q.delivery || '?'}` : null;
+          return {
+            cargo_name: null,
+            monthly_volume_cbm: null,
+            monthly_volume_kg: null,
+            monthly_volume_containers: vehSummary || null,
+            route,
+            cargo_ready_date: null,
+            mode: 'road',
+            carrier: '',
+            price: null,
+            transit_time: null,
+            status: q.status || 'quoting',
+            follow_up_notes: q.follow_up_notes || null,
+            lost_reason: null,
+            closing_soon: q.closing_soon || false,
+            quote_data: q,
+            valid_until: q.valid_until || null,
+            exchange_rate: q.exchange_rate ? Number(q.exchange_rate) : null,
+            grand_total_currency: q.grand_total_currency || null,
+          };
+        }
         return {
           cargo_name: q.cargo_name || null,
           monthly_volume_cbm: q.monthly_volume_cbm || null,
@@ -779,15 +896,17 @@ function TodayInteractionForm({ pipeline, pipelineId, onDone }) {
                 style={{ background: '#2563eb' }}>
                 + Báo giá hàng không
               </button>
-              <button type="button" className="btn btn-sm btn-ghost"
-                onClick={() => setQuotes(qs => [...qs, { ...EMPTY_QUOTE, mode: 'air' }])}>
-                + Road (legacy)
+              <button type="button" className="btn btn-sm btn-primary"
+                onClick={() => setQuotes(qs => [...qs, { ...EMPTY_ROAD_QUOTE }])}
+                style={{ background: '#0891b2' }}>
+                + Báo giá đường bộ
               </button>
             </div>
           </div>
           {quotes.map((q, i) => {
-            const isSeaV2 = q.version === 2 && q.mode === 'sea';
-            const isAirV2 = q.version === 2 && (q.transport === 'air' || q.mode === 'air');
+            const isSeaV2  = q.version === 2 && q.mode === 'sea';
+            const isAirV2  = q.version === 2 && (q.transport === 'air'  || q.mode === 'air');
+            const isRoadV2 = q.version === 2 && (q.transport === 'road' || q.mode === 'road');
             const remove = quotes.length > 1
               ? () => setQuotes(qs => qs.filter((_, idx) => idx !== i))
               : undefined;
@@ -812,6 +931,15 @@ function TodayInteractionForm({ pipeline, pipelineId, onDone }) {
                         onClick={remove}>✕</button>
                     )}
                   </div>
+                ) : isRoadV2 ? (
+                  <div style={{ position: 'relative' }}>
+                    <RoadQuoteForm value={q} onChange={onChange} customerName={pipeline.company_name} />
+                    {remove && (
+                      <button type="button" className="btn btn-danger btn-sm btn-icon"
+                        style={{ position: 'absolute', top: 12, right: 56 }}
+                        onClick={remove}>✕</button>
+                    )}
+                  </div>
                 ) : (
                   <QuoteForm quote={q} index={i} onChange={onChange} onRemove={remove} />
                 )}
@@ -820,7 +948,7 @@ function TodayInteractionForm({ pipeline, pipelineId, onDone }) {
           })}
           {quotes.length === 0 && (
             <div style={{ textAlign: 'center', padding: '10px 0', color: 'var(--text-3)', fontSize: 12 }}>
-              Nhấn "+ Báo giá biển" hoặc "+ Báo giá hàng không" để thêm
+              Nhấn "+ Báo giá biển", "+ Báo giá hàng không" hoặc "+ Báo giá đường bộ" để thêm
             </div>
           )}
         </div>
@@ -1366,8 +1494,9 @@ export default function CustomerDetailModal({ pipelineId, onClose }) {
                             </div>
                             {c.quotes.map(q => {
                               const isV2 = q.quote_data?.version === 2;
-                              const isAir = isV2 && (q.quote_data?.transport === 'air' || q.quote_data?.mode === 'air');
-                              const isV2Sea = isV2 && !isAir; // default v2 = sea
+                              const isAir  = isV2 && (q.quote_data?.transport === 'air'  || q.quote_data?.mode === 'air');
+                              const isRoad = isV2 && (q.quote_data?.transport === 'road' || q.quote_data?.mode === 'road');
+                              const isV2Sea = isV2 && !isAir && !isRoad; // default v2 = sea
                               const isV2Orphan = !isV2 && q.mode === 'sea' && !q.cargo_name && !q.quote_data;
                               const opts = (isV2 || isV2Orphan) ? [] : parseOptions(q.price, q.carrier).filter(o => o.carrier || o.price);
                               const sc = STATUS_COLOR[q.status] || '#6b7280';
@@ -1403,7 +1532,8 @@ export default function CustomerDetailModal({ pipelineId, onClose }) {
                                   </div>
                                   {q.route && !isV2 && !isV2Orphan && <div style={{ fontSize: 12, color: 'var(--text-2)', marginBottom: 4 }}>📍 {q.route}</div>}
                                   {!isEditing && isV2Sea && <SeaQuoteDisplay quote={q} />}
-                                  {!isEditing && isAir && <AirQuoteDisplay quote={q} />}
+                                  {!isEditing && isAir  && <AirQuoteDisplay  quote={q} />}
+                                  {!isEditing && isRoad && <RoadQuoteDisplay quote={q} />}
                                   {!isEditing && isV2Orphan && (
                                     <div style={{
                                       fontSize: 12, color: '#92400e', background: '#fffbeb',
@@ -1453,6 +1583,14 @@ export default function CustomerDetailModal({ pipelineId, onClose }) {
                                   )}
                                   {isEditing && isAir && (
                                     <AirQuoteV2EditForm
+                                      quote={q}
+                                      pipelineId={pipelineId}
+                                      customerName={pipeline.company_name}
+                                      onDone={() => setEditingQuoteId(null)}
+                                    />
+                                  )}
+                                  {isEditing && isRoad && (
+                                    <RoadQuoteV2EditForm
                                       quote={q}
                                       pipelineId={pipelineId}
                                       customerName={pipeline.company_name}

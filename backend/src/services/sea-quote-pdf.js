@@ -64,6 +64,14 @@ const MARGIN = 40;          // page margins
 const ROW_H = 18;           // table row height (consistent baseline)
 const HEAD_H = 18;          // table header row height
 
+// ─── Per-transport titles (drawHeader reads from here). Adding a future
+// transport (multimodal, rail, …) is a one-line config change. ─────────
+const TRANSPORT_TITLES = {
+  sea:  { en: 'SEA FREIGHT QUOTATION',  vi: 'Báo giá vận tải đường biển' },
+  air:  { en: 'AIR FREIGHT QUOTATION',  vi: 'Báo giá vận tải hàng không' },
+  road: { en: 'ROAD FREIGHT QUOTATION', vi: 'Báo giá vận tải đường bộ' },
+};
+
 function fileExists(p) { try { return fs.statSync(p).isFile(); } catch { return false; } }
 
 function registerFonts(doc) {
@@ -124,12 +132,14 @@ function drawHeader(doc, left, right, opts) {
   doc.y = Math.max(doc.y, top + (logoPath ? 60 : 50));
   doc.moveDown(0.6);
 
-  // Title row: bilingual title left + Quote No / Date / Valid stack right
+  // Title row: bilingual title left + Quote No / Date / Valid stack right.
+  // Title is driven by transport (air/sea/road) — see TRANSPORT_TITLES below.
+  const titles = TRANSPORT_TITLES[opts.transport] || TRANSPORT_TITLES.sea;
   const titleY = doc.y;
   doc.font('RB').fontSize(FS.title).fillColor(COLOR.text)
-    .text('FREIGHT QUOTATION', left, titleY, { lineBreak: false });
+    .text(titles.en, left, titleY, { lineBreak: false });
   doc.font('R').fontSize(FS.subtitle).fillColor(COLOR.textMuted)
-    .text('Báo giá vận chuyển', left, titleY + 22, { lineBreak: false });
+    .text(titles.vi, left, titleY + 22, { lineBreak: false });
 
   // Right-stacked meta block
   const metaW = 200;
@@ -193,18 +203,24 @@ function drawPartiesRoute(doc, left, right, opts) {
     yR = doc.y + 2;
   };
 
-  // Air uses AOL/AOD labels; sea uses POL/POD.
+  // Route labels per transport: sea POL/POD, air AOL/AOD, road Pickup/Delivery/Border.
   if (opts.transport === 'air') {
     subLine('AOL', (opts.aol || '').trim() || '(chua nhap)');
     subLine('AOD', (opts.aod || '').trim() || '(chua nhap)');
+  } else if (opts.transport === 'road') {
+    subLine('PICKUP',   (opts.pickup   || '').trim() || '(chua nhap)');
+    subLine('DELIVERY', (opts.delivery || '').trim() || '(chua nhap)');
+    if (opts.border_gate) subLine('CUA KHAU', String(opts.border_gate));
   } else {
     subLine('POL', pol);
     subLine('POD', pod);
   }
   if (opts.term) subLine('TERM', String(opts.term));
-  // CARGO line — just the type (FCL / LCL / AIR). VOLUME below carries the
-  // actual quantities so the same numbers don't appear twice.
-  subLine('CARGO', opts.transport === 'air' ? 'AIR' : String(opts.cargo_type || 'FCL'));
+  // CARGO line — just the type. VOLUME below carries the actual quantities.
+  const cargoLabel = opts.transport === 'air' ? 'AIR'
+    : opts.transport === 'road' ? 'ROAD'
+    : String(opts.cargo_type || 'FCL');
+  subLine('CARGO', cargoLabel);
 
   // VOLUME row — most prominent meta value (larger + brand color).
   const volumeStr = formatVolume({
@@ -214,6 +230,7 @@ function drawPartiesRoute(doc, left, right, opts) {
     shipment_cbm: opts.shipment_cbm,
     chargeable_weight: opts.chargeable_weight,
     rate_breaks: opts.rate_breaks,
+    vehicles: opts.vehicles,
   });
   if (volumeStr) {
     doc.font('R').fontSize(FS.label).fillColor(COLOR.textMuted)
@@ -245,16 +262,17 @@ function drawChargesSection(doc, left, right, opts) {
   if (!ticked.length) return { byCurrency: {} };
 
   const usable = right - left;
-  // Dimension: sea = container types (FCL only); air = rate breaks.
-  // `activeTypes` holds the dimension keys in render order. Each key gets
-  // a paired (SL | Đơn giá) sub-column block in the table header.
-  const isAir = ctx.transport === 'air';
-  const isFcl = !isAir && ctx.cargo_type === 'FCL';
-  const activeTypes = isAir
-    ? (ctx.rate_breaks || []).filter(b => parseNum(b.kg) > 0).map(b => b.break)
-    : isFcl
-      ? (ctx.containers || []).filter(c => parseNum(c.qty) > 0).map(c => c.type)
-      : [];
+  // Dimension: sea = container types (FCL only); air = rate breaks;
+  // road = vehicle types. `activeTypes` holds the dimension keys in render
+  // order. Each key gets a paired (SL | Đơn giá) sub-column block.
+  // Sourced from the same `ctxDimensions` used by the calc — guaranteed
+  // to match exactly what the math sees (L27).
+  const isAir  = ctx.transport === 'air';
+  const isRoad = ctx.transport === 'road';
+  const isFcl  = !isAir && !isRoad && ctx.cargo_type === 'FCL';
+  const activeTypes = (isAir || isRoad || isFcl)
+    ? ctxDimensions(ctx).filter(d => d.qty > 0).map(d => d.key)
+    : [];
 
   // ─ Brand-colored section header bar
   const barY = doc.y;
@@ -279,27 +297,28 @@ function drawChargesSection(doc, left, right, opts) {
   const UNIT_W = 72;
   const VATPCT_W = 24;
   const RATE_W = 50;
-  // qtyByType maps dimension key → qty (sea: cont qty, air: kg per break).
-  const qtyByType = isAir
-    ? Object.fromEntries((ctx.rate_breaks || []).map(b => [b.break, parseNum(b.kg)]))
-    : Object.fromEntries((ctx.containers || []).map(c => [c.type, parseNum(c.qty)]));
+  // qtyByType maps dimension key → qty. Built from the same canonical
+  // ctxDimensions used by calc, so render and math can never drift.
+  const qtyByType = Object.fromEntries(ctxDimensions(ctx).map(d => [d.key, d.qty]));
 
   const cols = [];
   cols.push({ key: 'desc', w: 0, label: 'Description', align: 'left' });
   let contGroupCount = 0;
   if (activeTypes.length > 0) {
     contGroupCount = activeTypes.length;
-    // Air needs wider SL (4-5 digit kg) + Giá (4-digit rate). Tighten
-    // adaptively as break count grows — only render activeTypes already
-    // filtered to kg>0, so users with 1 break get a comfortable layout.
-    const slW  = isAir
+    // Per-transport adaptive widths. Air kg needs more digits than sea
+    // cont qty; road số xe is 1-2 digits like sea but reuses air widths
+    // for consistency with the longer rate values typical for trucking.
+    const wide = isAir || isRoad;
+    const slW  = wide
       ? (contGroupCount > 2 ? 18 : (contGroupCount > 1 ? 22 : 32))
       : (contGroupCount > 2 ? 12 : 16);
-    const giaW = isAir
+    const giaW = wide
       ? (contGroupCount > 2 ? 32 : (contGroupCount > 1 ? 40 : 56))
       : (contGroupCount > 3 ? 32 : (contGroupCount > 2 ? 36 : (contGroupCount > 1 ? 44 : 52)));
+    const slLabel = isAir ? 'kg' : isRoad ? 'so xe' : 'SL';
     for (const t of activeTypes) {
-      cols.push({ key: `sl-${t}`,  w: slW,  contType: t, label: isAir ? 'kg' : 'SL', align: 'center' });
+      cols.push({ key: `sl-${t}`,  w: slW,  contType: t, label: slLabel, align: 'center' });
       cols.push({ key: `gia-${t}`, w: giaW, contType: t, label: 'Don gia', align: 'right' });
     }
   }
@@ -371,11 +390,12 @@ function drawChargesSection(doc, left, right, opts) {
       let sz = FS.tableCell;
       if (c.key === 'desc') { txt = r.name || ''; bold = true; }
       else if (c.key.startsWith('sl-')) {
-        const t = c.contType;                // dimension key (cont type OR break name)
+        const t = c.contType;                // dimension key (cont/break/vehicle)
         if (usesDim) {
           const qty = qtyByType[t] || 0;
-          // Air kg can be 4-5 digits → thousand-separated; sea cont qty stays plain.
-          txt = ctx.transport === 'air'
+          // Air kg can be 4-5 digits → thousand-separated; sea/road typically
+          // 1-2 digits but the formatter handles both fine.
+          txt = (ctx.transport === 'air')
             ? Number(qty).toLocaleString('en-US')
             : String(qty);
           color = COLOR.text;
@@ -625,22 +645,27 @@ function buildSeaQuotePdf(opts) {
       const right = doc.page.width - doc.page.margins.right;
 
       const qd = opts.quote_data || {};
-      const isAir = qd.transport === 'air' || qd.mode === 'air';
+      const isAir  = qd.transport === 'air'  || qd.mode === 'air';
+      const isRoad = qd.transport === 'road' || qd.mode === 'road';
+      const transport = isRoad ? 'road' : isAir ? 'air' : 'sea';
       const ctx = {
-        transport: isAir ? 'air' : 'sea',
+        transport,
         cargo_type: qd.cargo_type || 'FCL',
         containers: qd.containers || [],
         shipment_cbm: qd.shipment_cbm,
         shipment_kg: qd.shipment_kg,
-        // Air-specific:
+        // Air:
         rate_breaks: qd.rate_breaks || [],
         chargeable_weight: qd.chargeable_weight,
+        // Road:
+        vehicles: qd.vehicles || [],
       };
 
       drawHeader(doc, left, right, {
         quote_id: opts.quote_id,
         quote_created_at: opts.quote_created_at,
         valid_until: opts.valid_until,
+        transport: ctx.transport,
       });
 
       drawPartiesRoute(doc, left, right, {
@@ -657,6 +682,11 @@ function buildSeaQuotePdf(opts) {
         aod: qd.aod,
         chargeable_weight: qd.chargeable_weight,
         rate_breaks: qd.rate_breaks,
+        // Road fields
+        pickup: qd.pickup,
+        delivery: qd.delivery,
+        border_gate: qd.border_gate,
+        vehicles: qd.vehicles,
         // Common
         term: qd.term,
         exchange_rate: opts.exchange_rate,

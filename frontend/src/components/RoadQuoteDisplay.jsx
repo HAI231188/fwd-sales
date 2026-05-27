@@ -1,0 +1,279 @@
+// RoadQuoteDisplay — compact read-only render of a road freight v2 quote
+// (2026-05-27). Mirrors Sea/Air; uses the unified parametric engine.
+
+import React, { useState } from 'react';
+import { generateSeaQuotePdf } from '../api';
+import {
+  parseNum, unitToCurrency, unitBasis,
+  calcRowAmount, calcRowVat, calcRowTotal,
+  calcSectionTotals, calcGrandTotal, fmtAmount, formatVolume,
+} from '../utils/seaQuoteCalc';
+
+function fmtDate(d) {
+  if (!d) return '';
+  try {
+    const date = typeof d === 'string' ? new Date(d) : d;
+    if (Number.isNaN(date.getTime())) return String(d);
+    return date.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  } catch { return String(d); }
+}
+
+export default function RoadQuoteDisplay({ quote }) {
+  const qd = quote.quote_data || {};
+  const ctx = { transport: 'road', vehicles: qd.vehicles || [] };
+  const tickedIntl = (qd.intl_charges || []).filter(r => r.ticked);
+  const tickedInland = (qd.inland_charges || []).filter(r => r.ticked);
+  const intlT = calcSectionTotals(qd.intl_charges, ctx);
+  const inlandT = calcSectionTotals(qd.inland_charges, ctx);
+  const target = quote.grand_total_currency || qd.grand_total_currency;
+  const rate = quote.exchange_rate || qd.exchange_rate;
+  const { perCurrency, grand, needsRate } = calcGrandTotal(intlT, inlandT, target, rate);
+  const currencyKeys = Object.keys(perCurrency);
+
+  const [pdfBusy, setPdfBusy] = useState(false);
+  async function handlePdf() {
+    if (pdfBusy) return;
+    setPdfBusy(true);
+    try {
+      const blob = await generateSeaQuotePdf(quote.id);
+      const url = URL.createObjectURL(blob);
+      window.open(url, '_blank');
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (e) {
+      alert(`Lỗi xuất PDF: ${e?.response?.data?.error || e?.message || 'Không thể tạo PDF'}`);
+    } finally { setPdfBusy(false); }
+  }
+
+  const activeVehicles = (qd.vehicles || []).filter(v => parseNum(v.qty) > 0).map(v => v.type);
+
+  return (
+    <div style={{ fontSize: 12, color: 'var(--text-2)', marginTop: 4 }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+        <span style={{ fontWeight: 600, color: 'var(--text)' }}>
+          🚛 {qd.pickup || '—'} → {qd.delivery || '—'}
+        </span>
+        {qd.border_gate && (
+          <span style={{ fontSize: 11, padding: '1px 8px', borderRadius: 8, background: '#fef3c7', color: '#92400e', fontWeight: 600 }}>
+            Cửa khẩu: {qd.border_gate}
+          </span>
+        )}
+        {qd.term && (
+          <span style={{ fontSize: 11, padding: '1px 8px', borderRadius: 8, background: '#dbeafe', color: '#1d4ed8', fontWeight: 600 }}>
+            {qd.term}
+          </span>
+        )}
+        <span style={{ fontSize: 11, padding: '1px 8px', borderRadius: 8, background: '#f3f4f6', color: '#374151', fontWeight: 600 }}>
+          ROAD
+        </span>
+        <button type="button" onClick={handlePdf} disabled={pdfBusy}
+          style={{
+            marginLeft: 'auto',
+            background: pdfBusy ? 'var(--text-3)' : '#0066b3',
+            color: '#fff', border: 'none', borderRadius: 6, fontSize: 11,
+            padding: '4px 10px', cursor: pdfBusy ? 'wait' : 'pointer', fontWeight: 600,
+          }}>
+          {pdfBusy ? '⏳' : '📄 PDF'}
+        </button>
+      </div>
+
+      {(() => {
+        const volume = formatVolume(qd);
+        if (!volume) return null;
+        return (
+          <div style={{
+            marginTop: 4, marginBottom: 8,
+            padding: '6px 10px', background: 'var(--primary-dim)',
+            border: '1px solid var(--primary)', borderRadius: 6,
+            display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap',
+          }}>
+            <span style={{
+              fontSize: 9.5, fontWeight: 700, color: 'var(--text-3)',
+              textTransform: 'uppercase', letterSpacing: '0.4px',
+            }}>Volume / Khối lượng</span>
+            <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--primary)', fontFamily: 'var(--font-display)' }}>
+              {volume}
+            </span>
+          </div>
+        );
+      })()}
+
+      <ChargeBlock title="Phí quốc tế" rows={tickedIntl} ctx={ctx} totals={intlT} activeVehicles={activeVehicles} />
+      <ChargeBlock title="Phí nội địa" rows={tickedInland} ctx={ctx} totals={inlandT} activeVehicles={activeVehicles} />
+
+      {!target && currencyKeys.length > 0 && (
+        <div style={{
+          marginTop: 8, padding: '6px 10px', background: 'var(--primary-dim)',
+          border: '1px solid var(--primary)', borderRadius: 6,
+          display: 'flex', flexDirection: 'column', gap: 3,
+        }}>
+          {currencyKeys.map(cur => (
+            <div key={cur} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+              <span style={{ fontWeight: 700, color: 'var(--text-2)', fontSize: 11 }}>TỔNG {cur}</span>
+              <span style={{ fontWeight: 700, color: 'var(--primary)', fontSize: 13 }}>
+                {fmtAmount(perCurrency[cur], cur)} {cur}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+      {target && grand != null && (
+        <div style={{
+          marginTop: 8, padding: '6px 10px', background: '#fff7ed',
+          border: '1px solid #fdba74', borderRadius: 6,
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+        }}>
+          <span style={{ fontWeight: 700, color: '#9a3412', fontSize: 12 }}>GRAND TOTAL</span>
+          <span style={{ fontWeight: 700, color: '#9a3412', fontSize: 13 }}>
+            {fmtAmount(grand, target)} {target}
+          </span>
+        </div>
+      )}
+      {needsRate && (
+        <div style={{ marginTop: 6 }}>
+          <div style={{ fontSize: 11, color: '#d97706', fontStyle: 'italic', marginBottom: 4 }}>
+            ⚠ Vui lòng nhập tỷ giá để quy đổi Grand Total ({currencyKeys.join(' + ')})
+          </div>
+          {currencyKeys.map(cur => (
+            <div key={cur} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
+              <span style={{ color: 'var(--text-2)', fontWeight: 600 }}>TỔNG {cur}</span>
+              <span style={{ color: 'var(--text-2)', fontWeight: 700 }}>
+                {fmtAmount(perCurrency[cur], cur)} {cur}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {(quote.valid_until || rate) && (
+        <div style={{ marginTop: 6, fontSize: 11, color: 'var(--text-3)', display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+          {quote.valid_until && <span>Hiệu lực: {fmtDate(quote.valid_until)}</span>}
+          {rate && <span>Tỷ giá: 1 USD = {Number(rate).toLocaleString('vi-VN')} VND</span>}
+        </div>
+      )}
+
+      {qd.notes && (
+        <div style={{ marginTop: 6, fontSize: 12, color: 'var(--text-2)', fontStyle: 'italic' }}>
+          📝 {qd.notes}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const TH_S  = { padding: '3px 6px', fontSize: 9.5, fontWeight: 700, color: 'var(--text-3)',
+  textTransform: 'uppercase', letterSpacing: '0.3px', borderBottom: '1px solid var(--border)' };
+const TH_SUB = { padding: '2px 6px', fontSize: 9, fontWeight: 600, color: 'var(--text-3)',
+  borderBottom: '1px solid var(--border)' };
+const TD_S  = { padding: '3px 6px', fontSize: 11.5, verticalAlign: 'baseline' };
+
+function ChargeBlock({ title, rows, ctx, totals, activeVehicles }) {
+  if (!rows.length) return null;
+  const qtyByVeh = Object.fromEntries((ctx.vehicles || []).map(v => [v.type, parseNum(v.qty)]));
+  const showVehCols = activeVehicles.length > 0;
+  return (
+    <div style={{ marginTop: 6 }}>
+      <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.3px', marginBottom: 2 }}>
+        {title}
+      </div>
+      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <thead>
+          <tr>
+            <th rowSpan={2} style={{ ...TH_S, textAlign: 'left' }}>Chi phí</th>
+            {showVehCols && activeVehicles.map(t => (
+              <th key={t} colSpan={2} style={{ ...TH_S, textAlign: 'center' }}>{t}</th>
+            ))}
+            <th rowSpan={2} style={{ ...TH_S, textAlign: 'right' }}>Đơn giá</th>
+            <th rowSpan={2} style={{ ...TH_S, textAlign: 'left' }}>Đơn vị</th>
+            <th rowSpan={2} style={{ ...TH_S, textAlign: 'left' }}>VAT%</th>
+            <th rowSpan={2} style={{ ...TH_S, textAlign: 'right' }}>Net</th>
+            <th rowSpan={2} style={{ ...TH_S, textAlign: 'right' }}>VAT</th>
+            <th rowSpan={2} style={{ ...TH_S, textAlign: 'right' }}>Line Total</th>
+          </tr>
+          {showVehCols && (
+            <tr>
+              {activeVehicles.map(t => (
+                <React.Fragment key={t}>
+                  <th style={{ ...TH_SUB, textAlign: 'center', whiteSpace: 'nowrap', minWidth: 52 }}>xe</th>
+                  <th style={{ ...TH_SUB, textAlign: 'right',  whiteSpace: 'nowrap', minWidth: 72 }}>Đơn giá</th>
+                </React.Fragment>
+              ))}
+            </tr>
+          )}
+        </thead>
+        <tbody>
+          {rows.map((r, i) => {
+            const basis = unitBasis(r.unit);
+            const isXe = basis === 'xe';
+            const net = calcRowAmount(r, ctx);
+            const vatAmt = calcRowVat(r, ctx);
+            const lineTotal = calcRowTotal(r, ctx);
+            const cur = unitToCurrency(r.unit);
+            const rbb = r.rate_by_break || {};
+            const flatRate = parseNum(r.rate != null ? r.rate : r.price);
+            return (
+              <tr key={i}>
+                <td style={{ ...TD_S, color: 'var(--text)', fontWeight: 500 }}>{r.name}</td>
+                {showVehCols && activeVehicles.map(t => (
+                  <React.Fragment key={t}>
+                    <td style={{ ...TD_S, textAlign: 'center', whiteSpace: 'nowrap', minWidth: 52,
+                      color: isXe ? 'var(--text)' : 'var(--text-3)',
+                      fontWeight: isXe ? 600 : 400, fontSize: 10.5 }}>
+                      {isXe ? (qtyByVeh[t] || 0) : '—'}
+                    </td>
+                    <td style={{ ...TD_S, textAlign: 'right', whiteSpace: 'nowrap', minWidth: 72,
+                      color: isXe ? 'var(--text-2)' : 'var(--text-3)',
+                      fontSize: 10.5 }}>
+                      {isXe
+                        ? (parseNum(rbb[t]) > 0 ? fmtAmount(parseNum(rbb[t]), cur) : '—')
+                        : '—'}
+                    </td>
+                  </React.Fragment>
+                ))}
+                <td style={{ ...TD_S, textAlign: 'right',
+                  color: !isXe && flatRate > 0 ? 'var(--text-2)' : 'var(--text-3)',
+                  fontSize: 10.5, whiteSpace: 'nowrap' }}>
+                  {isXe ? '—' : (flatRate > 0 ? fmtAmount(flatRate, cur) : '—')}
+                </td>
+                <td style={{ ...TD_S, color: 'var(--text-3)', fontSize: 10.5, whiteSpace: 'nowrap' }}>{r.unit}</td>
+                <td style={{ ...TD_S, color: 'var(--text-3)', fontSize: 10.5, whiteSpace: 'nowrap' }}>{r.vat || ''}</td>
+                <td style={{ ...TD_S, textAlign: 'right', color: 'var(--text-2)', whiteSpace: 'nowrap' }}>
+                  {net > 0 ? fmtAmount(net, cur) : '—'}
+                </td>
+                <td style={{ ...TD_S, textAlign: 'right', color: 'var(--text-2)', whiteSpace: 'nowrap' }}>
+                  {net > 0 ? fmtAmount(vatAmt, cur) : '—'}
+                </td>
+                <td style={{ ...TD_S, textAlign: 'right', color: 'var(--primary)', fontWeight: 700, whiteSpace: 'nowrap' }}>
+                  {lineTotal > 0 ? fmtAmount(lineTotal, cur) : '—'}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      {Object.keys(totals).map(cur => {
+        const { net, vat, total } = totals[cur];
+        return (
+          <div key={cur} style={{
+            marginTop: 4, paddingTop: 3, borderTop: '1px dashed var(--border)',
+            fontSize: 11, color: 'var(--text-2)',
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span>Subtotal Net ({cur}):</span>
+              <span>{fmtAmount(net, cur)} {cur}</span>
+            </div>
+            {vat > 0 && (
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>VAT ({cur}):</span>
+                <span>{fmtAmount(vat, cur)} {cur}</span>
+              </div>
+            )}
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, color: 'var(--text)' }}>
+              <span>Section Total ({cur}):</span>
+              <span>{fmtAmount(total, cur)} {cur}</span>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}

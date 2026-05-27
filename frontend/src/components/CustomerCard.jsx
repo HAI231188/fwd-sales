@@ -7,6 +7,7 @@ import QuoteForm, { EMPTY_QUOTE } from './QuoteForm';
 import CustomerDetailModal from './CustomerDetailModal';
 import SeaQuoteDisplay from './SeaQuoteDisplay';
 import AirQuoteDisplay from './AirQuoteDisplay';
+import RoadQuoteDisplay from './RoadQuoteDisplay';
 import { useModalZIndex } from '../hooks/useModalZIndex';
 
 const MODE_ICON = { sea: '🚢', air: '✈️', road: '🚛' };
@@ -67,8 +68,9 @@ function OptionsTable({ price, carrier }) {
 function QuoteCard({ q, canEdit, onEdit, onDelete }) {
   const closingSoon = q.closing_soon;
   const isV2 = q.quote_data?.version === 2;
-  const isAir = isV2 && (q.quote_data?.transport === 'air' || q.quote_data?.mode === 'air');
-  const isV2Sea = isV2 && !isAir;
+  const isAir  = isV2 && (q.quote_data?.transport === 'air'  || q.quote_data?.mode === 'air');
+  const isRoad = isV2 && (q.quote_data?.transport === 'road' || q.quote_data?.mode === 'road');
+  const isV2Sea = isV2 && !isAir && !isRoad;
   const isV2Orphan = !isV2 && q.mode === 'sea' && !q.cargo_name && !q.quote_data;
   return (
     <div
@@ -85,7 +87,9 @@ function QuoteCard({ q, canEdit, onEdit, onDelete }) {
           <span className={`badge ${MODE_CLASS[q.mode]}`}>{MODE_ICON[q.mode]} {q.mode?.toUpperCase()}</span>
           <span className={`badge ${STATUS_CLASS[q.status]}`}>{STATUS_LABEL[q.status]}</span>
           {q.closing_soon && <span className="badge badge-warning">⚡ Sắp chốt</span>}
-          {isV2 && <span className="badge" style={{ background: '#dbeafe', color: '#1d4ed8' }}>v2 biển</span>}
+          {isV2Sea && <span className="badge" style={{ background: '#dbeafe', color: '#1d4ed8' }}>v2 biển</span>}
+          {isAir   && <span className="badge" style={{ background: '#ede9fe', color: '#5b21b6' }}>v2 hàng không</span>}
+          {isRoad  && <span className="badge" style={{ background: '#cffafe', color: '#155e75' }}>v2 đường bộ</span>}
           {isV2Orphan && <span className="badge" style={{ background: '#fef3c7', color: '#92400e' }}>⚠️ lỗi dữ liệu</span>}
         </div>
         {canEdit && (
@@ -146,6 +150,8 @@ function QuoteCard({ q, canEdit, onEdit, onDelete }) {
 
       {isAir ? (
         <AirQuoteDisplay quote={q} />
+      ) : isRoad ? (
+        <RoadQuoteDisplay quote={q} />
       ) : isV2Sea ? (
         <SeaQuoteDisplay quote={q} />
       ) : isV2Orphan ? (

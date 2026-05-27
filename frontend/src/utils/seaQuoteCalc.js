@@ -35,12 +35,15 @@ export function unitToCurrency(unit) {
 // and legacy (USD/cont, USD/shipment, USD/B/L) unit tokens.
 // Returns 'cont' | 'cbm' | 'kg' | 'shipment'.
 // AWB / CHUYEN are air-specific tokens (per-shipment flat fee).
+// Returns 'cont' | 'cbm' | 'kg' | 'xe' | 'shipment'.
+// XE = road per-vehicle, AWB/CHUYEN = air/road shipment-flat.
 export function unitBasis(unit) {
   if (!unit) return 'shipment';
   const u = String(unit).toUpperCase();
   if (u.includes('CONT')) return 'cont';
   if (u.includes('CBM')) return 'cbm';
   if (u.includes('/KG') || u.endsWith('KG')) return 'kg';
+  if (u.includes('/XE') || u.endsWith('XE')) return 'xe';
   if (u.includes('SHPT') || u.includes('SHIPMENT') ||
       u.includes('AWB') || u.includes('CHUYEN') ||
       u.includes('B/L') || u.includes('/BL')) return 'shipment';
@@ -84,6 +87,9 @@ export function ctxDimensions(ctx) {
   if (ctx.transport === 'air') {
     return (ctx.rate_breaks || []).map(b => ({ key: b.break, qty: nn(b.qty != null ? b.qty : b.kg) }));
   }
+  if (ctx.transport === 'road') {
+    return (ctx.vehicles || []).map(v => ({ key: v.type, qty: nn(v.qty) }));
+  }
   return (ctx.containers || []).map(c => ({ key: c.type, qty: nn(c.qty) }));
 }
 
@@ -98,6 +104,7 @@ export function rowUsesDimensions(row, ctx) {
   const basis = unitBasis(row.unit);
   if (basis === 'cont') return true;
   if (basis === 'kg' && row.rate_by_break) return true;
+  if (basis === 'xe') return true;
   return false;
 }
 
@@ -148,7 +155,6 @@ export function formatRowVol(row, ctx) {
     return `${cbm % 1 === 0 ? Math.round(cbm) : cbm} CBM`;
   }
   if (basis === 'kg') {
-    // Air rate-break form first
     if (ctx?.rate_breaks && ctx.rate_breaks.length) {
       const breaks = ctx.rate_breaks.filter(b => nn(b.kg) > 0);
       if (!breaks.length) return '— kg';
@@ -157,6 +163,11 @@ export function formatRowVol(row, ctx) {
     const kg = nn(ctx?.shipment_kg);
     if (kg <= 0) return '— kg';
     return `${kg % 1 === 0 ? Math.round(kg) : kg} kg`;
+  }
+  if (basis === 'xe') {
+    const vehs = (ctx?.vehicles || []).filter(v => nn(v.qty) > 0);
+    if (!vehs.length) return '— xe';
+    return vehs.map(v => `${v.qty}x${v.type}`).join(' ');
   }
   return '1 lô';
 }
@@ -250,6 +261,14 @@ export function fmtAmount(n, currency) {
 // been entered yet so callers can skip rendering.
 export function formatVolume(qd) {
   if (!qd) return '';
+  // Road: vehicle types × qty (e.g. "2 x 13m + 1 x 45HC")
+  if (qd.transport === 'road' || qd.mode === 'road') {
+    const vehs = (qd.vehicles || []).filter(v => parseNum(v.qty) > 0);
+    if (!vehs.length) return '';
+    const parts = vehs.map(v => `${v.qty} x ${v.type}`);
+    const totalQty = vehs.reduce((s, v) => s + parseNum(v.qty), 0);
+    return `${parts.join(' + ')}  (${totalQty} xe)`;
+  }
   // Air: chargeable weight + selected rate breaks
   if (qd.transport === 'air' || qd.mode === 'air') {
     const cw = parseNum(qd.chargeable_weight);
