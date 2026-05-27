@@ -18,7 +18,7 @@
 //   - Term pills: EXW/FCA/FOB/CFR/CIF/DAP/DDP + 1 custom input
 //   - Grand total currency: USD / VND / (none — no total shown)
 
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { generateSeaQuotePdf, generateSeaQuotePreviewPdf } from '../api';
 import {
   parseNum, unitToCurrency, unitBasis,
@@ -785,42 +785,58 @@ const TD_STYLE = {
 };
 const CELL_INPUT = { fontSize: 12, padding: '3px 6px', width: '100%', boxSizing: 'border-box' };
 
-// Final unified charges table (2026-05-27).
-// FCL: Chi phí | {one rate input per active cont type} | RATE (single) | Đơn vị | VAT% | Ghi chú | Net | VAT | Line Total
+// Final charges table (2026-05-27) — paired SL + Giá sub-cols per cont type.
+// FCL: Chi phí | {per cont type: SL | Đơn giá} | RATE | Đơn vị | VAT% | Ghi chú | Net | VAT | Line Total
 // LCL: Chi phí | RATE | Đơn vị | VAT% | Ghi chú | Net | VAT | Line Total
 //
-// Basis (cont / shipment / cbm / kg) is DERIVED from the row's UNIT via
-// shared seaQuoteCalc.unitBasis. The basis only controls which inputs are
-// enabled in a row — cont basis → cont cells active + RATE shows "—";
-// non-cont basis → cont cells show "—" + RATE input active. Math unchanged.
+// SL cell shows the shipment qty from header containers[] (read-only —
+// it's the same number on every cont-basis row, by design). Giá is the
+// editable per-cont unit rate. Net for cont rows = Σ SL × Giá (math
+// unchanged, runs through shared seaQuoteCalc.calcRowAmount).
 function ChargesTable({ rows, activeContTypes, defaultUnit, defaultVat, onPatch, ctx }) {
   const ticked = rows.map((r, i) => ({ r, i })).filter(x => x.r.ticked);
   if (!ticked.length) return null;
   const isFcl = ctx.cargo_type === 'FCL';
-  // For LCL the table has NO cont columns at all (per spec).
   const showContCols = isFcl && activeContTypes.length > 0;
+  // Quick qty lookup from header containers[].
+  const qtyByType = Object.fromEntries(
+    (ctx.containers || []).map(c => [c.type, parseNum(c.qty)])
+  );
+  // Total visible columns (used by colspan-aware empty cell math, not strictly needed)
+
   return (
     <div style={{ overflowX: 'auto', marginBottom: 8 }}>
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, background: '#fff', borderRadius: 6 }}>
         <thead>
+          {/* Top header row: cont types span 2 sub-cols each. Static cols span 2 rows. */}
           <tr>
-            <th style={TH_STYLE}>Chi phí</th>
+            <th rowSpan={2} style={TH_STYLE}>Chi phí</th>
             {showContCols && activeContTypes.map(t => (
-              <th key={t} style={TH_STYLE} title={`Đơn giá / cont ${t}. Số lượng cont nhập 1 lần ở phần Số lượng cont theo loại phía trên.`}>
+              <th key={t} colSpan={2}
+                style={{ ...TH_STYLE, textAlign: 'center', borderBottom: '1px solid var(--border)' }}
+                title={`Loại cont ${t}: SL = số lượng (lấy từ phần đầu), Đơn giá = rate/cont.`}>
                 {t}
-                <div style={{ fontSize: 9, fontWeight: 400, color: 'var(--text-3)', textTransform: 'none', letterSpacing: 0 }}>
-                  đơn giá/cont
-                </div>
               </th>
             ))}
-            <th style={TH_STYLE} title="Đơn giá cho phí trọn lô (shipment/CBM/KG).">Đơn giá</th>
-            <th style={TH_STYLE}>Đơn vị</th>
-            <th style={TH_STYLE}>VAT%</th>
-            <th style={TH_STYLE}>Ghi chú</th>
-            <th style={{ ...TH_STYLE, textAlign: 'right' }}>Net</th>
-            <th style={{ ...TH_STYLE, textAlign: 'right' }}>VAT</th>
-            <th style={{ ...TH_STYLE, textAlign: 'right' }}>Line Total</th>
+            <th rowSpan={2} style={TH_STYLE} title="Đơn giá cho phí trọn lô (SHPT/CBM/KG).">Đơn giá</th>
+            <th rowSpan={2} style={TH_STYLE}>Đơn vị</th>
+            <th rowSpan={2} style={TH_STYLE}>VAT%</th>
+            <th rowSpan={2} style={TH_STYLE}>Ghi chú</th>
+            <th rowSpan={2} style={{ ...TH_STYLE, textAlign: 'right' }}>Net</th>
+            <th rowSpan={2} style={{ ...TH_STYLE, textAlign: 'right' }}>VAT</th>
+            <th rowSpan={2} style={{ ...TH_STYLE, textAlign: 'right' }}>Line Total</th>
           </tr>
+          {/* Second header row: SL | Đơn giá under each cont type group */}
+          {showContCols && (
+            <tr>
+              {activeContTypes.map(t => (
+                <React.Fragment key={t}>
+                  <th style={{ ...TH_STYLE, textAlign: 'center', fontSize: 10 }}>SL</th>
+                  <th style={{ ...TH_STYLE, textAlign: 'right',  fontSize: 10 }}>Đơn giá</th>
+                </React.Fragment>
+              ))}
+            </tr>
+          )}
         </thead>
         <tbody>
           {ticked.map(({ r, i }) => {
@@ -836,18 +852,27 @@ function ChargesTable({ rows, activeContTypes, defaultUnit, defaultVat, onPatch,
               <tr key={`${r.custom ? 'c' : 'p'}-${i}`}>
                 <td style={{ ...TD_STYLE, fontWeight: 600, color: 'var(--text)' }}>{r.name}</td>
                 {showContCols && activeContTypes.map(t => (
-                  <td key={t} style={TD_STYLE}>
-                    {isCont ? (
-                      <input className="form-input" type="number" min="0" step="any"
-                        value={r.price_by_cont?.[t] || ''}
-                        onChange={e => onPatch(i, {
-                          price_by_cont: { ...(r.price_by_cont || {}), [t]: e.target.value },
-                        })}
-                        style={CELL_INPUT} />
-                    ) : (
-                      <span style={{ color: 'var(--text-3)', fontStyle: 'italic', textAlign: 'center', display: 'block' }}>—</span>
-                    )}
-                  </td>
+                  <React.Fragment key={t}>
+                    {/* SL — read-only, qty from header */}
+                    <td style={{ ...TD_STYLE, textAlign: 'center',
+                      color: isCont ? 'var(--text)' : 'var(--text-3)',
+                      fontWeight: isCont ? 600 : 400 }}>
+                      {isCont ? (qtyByType[t] || 0) : '—'}
+                    </td>
+                    {/* Đơn giá — editable per-cont rate */}
+                    <td style={TD_STYLE}>
+                      {isCont ? (
+                        <input className="form-input" type="number" min="0" step="any"
+                          value={r.price_by_cont?.[t] || ''}
+                          onChange={e => onPatch(i, {
+                            price_by_cont: { ...(r.price_by_cont || {}), [t]: e.target.value },
+                          })}
+                          style={CELL_INPUT} />
+                      ) : (
+                        <span style={{ color: 'var(--text-3)', fontStyle: 'italic', textAlign: 'center', display: 'block' }}>—</span>
+                      )}
+                    </td>
+                  </React.Fragment>
                 ))}
                 <td style={TD_STYLE}>
                   {isCont ? (

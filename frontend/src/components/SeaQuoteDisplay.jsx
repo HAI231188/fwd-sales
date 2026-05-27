@@ -3,7 +3,7 @@
 // q.quote_data?.version === 2. Renders ticked charges + section totals +
 // grand total + PDF export button.
 
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { generateSeaQuotePdf } from '../api';
 import {
   parseNum, unitToCurrency, unitBasis,
@@ -145,76 +145,102 @@ export default function SeaQuoteDisplay({ quote }) {
   );
 }
 
-// Row's RATE column: for cont basis show per-cont rates inline (compact);
-// for other bases show the single rate value.
-function formatRowRateDisplay(row, cur) {
-  const basis = unitBasis(row.unit);
-  if (basis === 'cont') {
-    const rbc = row.rate_by_cont || row.price_by_cont || {};
-    const parts = Object.entries(rbc)
-      .filter(([, v]) => parseNum(v) > 0)
-      .map(([type, v]) => `${type}:${fmtAmount(parseNum(v), cur)}`);
-    return parts.length ? parts.join('  ') : '—';
-  }
-  const rate = parseNum(row.rate != null ? row.rate : row.price);
-  return rate > 0 ? fmtAmount(rate, cur) : '—';
-}
-
-// 7-col grid (no VOL column — volume lives in the header VOLUME line).
-// Description | RATE | UNIT | VAT% | NET | VAT | LINE TOTAL
-const CHARGE_GRID_COLS = '1.3fr 1.5fr 0.7fr 0.5fr 0.9fr 0.7fr 1fr';
+// Real <table> rendering — needed for colspan-based grouped sub-headers.
+// FCL: Chi phí | {per cont: SL | Đơn giá} | Đơn giá (flat) | Đơn vị | VAT% | Net | VAT | Line Total
+// LCL: Chi phí | Đơn giá (flat) | Đơn vị | VAT% | Net | VAT | Line Total
+const TH_S  = { padding: '3px 6px', fontSize: 9.5, fontWeight: 700, color: 'var(--text-3)',
+  textTransform: 'uppercase', letterSpacing: '0.3px', borderBottom: '1px solid var(--border)' };
+const TH_SUB = { padding: '2px 6px', fontSize: 9, fontWeight: 600, color: 'var(--text-3)',
+  borderBottom: '1px solid var(--border)' };
+const TD_S  = { padding: '3px 6px', fontSize: 11.5, verticalAlign: 'baseline' };
 
 function ChargeBlock({ title, rows, ctx, totals }) {
   if (!rows.length) return null;
-  const HEADERS = ['Chi phí', 'Đơn giá', 'Đơn vị', 'VAT%', 'Net', 'VAT', 'Line Total'];
+  const isFcl = ctx.cargo_type === 'FCL';
+  const activeTypes = (ctx.containers || []).filter(c => parseNum(c.qty) > 0).map(c => c.type);
+  const showContCols = isFcl && activeTypes.length > 0;
+  const qtyByType = Object.fromEntries((ctx.containers || []).map(c => [c.type, parseNum(c.qty)]));
+
   return (
     <div style={{ marginTop: 6 }}>
       <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.3px', marginBottom: 2 }}>
         {title}
       </div>
-      <div style={{
-        display: 'grid', gridTemplateColumns: CHARGE_GRID_COLS, gap: 8,
-        fontSize: 9.5, color: 'var(--text-3)', fontWeight: 700,
-        textTransform: 'uppercase', letterSpacing: '0.3px',
-        borderBottom: '1px solid var(--border)', paddingBottom: 2, marginBottom: 3,
-      }}>
-        {HEADERS.map((h, i) => (
-          <span key={h} style={{ textAlign: i >= 4 ? 'right' : 'left' }}>
-            {h}
-          </span>
-        ))}
-      </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-        {rows.map((r, i) => {
-          const net = calcRowAmount(r, ctx);
-          const vatAmt = calcRowVat(r, ctx);
-          const lineTotal = calcRowTotal(r, ctx);
-          const cur = unitToCurrency(r.unit);
-          const rateStr = formatRowRateDisplay(r, cur);
-          return (
-            <div key={i} style={{
-              display: 'grid', gridTemplateColumns: CHARGE_GRID_COLS, gap: 8,
-              fontSize: 11.5, alignItems: 'baseline',
-            }}>
-              <span style={{ color: 'var(--text)', fontWeight: 500 }}>{r.name}</span>
-              <span style={{ color: 'var(--text-2)', fontSize: 10.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                {rateStr}
-              </span>
-              <span style={{ color: 'var(--text-3)', fontSize: 10.5 }}>{r.unit}</span>
-              <span style={{ color: 'var(--text-3)', fontSize: 10.5 }}>{r.vat || ''}</span>
-              <span style={{ color: 'var(--text-2)', textAlign: 'right', whiteSpace: 'nowrap' }}>
-                {net > 0 ? `${fmtAmount(net, cur)} ${cur}` : '—'}
-              </span>
-              <span style={{ color: 'var(--text-2)', textAlign: 'right', whiteSpace: 'nowrap' }}>
-                {net > 0 ? `${fmtAmount(vatAmt, cur)} ${cur}` : '—'}
-              </span>
-              <span style={{ color: 'var(--primary)', fontWeight: 700, textAlign: 'right', whiteSpace: 'nowrap' }}>
-                {lineTotal > 0 ? `${fmtAmount(lineTotal, cur)} ${cur}` : '—'}
-              </span>
-            </div>
-          );
-        })}
-      </div>
+      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <thead>
+          <tr>
+            <th rowSpan={2} style={{ ...TH_S, textAlign: 'left' }}>Chi phí</th>
+            {showContCols && activeTypes.map(t => (
+              <th key={t} colSpan={2} style={{ ...TH_S, textAlign: 'center' }}>{t}</th>
+            ))}
+            <th rowSpan={2} style={{ ...TH_S, textAlign: 'right' }}>Đơn giá</th>
+            <th rowSpan={2} style={{ ...TH_S, textAlign: 'left' }}>Đơn vị</th>
+            <th rowSpan={2} style={{ ...TH_S, textAlign: 'left' }}>VAT%</th>
+            <th rowSpan={2} style={{ ...TH_S, textAlign: 'right' }}>Net</th>
+            <th rowSpan={2} style={{ ...TH_S, textAlign: 'right' }}>VAT</th>
+            <th rowSpan={2} style={{ ...TH_S, textAlign: 'right' }}>Line Total</th>
+          </tr>
+          {showContCols && (
+            <tr>
+              {activeTypes.map(t => (
+                <React.Fragment key={t}>
+                  <th style={{ ...TH_SUB, textAlign: 'center' }}>SL</th>
+                  <th style={{ ...TH_SUB, textAlign: 'right' }}>Đơn giá</th>
+                </React.Fragment>
+              ))}
+            </tr>
+          )}
+        </thead>
+        <tbody>
+          {rows.map((r, i) => {
+            const basis = unitBasis(r.unit);
+            const isCont = basis === 'cont';
+            const net = calcRowAmount(r, ctx);
+            const vatAmt = calcRowVat(r, ctx);
+            const lineTotal = calcRowTotal(r, ctx);
+            const cur = unitToCurrency(r.unit);
+            const rbc = r.rate_by_cont || r.price_by_cont || {};
+            const flatRate = parseNum(r.rate != null ? r.rate : r.price);
+            return (
+              <tr key={i}>
+                <td style={{ ...TD_S, color: 'var(--text)', fontWeight: 500 }}>{r.name}</td>
+                {showContCols && activeTypes.map(t => (
+                  <React.Fragment key={t}>
+                    <td style={{ ...TD_S, textAlign: 'center',
+                      color: isCont ? 'var(--text)' : 'var(--text-3)',
+                      fontWeight: isCont ? 600 : 400, fontSize: 10.5 }}>
+                      {isCont ? (qtyByType[t] || 0) : '—'}
+                    </td>
+                    <td style={{ ...TD_S, textAlign: 'right',
+                      color: isCont ? 'var(--text-2)' : 'var(--text-3)',
+                      fontSize: 10.5, whiteSpace: 'nowrap' }}>
+                      {isCont
+                        ? (parseNum(rbc[t]) > 0 ? fmtAmount(parseNum(rbc[t]), cur) : '—')
+                        : '—'}
+                    </td>
+                  </React.Fragment>
+                ))}
+                <td style={{ ...TD_S, textAlign: 'right',
+                  color: !isCont && flatRate > 0 ? 'var(--text-2)' : 'var(--text-3)',
+                  fontSize: 10.5, whiteSpace: 'nowrap' }}>
+                  {isCont ? '—' : (flatRate > 0 ? fmtAmount(flatRate, cur) : '—')}
+                </td>
+                <td style={{ ...TD_S, color: 'var(--text-3)', fontSize: 10.5 }}>{r.unit}</td>
+                <td style={{ ...TD_S, color: 'var(--text-3)', fontSize: 10.5 }}>{r.vat || ''}</td>
+                <td style={{ ...TD_S, textAlign: 'right', color: 'var(--text-2)', whiteSpace: 'nowrap' }}>
+                  {net > 0 ? `${fmtAmount(net, cur)} ${cur}` : '—'}
+                </td>
+                <td style={{ ...TD_S, textAlign: 'right', color: 'var(--text-2)', whiteSpace: 'nowrap' }}>
+                  {net > 0 ? `${fmtAmount(vatAmt, cur)} ${cur}` : '—'}
+                </td>
+                <td style={{ ...TD_S, textAlign: 'right', color: 'var(--primary)', fontWeight: 700, whiteSpace: 'nowrap' }}>
+                  {lineTotal > 0 ? `${fmtAmount(lineTotal, cur)} ${cur}` : '—'}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
       {Object.keys(totals).map(cur => {
         const { net, vat, total } = totals[cur];
         return (

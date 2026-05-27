@@ -250,22 +250,27 @@ function drawChargesSection(doc, left, right, opts) {
   doc.y = barY + 22;
   resetPaint(doc);
 
-  // ─ Final column layout (2026-05-27).
-  // FCL: Desc | <per-cont rate cols> | RATE | UNIT | VAT% | NET | VAT | LINE TOTAL
-  // LCL: Desc | RATE | UNIT | VAT% | NET | VAT | LINE TOTAL  (no cont cols)
-  // NO VOL column — VOL lives only in the header VOLUME line.
-  const MONEY_W = 64;
+  // ─ Final column layout (2026-05-27 paired): SL + Đơn giá per cont type.
+  // FCL: Desc | {per cont: SL | Đơn giá} | RATE (flat) | UNIT | VAT% | NET | VAT | LINE TOTAL
+  // LCL: Desc | RATE | UNIT | VAT% | NET | VAT | LINE TOTAL
+  const MONEY_W = 60;
   const MONEY_BLOCK = MONEY_W * 3;
-  const UNIT_W = 48;
-  const VATPCT_W = 30;
-  const RATE_W = 60;
+  const UNIT_W = 44;
+  const VATPCT_W = 26;
+  const RATE_W = 54;
+  const qtyByType = Object.fromEntries((ctx.containers || []).map(c => [c.type, parseNum(c.qty)]));
+
   const cols = [];
-  cols.push({ key: 'desc', w: 0 /*filled later*/, label: 'Description', align: 'left' });
-  let contCols = [];
+  cols.push({ key: 'desc', w: 0, label: 'Description', align: 'left' });
+  let contGroupCount = 0;
   if (isFcl && activeTypes.length > 0) {
-    const contW = activeTypes.length > 3 ? 38 : (activeTypes.length > 1 ? 46 : 56);
-    contCols = activeTypes.map(t => ({ key: `cont-${t}`, w: contW, label: t, align: 'right' }));
-    cols.push(...contCols);
+    contGroupCount = activeTypes.length;
+    const slW  = contGroupCount > 2 ? 16 : 20;
+    const giaW = contGroupCount > 3 ? 38 : (contGroupCount > 1 ? 44 : 52);
+    for (const t of activeTypes) {
+      cols.push({ key: `sl-${t}`,  w: slW,  contType: t, label: 'SL',     align: 'center' });
+      cols.push({ key: `gia-${t}`, w: giaW, contType: t, label: 'Don gia', align: 'right' });
+    }
   }
   cols.push({ key: 'rate', w: RATE_W,    label: 'Rate',       align: 'right' });
   cols.push({ key: 'unit', w: UNIT_W,    label: 'Unit',       align: 'center' });
@@ -273,33 +278,42 @@ function drawChargesSection(doc, left, right, opts) {
   cols.push({ key: 'net',  w: MONEY_W,   label: 'Net',        align: 'right' });
   cols.push({ key: 'vatA', w: MONEY_W,   label: 'VAT',        align: 'right' });
   cols.push({ key: 'tot',  w: MONEY_W,   label: 'Line Total', align: 'right' });
-  // Stretch Description to fill remaining width
   const usedW = cols.slice(1).reduce((s, c) => s + c.w, 0);
-  cols[0].w = Math.max(80, usable - usedW);
+  cols[0].w = Math.max(70, usable - usedW);
 
-  // ─ Column headers: cont cols get a 2-line header (TYPE / đơn giá/cont)
-  // so reader sees them unambiguously as RATES per cont.
-  const HEAD_H2 = contCols.length > 0 ? 26 : 20;
+  // ─ 2-row header. Top: cont type spans its two sub-cols. Bottom: SL/Đơn giá.
+  // Static (non-cont) cols use the full height with their label vertically centered.
+  const HEAD_H_TOP = contGroupCount > 0 ? 14 : 0;
+  const HEAD_H_SUB = 12;
+  const HEAD_H_FULL = HEAD_H_TOP + HEAD_H_SUB;
   const headerY = doc.y;
+  if (contGroupCount > 0) {
+    let cx0 = left;
+    for (const c of cols) {
+      if (c.key.startsWith('sl-')) {
+        const giaCol = cols.find(cc => cc.key === `gia-${c.contType}`);
+        const groupW = c.w + (giaCol ? giaCol.w : 0);
+        doc.font('RB').fontSize(FS.tableHeader).fillColor(COLOR.textMuted)
+          .text(c.contType, cx0, headerY + 2, { width: groupW, align: 'center', lineBreak: false });
+      }
+      cx0 += c.w;
+    }
+  }
   let cx = left;
   for (const c of cols) {
-    const isContCol = c.key.startsWith('cont-');
-    if (isContCol) {
-      const contType = c.key.slice(5);
-      doc.font('RB').fontSize(FS.tableHeader).fillColor(COLOR.textMuted)
-        .text(contType, cx + 4, headerY + 4, { width: c.w - 8, align: c.align, lineBreak: false });
+    if (c.key.startsWith('sl-') || c.key.startsWith('gia-')) {
       doc.font('R').fontSize(FS.label - 1).fillColor(COLOR.textFaint)
-        .text('don gia/cont', cx + 4, headerY + 15, { width: c.w - 8, align: c.align, lineBreak: false });
+        .text(c.label, cx + 2, headerY + HEAD_H_TOP + 2, { width: c.w - 4, align: c.align, lineBreak: false });
     } else {
       doc.font('RB').fontSize(FS.tableHeader).fillColor(COLOR.textMuted)
-        .text(c.label.toUpperCase(), cx + 4, headerY + (HEAD_H2 - 12) / 2 + 5, { width: c.w - 8, align: c.align, lineBreak: false });
+        .text(c.label.toUpperCase(), cx + 4, headerY + (HEAD_H_FULL - 10) / 2 + 1, { width: c.w - 8, align: c.align, lineBreak: false });
     }
     cx += c.w;
   }
-  hline(doc, left, headerY + HEAD_H2, right, COLOR.borderStrong, 0.8);
-  doc.y = headerY + HEAD_H2;
+  hline(doc, left, headerY + HEAD_H_FULL, right, COLOR.borderStrong, 0.8);
+  doc.y = headerY + HEAD_H_FULL;
 
-  // ─ Data rows (alternating row shading)
+  // ─ Data rows
   let rowIdx = 0;
   for (const r of ticked) {
     const rowY = doc.y;
@@ -323,20 +337,33 @@ function drawChargesSection(doc, left, right, opts) {
       let color = COLOR.text;
       let sz = FS.tableCell;
       if (c.key === 'desc') { txt = r.name || ''; bold = true; }
-      else if (c.key.startsWith('cont-')) {
-        const t = c.key.slice(5);
+      else if (c.key.startsWith('sl-')) {
+        const t = c.contType;
+        if (isCont) {
+          txt = String(qtyByType[t] || 0);
+          color = COLOR.text;
+          bold = true;
+          sz = FS.tableCell - 0.5;
+        } else {
+          txt = '-';
+          color = COLOR.textFaint;
+        }
+      }
+      else if (c.key.startsWith('gia-')) {
+        const t = c.contType;
         if (isCont) {
           const v = parseNum(rbc[t]);
           txt = v > 0 ? fmtAmount(v, currency) : '';
           color = COLOR.textMuted;
+          sz = FS.tableCell - 0.5;
         } else {
-          txt = '—';
+          txt = '-';
           color = COLOR.textFaint;
         }
       }
       else if (c.key === 'rate') {
         if (isCont) {
-          txt = '—';
+          txt = '-';
           color = COLOR.textFaint;
         } else {
           txt = flatRate > 0 ? fmtAmount(flatRate, currency) : '';
