@@ -13,8 +13,10 @@ const path = require('path');
 const fs = require('fs');
 
 const {
-  parseNum, unitToCurrency, calcRowAmount, calcRowVat, calcRowTotal,
-  calcSectionTotals, calcGrandTotal, fmtAmount, formatVolume, unitShort,
+  parseNum, unitToCurrency, unitBasis,
+  calcRowAmount, calcRowVat, calcRowTotal,
+  calcSectionTotals, calcGrandTotal, fmtAmount,
+  formatVolume, formatRowVol, unitShort,
 } = require('../utils/seaQuoteCalc.cjs');
 
 // ─── Assets ──────────────────────────────────────────────────────────────
@@ -248,75 +250,54 @@ function drawChargesSection(doc, left, right, opts) {
   doc.y = barY + 22;
   resetPaint(doc);
 
-  // ─ Column layout
-  // Goal: no text wrap. Use unitShort for compact unit labels.
-  // FCL: Desc | <cont-qty cols (narrow)> | Unit | VAT% | NET | VAT AMT | LINE TOTAL
-  // LCL: Desc | Unit Price | CBM | Unit | VAT% | NET | VAT AMT | LINE TOTAL
-  // 3 money cols replace the old single Amount column.
-  const MONEY_W = 70;           // each of NET / VAT AMT / LINE TOTAL
+  // ─ Column layout — unified 8-col scheme regardless of cargo_type.
+  // Per-row basis (cont/shipment/cbm/kg) drives content of VOL + RATE only.
+  // Desc | VOL | RATE | UNIT | VAT% | NET | VAT | LINE TOTAL
+  const MONEY_W = 64;
   const MONEY_BLOCK = MONEY_W * 3;
-  const UNIT_W = 48;
-  const VATPCT_W = 32;
-  let cols;
-  if (isFcl && activeTypes.length > 0) {
-    // Narrow cont cols when many — cargo summary is already in CARGO line.
-    const contW = activeTypes.length > 3 ? 28 : (activeTypes.length > 1 ? 34 : 42);
-    const dynW = activeTypes.length * contW;
-    const descW = Math.max(90, usable - dynW - UNIT_W - VATPCT_W - MONEY_BLOCK);
-    cols = [
-      { key: 'desc',  w: descW, label: 'Description', align: 'left' },
-      ...activeTypes.map(t => ({ key: `cont-${t}`, w: contW, label: t, align: 'right' })),
-      { key: 'unit',  w: UNIT_W,   label: 'Unit',       align: 'center' },
-      { key: 'vatp',  w: VATPCT_W, label: 'VAT%',       align: 'center' },
-      { key: 'net',   w: MONEY_W,  label: 'Net',        align: 'right' },
-      { key: 'vatA',  w: MONEY_W,  label: 'VAT',        align: 'right' },
-      { key: 'tot',   w: MONEY_W,  label: 'Line Total', align: 'right' },
-    ];
-  } else if (isFcl) {
-    cols = [
-      { key: 'desc',  w: usable - UNIT_W - VATPCT_W - MONEY_BLOCK, label: 'Description', align: 'left' },
-      { key: 'unit',  w: UNIT_W,   label: 'Unit',       align: 'center' },
-      { key: 'vatp',  w: VATPCT_W, label: 'VAT%',       align: 'center' },
-      { key: 'net',   w: MONEY_W,  label: 'Net',        align: 'right' },
-      { key: 'vatA',  w: MONEY_W,  label: 'VAT',        align: 'right' },
-      { key: 'tot',   w: MONEY_W,  label: 'Line Total', align: 'right' },
-    ];
-  } else {
-    cols = [
-      { key: 'desc',  w: usable - 56 - 40 - UNIT_W - VATPCT_W - MONEY_BLOCK, label: 'Description', align: 'left' },
-      { key: 'price', w: 56,       label: 'Unit Price', align: 'right' },
-      { key: 'cbm',   w: 40,       label: 'CBM',        align: 'right' },
-      { key: 'unit',  w: UNIT_W,   label: 'Unit',       align: 'center' },
-      { key: 'vatp',  w: VATPCT_W, label: 'VAT%',       align: 'center' },
-      { key: 'net',   w: MONEY_W,  label: 'Net',        align: 'right' },
-      { key: 'vatA',  w: MONEY_W,  label: 'VAT',        align: 'right' },
-      { key: 'tot',   w: MONEY_W,  label: 'Line Total', align: 'right' },
-    ];
-  }
+  const UNIT_W = 50;
+  const VATPCT_W = 30;
+  const VOL_W = 70;
+  // RATE column needs to fit per-cont rate breakdowns when basis=cont.
+  // Estimate width from active cont count; min 70pt, scales up to ~140pt.
+  const rateW = Math.min(150, Math.max(70, 28 + (activeTypes.length || 1) * 32));
+  const descW = Math.max(80, usable - VOL_W - rateW - UNIT_W - VATPCT_W - MONEY_BLOCK);
+  const cols = [
+    { key: 'desc', w: descW,    label: 'Description', align: 'left'   },
+    { key: 'vol',  w: VOL_W,    label: 'Vol',         align: 'left'   },
+    { key: 'rate', w: rateW,    label: 'Rate',        align: 'left'   },
+    { key: 'unit', w: UNIT_W,   label: 'Unit',        align: 'center' },
+    { key: 'vatp', w: VATPCT_W, label: 'VAT%',        align: 'center' },
+    { key: 'net',  w: MONEY_W,  label: 'Net',         align: 'right'  },
+    { key: 'vatA', w: MONEY_W,  label: 'VAT',         align: 'right'  },
+    { key: 'tot',  w: MONEY_W,  label: 'Line Total',  align: 'right'  },
+  ];
 
   // ─ Column headers (no fill, bottom-border only)
-  // Cont-type columns get a 2-line header so the customer reads them
-  // unambiguously as RATES per cont (not qty). Header row is sized to
-  // accommodate the taller cont-col labels.
-  const HEAD_H2 = 26;
+  const HEAD_H2 = 20;
   const headerY = doc.y;
   let cx = left;
   for (const c of cols) {
-    const isContCol = c.key.startsWith('cont-');
-    if (isContCol) {
-      const contType = c.key.slice(5);
-      doc.font('R').fontSize(FS.label - 1).fillColor(COLOR.textFaint)
-        .text('RATE', cx + 4, headerY + 4, { width: c.w - 8, align: c.align, lineBreak: false });
-      doc.font('RB').fontSize(FS.tableHeader).fillColor(COLOR.textMuted)
-        .text(contType, cx + 4, headerY + 13, { width: c.w - 8, align: c.align, lineBreak: false });
-    } else {
-      doc.font('RB').fontSize(FS.tableHeader).fillColor(COLOR.textMuted)
-        .text(c.label.toUpperCase(), cx + 4, headerY + 10, { width: c.w - 8, align: c.align, lineBreak: false });
-    }
+    doc.font('RB').fontSize(FS.tableHeader).fillColor(COLOR.textMuted)
+      .text(c.label.toUpperCase(), cx + 4, headerY + 7, { width: c.w - 8, align: c.align, lineBreak: false });
     cx += c.w;
   }
   hline(doc, left, headerY + HEAD_H2, right, COLOR.borderStrong, 0.8);
   doc.y = headerY + HEAD_H2;
+
+  // Build per-row RATE display: per-cont map for cont basis, single value otherwise.
+  function formatRateForPdf(r, currency) {
+    const basis = unitBasis(r.unit);
+    if (basis === 'cont') {
+      const rbc = r.rate_by_cont || r.price_by_cont || {};
+      const parts = Object.entries(rbc)
+        .filter(([, v]) => parseNum(v) > 0)
+        .map(([type, v]) => `${type}:${fmtAmount(parseNum(v), currency)}`);
+      return parts.length ? parts.join('  ') : '';
+    }
+    const rate = parseNum(r.rate != null ? r.rate : r.price);
+    return rate > 0 ? fmtAmount(rate, currency) : '';
+  }
 
   // ─ Data rows (alternating row shading)
   let rowIdx = 0;
@@ -336,12 +317,17 @@ function drawChargesSection(doc, left, right, opts) {
       let txt = '';
       let bold = false;
       let color = COLOR.text;
+      let sz = FS.tableCell;
       if (c.key === 'desc') { txt = r.name || ''; bold = true; }
-      else if (c.key === 'price') {
-        txt = r.price ? fmtAmount(parseNum(r.price), currency) : '';
+      else if (c.key === 'vol') {
+        txt = formatRowVol(r, ctx);
+        color = COLOR.textMuted; sz = FS.tableCell - 0.5;
       }
-      else if (c.key === 'cbm') txt = r.cbm ? String(r.cbm) : '';
-      else if (c.key === 'unit') txt = unitShort(r.unit);
+      else if (c.key === 'rate') {
+        txt = formatRateForPdf(r, currency);
+        color = COLOR.textMuted; sz = FS.tableCell - 0.5;
+      }
+      else if (c.key === 'unit') { txt = unitShort(r.unit); sz = FS.tableCell - 0.5; }
       else if (c.key === 'vatp') txt = r.vat || '';
       else if (c.key === 'net') {
         txt = net > 0 ? `${fmtAmount(net, currency)} ${currency}` : '';
@@ -356,12 +342,7 @@ function drawChargesSection(doc, left, right, opts) {
         bold = true;
         color = COLOR.text;
       }
-      else if (c.key.startsWith('cont-')) {
-        const t = c.key.slice(5);
-        const v = r.price_by_cont && r.price_by_cont[t];
-        txt = v ? fmtAmount(parseNum(v), currency) : '';
-      }
-      doc.font(bold ? 'RB' : 'R').fontSize(FS.tableCell).fillColor(color)
+      doc.font(bold ? 'RB' : 'R').fontSize(sz).fillColor(color)
         .text(txt, cx + 4, rowY + 5, { width: c.w - 8, align: c.align, lineBreak: false });
       cx += c.w;
     }
@@ -404,10 +385,10 @@ function drawChargesSection(doc, left, right, opts) {
   }
 
   // ─ Section explainer (small grey italic)
-  // Reinforces: cont-type columns are RATES, not qty. Qty lives in the
-  // CARGO line at the top. Net = rate × cargo qty.
+  // The per-row VOL column shows what each charge multiplies against; it's
+  // fully derived from the row's UNIT (CONT/SHPT/BL/CBM/KG).
   doc.font('RI').fontSize(FS.footer + 0.5).fillColor(COLOR.textFaint)
-    .text('Cột RATE 20DC/40HC là đơn giá theo loại cont (số lượng cont xem dòng CARGO ở trên). Net = đơn giá × số cont. VAT theo từng loại phí. Line Total đã bao gồm VAT.',
+    .text('VOL tự suy ra từ Đơn vị (CONT → số cont; SHPT/BL → 1 lô; CBM → tổng CBM; KG → tổng KG). Net = đơn giá × VOL. VAT theo từng loại phí. Line Total đã bao gồm VAT.',
       left, doc.y + 4, { width: usable, lineGap: 1 });
   doc.moveDown(0.6);
   resetPaint(doc);
@@ -541,6 +522,8 @@ function buildSeaQuotePdf(opts) {
       const ctx = {
         cargo_type: qd.cargo_type || 'FCL',
         containers: qd.containers || [],
+        shipment_cbm: qd.shipment_cbm,
+        shipment_kg: qd.shipment_kg,
       };
 
       drawHeader(doc, left, right, {

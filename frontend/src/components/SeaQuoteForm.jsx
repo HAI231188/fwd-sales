@@ -21,8 +21,9 @@
 import { useState, useEffect } from 'react';
 import { generateSeaQuotePdf } from '../api';
 import {
-  parseNum, unitToCurrency, calcRowAmount, calcRowVat, calcRowTotal,
-  calcSectionTotals, calcGrandTotal, fmtAmount, formatVolume,
+  parseNum, unitToCurrency, unitBasis,
+  calcRowAmount, calcRowVat, calcRowTotal,
+  calcSectionTotals, calcGrandTotal, fmtAmount, formatVolume, formatRowVol,
 } from '../utils/seaQuoteCalc';
 
 const CONT_TYPES = ['20DC', '40DC', '40HC', '45HC', '20RF', '40RF'];
@@ -44,15 +45,21 @@ const INLAND_CHARGE_NAMES = [
   'Kiểm dịch', 'Hun trùng', 'KTCL', 'Khai báo hóa chất',
 ];
 
+// Per-row UNIT determines charge basis (cont / shipment / cbm / kg) via
+// shared seaQuoteCalc.unitBasis(). Case-insensitive — legacy lowercase
+// values still parse correctly.
 const UNIT_OPTIONS = [
-  'USD/cont', 'USD/CBM', 'USD/B/L', 'USD/shipment',
-  'VND/cont', 'VND/CBM', 'VND/B/L', 'VND/shipment',
+  'USD/CONT', 'VND/CONT',
+  'USD/SHPT', 'VND/SHPT',
+  'USD/BL',
+  'USD/CBM',  'VND/CBM',
+  'USD/KG',   'VND/KG',
 ];
 const VAT_OPTIONS = ['0%', '8%', '10%', 'KCT'];
 
-const INTL_DEFAULT_UNIT = 'USD/cont';
+const INTL_DEFAULT_UNIT = 'USD/CONT';
 const INTL_DEFAULT_VAT = '0%';
-const INLAND_DEFAULT_UNIT = 'VND/cont';
+const INLAND_DEFAULT_UNIT = 'VND/CONT';
 const INLAND_DEFAULT_VAT = '10%';
 
 // ─── Calc helpers moved to ../utils/seaQuoteCalc (2026-05-27) ────────────
@@ -66,17 +73,23 @@ function containersFromContQty(contQty) {
     .filter(c => c.qty > 0);
 }
 
+// Row shape (conceptually `{name, unit, rate_by_cont, rate, vat, …}`).
+// We keep the stored field names `price_by_cont` and `price` for backward
+// compatibility with existing v2 quotes (saved before 2026-05-27). The shared
+// calc reads both old + new names so no data migration is required.
 function buildIntlChargeRow(name, unit, vat) {
   return {
     name, ticked: false,
-    price_by_cont: {}, // { '20DC': '500', '40HC': '700', ... }
+    price_by_cont: {}, // per-cont rate map { '20DC': '500', '40HC': '700' }
+    price: '',         // single flat rate for shipment/cbm/kg basis rows
     unit, vat, note: '', amount: null,
   };
 }
 function buildInlandChargeRow(name, unit, vat) {
   return {
     name, ticked: false,
-    price: '', cbm: '',
+    price_by_cont: {},
+    price: '',
     unit, vat, note: '', amount: null,
   };
 }
@@ -86,7 +99,8 @@ export const EMPTY_SEA_QUOTE = {
   mode: 'sea',
   cargo_type: 'FCL',
   containers: [], // [{ type: '20DC', qty: 2 }, ...] — derived from contQty matrix on save
-  shipment_cbm: '', // C2: LCL shipment-level CBM (informational, defaults the per-row cbm)
+  shipment_cbm: '', // total CBM for the shipment — multiplier for cbm-basis rows
+  shipment_kg: '',  // total kg for the shipment — multiplier for kg-basis rows
   pol: '', pod: '', term: 'FOB',
   valid_until: '',
   exchange_rate: '',
@@ -432,27 +446,34 @@ export default function SeaQuoteForm({ value, onChange, quoteId }) {
           </div>
         </div>
       )}
-      {v.cargo_type === 'LCL' && (
-        <div style={{
-          padding: 12, background: 'var(--bg)', border: '1px solid var(--border)',
-          borderRadius: 8, marginBottom: 12,
-        }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)', marginBottom: 8 }}>
-            Khối lượng lô hàng LCL
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ minWidth: 48, fontWeight: 600, fontSize: 13, color: 'var(--text)' }}>CBM:</span>
+      {/* Shipment volumes — used by cbm-basis and kg-basis charge rows.
+          Always visible (per-row basis may demand them even on FCL quotes). */}
+      <div style={{
+        padding: 12, background: 'var(--bg)', border: '1px solid var(--border)',
+        borderRadius: 8, marginBottom: 12,
+      }}>
+        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)', marginBottom: 8 }}>
+          Khối lượng lô hàng <span style={{ fontWeight: 400, color: 'var(--text-3)' }}>(dùng cho phí tính theo CBM hoặc KG)</span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ minWidth: 38, fontWeight: 600, fontSize: 13, color: 'var(--text)' }}>CBM:</span>
             <input type="number" min="0" step="0.01" className="form-input"
               value={v.shipment_cbm}
               onChange={e => set('shipment_cbm', e.target.value)}
-              style={{ width: 120, fontSize: 13, padding: '4px 8px' }}
-              placeholder="VD: 12.5" />
-            <span style={{ fontSize: 12, color: 'var(--text-3)', fontStyle: 'italic' }}>
-              (mỗi dòng phí cũng có cột CBM riêng — tùy biến từng chi phí)
-            </span>
+              style={{ width: 110, fontSize: 13, padding: '4px 8px' }}
+              placeholder="VD: 45" />
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ minWidth: 30, fontWeight: 600, fontSize: 13, color: 'var(--text)' }}>KG:</span>
+            <input type="number" min="0" step="0.01" className="form-input"
+              value={v.shipment_kg || ''}
+              onChange={e => set('shipment_kg', e.target.value)}
+              style={{ width: 110, fontSize: 13, padding: '4px 8px' }}
+              placeholder="VD: 1200" />
           </div>
         </div>
-      )}
+      </div>
 
       {/* ─── VOLUME live readout (2026-05-27) ───
           Shows the shipment scale in the same wording the PDF + display
@@ -576,7 +597,7 @@ export default function SeaQuoteForm({ value, onChange, quoteId }) {
             defaultUnit={v.intl_default_unit}
             defaultVat={v.intl_default_vat}
             onPatch={patchIntlRow}
-            ctx={{ cargo_type: v.cargo_type, containers: containersFromContQty(contQty) }}
+            ctx={{ cargo_type: v.cargo_type, containers: containersFromContQty(contQty), shipment_cbm: v.shipment_cbm, shipment_kg: v.shipment_kg }}
           />
         )}
       </div>
@@ -606,7 +627,7 @@ export default function SeaQuoteForm({ value, onChange, quoteId }) {
             defaultUnit={v.inland_default_unit}
             defaultVat={v.inland_default_vat}
             onPatch={patchInlandRow}
-            ctx={{ cargo_type: v.cargo_type, containers: containersFromContQty(contQty) }}
+            ctx={{ cargo_type: v.cargo_type, containers: containersFromContQty(contQty), shipment_cbm: v.shipment_cbm, shipment_kg: v.shipment_kg }}
             activeContTypes={activeContTypes}
           />
         )}
@@ -631,7 +652,8 @@ export default function SeaQuoteForm({ value, onChange, quoteId }) {
 // the user's chosen target currency (USD/VND/none). Warns when mixed
 // currencies are present and exchange_rate is empty.
 function TotalsBox({ quote, contQty }) {
-  const ctx = { cargo_type: quote.cargo_type, containers: containersFromContQty(contQty) };
+  const ctx = { cargo_type: quote.cargo_type, containers: containersFromContQty(contQty),
+                shipment_cbm: quote.shipment_cbm, shipment_kg: quote.shipment_kg };
   const intlT = calcSectionTotals(quote.intl_charges, ctx);
   const inlandT = calcSectionTotals(quote.inland_charges, ctx);
   // calcGrandTotal returns number|null; derive presentational flags locally.
@@ -726,33 +748,23 @@ const TD_STYLE = {
 };
 const CELL_INPUT = { fontSize: 12, padding: '3px 6px', width: '100%', boxSizing: 'border-box' };
 
-// Cargo-aware charge table (2026-05-27 C2). Used for both Intl + Inland.
-// FCL: per-cont-type pricing columns + Amount = SUM(price_by_cont × qty).
-// LCL: Đơn giá + CBM columns + Amount = price × cbm.
+// Unified charges table (2026-05-27). Per-row basis is DERIVED from the
+// row's UNIT (cont / shipment / cbm / kg) via shared seaQuoteCalc.unitBasis.
+// Columns are stable across all rows; the RATE cell content adapts:
+//   - cont basis → 1 rate input per active cont type
+//   - shipment / cbm / kg → single rate input
+// VOL cell is read-only and reflects formatRowVol(row, ctx).
 function ChargesTable({ rows, activeContTypes, defaultUnit, defaultVat, onPatch, ctx }) {
   const ticked = rows.map((r, i) => ({ r, i })).filter(x => x.r.ticked);
   if (!ticked.length) return null;
-  const isFcl = ctx.cargo_type === 'FCL';
   return (
     <div style={{ overflowX: 'auto', marginBottom: 8 }}>
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, background: '#fff', borderRadius: 6 }}>
         <thead>
           <tr>
             <th style={TH_STYLE}>Chi phí</th>
-            {isFcl ? (
-              activeContTypes.length > 0
-                ? activeContTypes.map(t => (
-                    <th key={t} style={TH_STYLE} title={`Đơn giá / cont ${t}. Số lượng cont được nhập 1 lần ở phần Số lượng cont theo loại phía trên.`}>
-                      Đơn giá<br/><span style={{ fontWeight: 400, color: 'var(--text-2)' }}>{t}</span>
-                    </th>
-                  ))
-                : <th style={TH_STYLE}>Đơn giá (chưa chọn cont)</th>
-            ) : (
-              <>
-                <th style={TH_STYLE}>Đơn giá</th>
-                <th style={TH_STYLE}>CBM</th>
-              </>
-            )}
+            <th style={TH_STYLE} title="Khối lượng dòng — tự suy ra từ Đơn vị.">VOL</th>
+            <th style={TH_STYLE} title="Đơn giá — theo cont (cont basis) hoặc số đơn (shipment/CBM/KG)">Đơn giá</th>
             <th style={TH_STYLE}>Đơn vị</th>
             <th style={TH_STYLE}>VAT%</th>
             <th style={TH_STYLE}>Ghi chú</th>
@@ -765,44 +777,49 @@ function ChargesTable({ rows, activeContTypes, defaultUnit, defaultVat, onPatch,
           {ticked.map(({ r, i }) => {
             const unitOverridden = r.unit !== defaultUnit;
             const vatOverridden = r.vat !== defaultVat;
+            const basis = unitBasis(r.unit);
             const net = calcRowAmount(r, ctx);
             const vatAmt = calcRowVat(r, ctx);
             const lineTotal = calcRowTotal(r, ctx);
             const currency = unitToCurrency(r.unit);
+            const vol = formatRowVol(r, ctx);
             return (
               <tr key={`${r.custom ? 'c' : 'p'}-${i}`}>
                 <td style={{ ...TD_STYLE, fontWeight: 600, color: 'var(--text)' }}>{r.name}</td>
-                {isFcl ? (
-                  activeContTypes.length > 0 ? activeContTypes.map(t => (
-                    <td key={t} style={TD_STYLE}>
-                      <input className="form-input" type="number" min="0" step="any"
-                        value={r.price_by_cont?.[t] || ''}
-                        onChange={e => onPatch(i, {
-                          price_by_cont: { ...(r.price_by_cont || {}), [t]: e.target.value },
-                        })}
-                        style={CELL_INPUT} />
-                    </td>
-                  )) : (
-                    <td style={{ ...TD_STYLE, color: 'var(--text-3)', fontStyle: 'italic' }}>—</td>
-                  )
-                ) : (
-                  <>
-                    <td style={TD_STYLE}>
-                      <input className="form-input" type="number" min="0" step="any"
-                        value={r.price || ''} onChange={e => onPatch(i, { price: e.target.value })}
-                        style={CELL_INPUT} />
-                    </td>
-                    <td style={TD_STYLE}>
-                      <input className="form-input" type="number" min="0" step="any"
-                        value={r.cbm || ''} onChange={e => onPatch(i, { cbm: e.target.value })}
-                        style={CELL_INPUT} placeholder="—" />
-                    </td>
-                  </>
-                )}
+                <td style={{ ...TD_STYLE, fontSize: 11, color: 'var(--text-2)', whiteSpace: 'nowrap' }}>
+                  {vol}
+                </td>
+                <td style={TD_STYLE}>
+                  {basis === 'cont' ? (
+                    activeContTypes.length > 0 ? (
+                      <div style={{ display: 'flex', gap: 4, flexWrap: 'nowrap' }}>
+                        {activeContTypes.map(t => (
+                          <div key={t} style={{ display: 'flex', flexDirection: 'column', alignItems: 'stretch', minWidth: 56 }}>
+                            <span style={{ fontSize: 9.5, color: 'var(--text-3)', textAlign: 'center', fontWeight: 600 }}>{t}</span>
+                            <input className="form-input" type="number" min="0" step="any"
+                              value={r.price_by_cont?.[t] || ''}
+                              onChange={e => onPatch(i, {
+                                price_by_cont: { ...(r.price_by_cont || {}), [t]: e.target.value },
+                              })}
+                              style={CELL_INPUT} />
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <span style={{ color: 'var(--text-3)', fontStyle: 'italic', fontSize: 11 }}>
+                        (chưa chọn cont)
+                      </span>
+                    )
+                  ) : (
+                    <input className="form-input" type="number" min="0" step="any"
+                      value={r.price || ''} onChange={e => onPatch(i, { price: e.target.value })}
+                      style={{ ...CELL_INPUT, minWidth: 90 }} />
+                  )}
+                </td>
                 <td style={TD_STYLE}>
                   <select value={r.unit} onChange={e => onPatch(i, { unit: e.target.value })}
                     style={{ ...CELL_INPUT, color: unitOverridden ? '#d97706' : 'inherit',
-                      fontWeight: unitOverridden ? 600 : 400 }}>
+                      fontWeight: unitOverridden ? 600 : 400, minWidth: 86 }}>
                     {UNIT_OPTIONS.map(u => <option key={u} value={u}>{u}</option>)}
                   </select>
                 </td>
@@ -839,9 +856,8 @@ function ChargesTable({ rows, activeContTypes, defaultUnit, defaultVat, onPatch,
         fontSize: 10.5, color: 'var(--text-3)', fontStyle: 'italic',
         marginTop: 4, paddingLeft: 4,
       }}>
-        Cột {isFcl ? '20DC/40HC/…' : 'Đơn giá'} là <strong>đơn giá theo từng loại cont</strong>, không phải số lượng cont.
-        Số lượng cont nhập 1 lần ở phần "Số lượng cont theo loại" phía trên.
-        Net = đơn giá × số cont. VAT theo từng loại phí. Line Total đã bao gồm VAT.
+        VOL tự suy ra từ Đơn vị (CONT → số cont; SHPT/BL → 1 lô; CBM → tổng CBM lô hàng; KG → tổng KG).
+        Net = đơn giá × VOL. VAT theo từng loại phí. Line Total đã bao gồm VAT.
       </div>
     </div>
   );

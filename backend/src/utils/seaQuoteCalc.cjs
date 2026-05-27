@@ -31,36 +31,55 @@ function unitToCurrency(unit) {
 }
 
 function unitBasis(unit) {
-  if (!unit) return 'cont';
-  const u = String(unit);
-  if (u.includes('/B/L') || u.includes('/shipment')) return 'shipment';
-  if (u.includes('/CBM')) return 'cbm';
-  return 'cont';
+  if (!unit) return 'shipment';
+  const u = String(unit).toUpperCase();
+  if (u.includes('CONT')) return 'cont';
+  if (u.includes('CBM')) return 'cbm';
+  if (u.includes('/KG') || u.endsWith('KG')) return 'kg';
+  if (u.includes('SHPT') || u.includes('SHIPMENT') ||
+      u.includes('B/L') || u.includes('/BL')) return 'shipment';
+  return 'shipment';
 }
+
+function rateByCont(row) { return row.rate_by_cont || row.price_by_cont || {}; }
+function rowRate(row)    { return nn(row.rate != null ? row.rate : row.price); }
 
 function calcRowAmount(row, ctx) {
   if (!row || !row.ticked) return 0;
   const basis = unitBasis(row.unit);
 
-  if (basis === 'shipment') {
-    if (ctx && ctx.cargo_type === 'FCL') {
-      const pbc = row.price_by_cont || {};
-      return Object.values(pbc).reduce((s, v) => s + nn(v), 0);
-    }
-    return nn(row.price);
-  }
-
-  if (ctx && ctx.cargo_type === 'FCL') {
-    const pbc = row.price_by_cont || {};
+  if (basis === 'cont') {
+    const rbc = rateByCont(row);
     let total = 0;
-    for (const c of (ctx.containers || [])) {
+    for (const c of ((ctx && ctx.containers) || [])) {
       const q = nn(c.qty);
-      if (q > 0) total += nn(pbc[c.type]) * q;
+      if (q > 0) total += nn(rbc[c.type]) * q;
     }
     return total;
   }
+  if (basis === 'cbm') return rowRate(row) * nn(ctx && ctx.shipment_cbm);
+  if (basis === 'kg')  return rowRate(row) * nn(ctx && ctx.shipment_kg);
+  return rowRate(row);
+}
 
-  return nn(row.price) * nn(row.cbm);
+function formatRowVol(row, ctx) {
+  const basis = unitBasis(row && row.unit);
+  if (basis === 'cont') {
+    const conts = ((ctx && ctx.containers) || []).filter(c => nn(c.qty) > 0);
+    if (!conts.length) return '—';
+    return conts.map(c => `${c.qty}×${c.type}`).join(' ');
+  }
+  if (basis === 'cbm') {
+    const cbm = nn(ctx && ctx.shipment_cbm);
+    if (cbm <= 0) return '— CBM';
+    return `${cbm % 1 === 0 ? Math.round(cbm) : cbm} CBM`;
+  }
+  if (basis === 'kg') {
+    const kg = nn(ctx && ctx.shipment_kg);
+    if (kg <= 0) return '— kg';
+    return `${kg % 1 === 0 ? Math.round(kg) : kg} kg`;
+  }
+  return '1 lô';
 }
 
 function rowVatPct(row) {
@@ -158,5 +177,6 @@ module.exports = {
   calcGrandTotal,
   fmtAmount,
   formatVolume,
+  formatRowVol,
   unitShort,
 };

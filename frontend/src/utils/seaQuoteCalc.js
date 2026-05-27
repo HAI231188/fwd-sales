@@ -30,13 +30,18 @@ export function unitToCurrency(unit) {
   return 'USD';
 }
 
-// 'cont' | 'cbm' | 'shipment' — drives calcRowAmount branch
+// 'cont' | 'shipment' | 'cbm' | 'kg' — drives calcRowAmount + formatRowVol.
+// Case-insensitive, tolerates both new (USD/CONT, USD/SHPT, USD/BL, USD/KG)
+// and legacy (USD/cont, USD/shipment, USD/B/L) unit tokens.
 export function unitBasis(unit) {
-  if (!unit) return 'cont';
-  const u = String(unit);
-  if (u.includes('/B/L') || u.includes('/shipment')) return 'shipment';
-  if (u.includes('/CBM')) return 'cbm';
-  return 'cont';
+  if (!unit) return 'shipment';
+  const u = String(unit).toUpperCase();
+  if (u.includes('CONT')) return 'cont';
+  if (u.includes('CBM')) return 'cbm';
+  if (u.includes('/KG') || u.endsWith('KG')) return 'kg';
+  if (u.includes('SHPT') || u.includes('SHIPMENT') ||
+      u.includes('B/L') || u.includes('/BL')) return 'shipment';
+  return 'shipment';
 }
 
 // Amount rules:
@@ -45,30 +50,56 @@ export function unitBasis(unit) {
 //       LCL: row.price (× 1)
 //   - FCL cont-based: SUM(price_by_cont[type] × qty[type]) over ctx.containers
 //   - LCL: row.price × row.cbm
+// Net = rate × VOL, where VOL depends ENTIRELY on unit basis (not cargo_type):
+//   cont     → Σ rate_by_cont[type] × ctx.containers[type].qty
+//   shipment → rate × 1
+//   cbm      → rate × ctx.shipment_cbm
+//   kg       → rate × ctx.shipment_kg
+//
+// Backward compat: legacy v2 quotes stored `price_by_cont` / `price`; new
+// quotes may use `rate_by_cont` / `rate`. We read both so existing data still
+// renders correctly (no migration required).
+function rateByCont(row) { return row.rate_by_cont || row.price_by_cont || {}; }
+function rowRate(row)    { return nn(row.rate != null ? row.rate : row.price); }
+
 export function calcRowAmount(row, ctx) {
   if (!row || !row.ticked) return 0;
   const basis = unitBasis(row.unit);
 
-  if (basis === 'shipment') {
-    if (ctx?.cargo_type === 'FCL') {
-      const pbc = row.price_by_cont || {};
-      return Object.values(pbc).reduce((s, v) => s + nn(v), 0);
-    }
-    return nn(row.price);
-  }
-
-  if (ctx?.cargo_type === 'FCL') {
-    const pbc = row.price_by_cont || {};
+  if (basis === 'cont') {
+    const rbc = rateByCont(row);
     let total = 0;
-    for (const c of (ctx.containers || [])) {
+    for (const c of (ctx?.containers || [])) {
       const q = nn(c.qty);
-      if (q > 0) total += nn(pbc[c.type]) * q;
+      if (q > 0) total += nn(rbc[c.type]) * q;
     }
     return total;
   }
+  if (basis === 'cbm') return rowRate(row) * nn(ctx?.shipment_cbm);
+  if (basis === 'kg')  return rowRate(row) * nn(ctx?.shipment_kg);
+  // shipment / B/L — flat per-shipment fee
+  return rowRate(row);
+}
 
-  // LCL
-  return nn(row.price) * nn(row.cbm);
+// VOL display string per row, in the same wording form/display/PDF all share.
+export function formatRowVol(row, ctx) {
+  const basis = unitBasis(row?.unit);
+  if (basis === 'cont') {
+    const conts = (ctx?.containers || []).filter(c => nn(c.qty) > 0);
+    if (!conts.length) return '—';
+    return conts.map(c => `${c.qty}×${c.type}`).join(' ');
+  }
+  if (basis === 'cbm') {
+    const cbm = nn(ctx?.shipment_cbm);
+    if (cbm <= 0) return '— CBM';
+    return `${cbm % 1 === 0 ? Math.round(cbm) : cbm} CBM`;
+  }
+  if (basis === 'kg') {
+    const kg = nn(ctx?.shipment_kg);
+    if (kg <= 0) return '— kg';
+    return `${kg % 1 === 0 ? Math.round(kg) : kg} kg`;
+  }
+  return '1 lô';
 }
 
 // Per-row VAT amount = net × (vat_pct / 100). vat string may be "8%" / "0%"

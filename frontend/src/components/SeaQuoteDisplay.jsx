@@ -6,8 +6,9 @@
 import { useState } from 'react';
 import { generateSeaQuotePdf } from '../api';
 import {
-  parseNum, unitToCurrency, calcRowAmount, calcRowVat, calcRowTotal,
-  calcSectionTotals, calcGrandTotal, fmtAmount, formatVolume,
+  parseNum, unitToCurrency, unitBasis,
+  calcRowAmount, calcRowVat, calcRowTotal,
+  calcSectionTotals, calcGrandTotal, fmtAmount, formatVolume, formatRowVol,
 } from '../utils/seaQuoteCalc';
 
 function fmtDate(d) {
@@ -21,7 +22,12 @@ function fmtDate(d) {
 
 export default function SeaQuoteDisplay({ quote }) {
   const qd = quote.quote_data || {};
-  const ctx = { cargo_type: qd.cargo_type || 'FCL', containers: qd.containers || [] };
+  const ctx = {
+    cargo_type: qd.cargo_type || 'FCL',
+    containers: qd.containers || [],
+    shipment_cbm: qd.shipment_cbm,
+    shipment_kg: qd.shipment_kg,
+  };
   const intlT = calcSectionTotals(qd.intl_charges, ctx);
   const inlandT = calcSectionTotals(qd.inland_charges, ctx);
   const target = quote.grand_total_currency || qd.grand_total_currency;
@@ -139,24 +145,43 @@ export default function SeaQuoteDisplay({ quote }) {
   );
 }
 
+// Format the row's RATE column for display. For cont basis show per-cont
+// rates inline (compact); for other bases show the single rate value.
+function formatRowRateDisplay(row, cur) {
+  const basis = unitBasis(row.unit);
+  if (basis === 'cont') {
+    const rbc = row.rate_by_cont || row.price_by_cont || {};
+    const parts = Object.entries(rbc)
+      .filter(([, v]) => parseNum(v) > 0)
+      .map(([type, v]) => `${type}:${fmtAmount(parseNum(v), cur)}`);
+    return parts.length ? parts.join('  ') : '—';
+  }
+  const rate = parseNum(row.rate != null ? row.rate : row.price);
+  return rate > 0 ? fmtAmount(rate, cur) : '—';
+}
+
+const CHARGE_GRID_COLS = '1.2fr 0.8fr 1.3fr 0.7fr 0.5fr 0.9fr 0.7fr 1fr';
+
 function ChargeBlock({ title, rows, ctx, totals }) {
   if (!rows.length) return null;
+  const HEADERS = ['Chi phí', 'VOL', 'Đơn giá', 'Đơn vị', 'VAT%', 'Net', 'VAT', 'Line Total'];
   return (
     <div style={{ marginTop: 6 }}>
       <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.3px', marginBottom: 2 }}>
         {title}
       </div>
-      {/* Mini-header for the 3 money columns */}
+      {/* Column header — 8 cols, money cols right-aligned */}
       <div style={{
-        display: 'grid', gridTemplateColumns: '1fr 80px 70px 90px', gap: 8,
-        fontSize: 10, color: 'var(--text-3)', fontWeight: 700,
+        display: 'grid', gridTemplateColumns: CHARGE_GRID_COLS, gap: 8,
+        fontSize: 9.5, color: 'var(--text-3)', fontWeight: 700,
         textTransform: 'uppercase', letterSpacing: '0.3px',
         borderBottom: '1px solid var(--border)', paddingBottom: 2, marginBottom: 3,
       }}>
-        <span>Chi phí</span>
-        <span style={{ textAlign: 'right' }}>Net</span>
-        <span style={{ textAlign: 'right' }}>VAT</span>
-        <span style={{ textAlign: 'right' }}>Line Total</span>
+        {HEADERS.map((h, i) => (
+          <span key={h} style={{ textAlign: i >= 5 ? 'right' : (i >= 1 && i <= 4 ? 'left' : 'left') }}>
+            {h}
+          </span>
+        ))}
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
         {rows.map((r, i) => {
@@ -164,15 +189,20 @@ function ChargeBlock({ title, rows, ctx, totals }) {
           const vatAmt = calcRowVat(r, ctx);
           const lineTotal = calcRowTotal(r, ctx);
           const cur = unitToCurrency(r.unit);
+          const vol = formatRowVol(r, ctx);
+          const rateStr = formatRowRateDisplay(r, cur);
           return (
             <div key={i} style={{
-              display: 'grid', gridTemplateColumns: '1fr 80px 70px 90px', gap: 8,
-              fontSize: 12, alignItems: 'baseline',
+              display: 'grid', gridTemplateColumns: CHARGE_GRID_COLS, gap: 8,
+              fontSize: 11.5, alignItems: 'baseline',
             }}>
-              <span style={{ color: 'var(--text)' }}>
-                {r.name}
-                {r.vat && <span style={{ color: 'var(--text-3)', marginLeft: 4, fontSize: 10 }}>({r.vat})</span>}
+              <span style={{ color: 'var(--text)', fontWeight: 500 }}>{r.name}</span>
+              <span style={{ color: 'var(--text-3)', fontSize: 10.5, whiteSpace: 'nowrap' }}>{vol}</span>
+              <span style={{ color: 'var(--text-2)', fontSize: 10.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {rateStr}
               </span>
+              <span style={{ color: 'var(--text-3)', fontSize: 10.5 }}>{r.unit}</span>
+              <span style={{ color: 'var(--text-3)', fontSize: 10.5 }}>{r.vat || ''}</span>
               <span style={{ color: 'var(--text-2)', textAlign: 'right', whiteSpace: 'nowrap' }}>
                 {net > 0 ? `${fmtAmount(net, cur)} ${cur}` : '—'}
               </span>
@@ -214,7 +244,7 @@ function ChargeBlock({ title, rows, ctx, totals }) {
         fontSize: 10, color: 'var(--text-3)', fontStyle: 'italic',
         marginTop: 4,
       }}>
-        Đơn giá theo từng dòng. VAT áp dụng theo từng loại phí (0% hoặc 8%). Line Total đã bao gồm VAT.
+        VOL tự suy ra từ Đơn vị · Net = đơn giá × VOL · VAT theo từng loại phí · Line Total đã bao gồm VAT.
       </div>
     </div>
   );
