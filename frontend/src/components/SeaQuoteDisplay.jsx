@@ -225,8 +225,8 @@ function ChargeBlock({ title, rows, ctx, totals }) {
                   fontSize: 10.5, whiteSpace: 'nowrap' }}>
                   {isCont ? '—' : (flatRate > 0 ? fmtAmount(flatRate, cur) : '—')}
                 </td>
-                <td style={{ ...TD_S, color: 'var(--text-3)', fontSize: 10.5 }}>{r.unit}</td>
-                <td style={{ ...TD_S, color: 'var(--text-3)', fontSize: 10.5 }}>{r.vat || ''}</td>
+                <td style={{ ...TD_S, color: 'var(--text-3)', fontSize: 10.5, whiteSpace: 'nowrap' }}>{r.unit}</td>
+                <td style={{ ...TD_S, color: 'var(--text-3)', fontSize: 10.5, whiteSpace: 'nowrap' }}>{r.vat || ''}</td>
                 <td style={{ ...TD_S, textAlign: 'right', color: 'var(--text-2)', whiteSpace: 'nowrap' }}>
                   {net > 0 ? `${fmtAmount(net, cur)} ${cur}` : '—'}
                 </td>

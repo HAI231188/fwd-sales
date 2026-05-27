@@ -250,14 +250,15 @@ function drawChargesSection(doc, left, right, opts) {
   doc.y = barY + 22;
   resetPaint(doc);
 
-  // ─ Final column layout (2026-05-27 paired): SL + Đơn giá per cont type.
-  // FCL: Desc | {per cont: SL | Đơn giá} | RATE (flat) | UNIT | VAT% | NET | VAT | LINE TOTAL
-  // LCL: Desc | RATE | UNIT | VAT% | NET | VAT | LINE TOTAL
-  const MONEY_W = 60;
+  // ─ Final column layout (2026-05-27 paired) — UNIT widened to fit
+  // "USD/CONT"/"USD/SHPT"/"VND/CONT" on a single line (was 44pt, wrapped).
+  // SL cols tightened to 12-14pt (1-2 digits only); money/RATE trimmed slightly
+  // to keep desc readable for 2-3 cont type quotes.
+  const MONEY_W = 56;
   const MONEY_BLOCK = MONEY_W * 3;
-  const UNIT_W = 44;
-  const VATPCT_W = 26;
-  const RATE_W = 54;
+  const UNIT_W = 60;        // was 44 — fits USD/CONT, VND/CONT, USD/SHPT on one line
+  const VATPCT_W = 24;
+  const RATE_W = 50;
   const qtyByType = Object.fromEntries((ctx.containers || []).map(c => [c.type, parseNum(c.qty)]));
 
   const cols = [];
@@ -265,8 +266,9 @@ function drawChargesSection(doc, left, right, opts) {
   let contGroupCount = 0;
   if (isFcl && activeTypes.length > 0) {
     contGroupCount = activeTypes.length;
-    const slW  = contGroupCount > 2 ? 16 : 20;
-    const giaW = contGroupCount > 3 ? 38 : (contGroupCount > 1 ? 44 : 52);
+    // Aggressive shrink for 3+ cont types so Description still fits.
+    const slW  = contGroupCount > 2 ? 10 : 14;
+    const giaW = contGroupCount > 3 ? 28 : (contGroupCount > 2 ? 32 : (contGroupCount > 1 ? 44 : 52));
     for (const t of activeTypes) {
       cols.push({ key: `sl-${t}`,  w: slW,  contType: t, label: 'SL',     align: 'center' });
       cols.push({ key: `gia-${t}`, w: giaW, contType: t, label: 'Don gia', align: 'right' });
@@ -279,7 +281,7 @@ function drawChargesSection(doc, left, right, opts) {
   cols.push({ key: 'vatA', w: MONEY_W,   label: 'VAT',        align: 'right' });
   cols.push({ key: 'tot',  w: MONEY_W,   label: 'Line Total', align: 'right' });
   const usedW = cols.slice(1).reduce((s, c) => s + c.w, 0);
-  cols[0].w = Math.max(70, usable - usedW);
+  cols[0].w = Math.max(60, usable - usedW);
 
   // ─ 2-row header. Top: cont type spans its two sub-cols. Bottom: SL/Đơn giá.
   // Static (non-cont) cols use the full height with their label vertically centered.

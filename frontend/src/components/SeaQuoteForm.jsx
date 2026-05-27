@@ -883,10 +883,10 @@ function ChargesTable({ rows, activeContTypes, defaultUnit, defaultVat, onPatch,
                       style={{ ...CELL_INPUT, minWidth: 80 }} placeholder="0" />
                   )}
                 </td>
-                <td style={TD_STYLE}>
+                <td style={{ ...TD_STYLE, whiteSpace: 'nowrap' }}>
                   <select value={r.unit} onChange={e => onPatch(i, { unit: e.target.value })}
                     style={{ ...CELL_INPUT, color: unitOverridden ? '#d97706' : 'inherit',
-                      fontWeight: unitOverridden ? 600 : 400, minWidth: 86 }}>
+                      fontWeight: unitOverridden ? 600 : 400, minWidth: 96, whiteSpace: 'nowrap' }}>
                     {UNIT_OPTIONS.map(u => <option key={u} value={u}>{u}</option>)}
                   </select>
                 </td>
