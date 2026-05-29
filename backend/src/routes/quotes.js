@@ -57,9 +57,15 @@ router.put('/:id', requireAuth, async (req, res) => {
     quote_data, valid_until, exchange_rate, grand_total_currency,
   } = req.body;
 
+  // Wrap quote UPDATE + (on booked) pipeline UPDATE + pipeline_history INSERT
+  // in a single transaction so a mid-flight failure can't leave the quote
+  // flipped to 'booked' while the pipeline / history rows are out of sync.
+  const client = await db.pool.connect();
   try {
+    await client.query('BEGIN');
+
     // Verify ownership via join
-    const { rows } = await db.query(`
+    const { rows } = await client.query(`
       UPDATE quotes q SET
         cargo_name=$1, monthly_volume_cbm=$2, monthly_volume_kg=$3,
         monthly_volume_containers=$4, route=$5, cargo_ready_date=$6, mode=$7,
@@ -80,11 +86,14 @@ router.put('/:id', requireAuth, async (req, res) => {
       req.params.id, req.user.id,
     ]);
 
-    if (!rows[0]) return res.status(404).json({ error: 'Không tìm thấy' });
+    if (!rows[0]) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Không tìm thấy' });
+    }
 
     // Auto-promote pipeline to 'booked' when quote status is set to booked
     if (status === 'booked') {
-      const { rows: link } = await db.query(`
+      const { rows: link } = await client.query(`
         SELECT c.pipeline_id, cp.stage
         FROM customers c
         LEFT JOIN customer_pipeline cp ON cp.id = c.pipeline_id
@@ -92,20 +101,24 @@ router.put('/:id', requireAuth, async (req, res) => {
       `, [rows[0].customer_id]);
 
       if (link[0]?.pipeline_id && link[0].stage !== 'booked') {
-        await db.query(
+        await client.query(
           `UPDATE customer_pipeline SET stage = 'booked', updated_at = NOW() WHERE id = $1`,
           [link[0].pipeline_id]
         );
-        await db.query(
+        await client.query(
           `INSERT INTO pipeline_history (pipeline_id, from_stage, to_stage, changed_by) VALUES ($1, $2, 'booked', $3)`,
           [link[0].pipeline_id, link[0].stage, req.user.id]
         );
       }
     }
 
+    await client.query('COMMIT');
     res.json(rows[0]);
   } catch (err) {
+    await client.query('ROLLBACK');
     res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
   }
 });
 
