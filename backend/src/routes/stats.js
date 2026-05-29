@@ -7,8 +7,10 @@ router.get('/', requireAuth, async (req, res) => {
   const { startDate, endDate, userId } = req.query;
   const isLead = req.user.role === 'lead';
 
-  // Build WHERE conditions for report-date-based queries
-  const conds = [];
+  // Build WHERE conditions for report-date-based queries.
+  // r.deleted_at IS NULL applies to every query that joins reports — soft-deleted
+  // reports (and their child customers/quotes via JOIN) drop out of stats.
+  const conds = ['r.deleted_at IS NULL'];
   const params = [];
   let idx = 1;
 
@@ -22,18 +24,18 @@ router.get('/', requireAuth, async (req, res) => {
   if (startDate) { conds.push(`r.report_date >= $${idx++}`); params.push(startDate); }
   if (endDate)   { conds.push(`r.report_date <= $${idx++}`); params.push(endDate); }
 
-  const WHERE = conds.length ? 'WHERE ' + conds.join(' AND ') : '';
-  const AND   = conds.length ? 'AND' : 'WHERE';
+  const WHERE = 'WHERE ' + conds.join(' AND ');
+  const AND   = 'AND';
 
   // Report-level conditions (same params, joins to reports directly)
-  const rConds = [];
+  const rConds = ['r.deleted_at IS NULL'];
   const rParams = [];
   let ridx = 1;
   if (!isLead) { rConds.push(`r.user_id = $${ridx++}`); rParams.push(req.user.id); }
   else if (userId) { rConds.push(`r.user_id = $${ridx++}`); rParams.push(userId); }
   if (startDate) { rConds.push(`r.report_date >= $${ridx++}`); rParams.push(startDate); }
   if (endDate)   { rConds.push(`r.report_date <= $${ridx++}`); rParams.push(endDate); }
-  const rWHERE = rConds.length ? 'WHERE ' + rConds.join(' AND ') : '';
+  const rWHERE = 'WHERE ' + rConds.join(' AND ');
 
   try {
     const [contacts, newCust, totalQuotes, booked, followUp, closingSoon, followToday, overdue, followUpcoming] = await Promise.all([
@@ -134,6 +136,7 @@ router.get('/', requireAuth, async (req, res) => {
           COUNT(DISTINCT CASE WHEN q.closing_soon      THEN q.id END) AS closing_soon
         FROM users u
         LEFT JOIN reports r ON r.user_id = u.id
+          AND r.deleted_at IS NULL
           ${startDate ? `AND r.report_date >= '${startDate.replace(/'/g, '')}'` : ''}
           ${endDate   ? `AND r.report_date <= '${endDate.replace(/'/g, '')}'`   : ''}
         LEFT JOIN customers c ON c.report_id = r.id
@@ -169,7 +172,8 @@ router.get('/drilldown/:type', requireAuth, async (req, res) => {
   const { startDate, endDate, userId } = req.query;
   const isLead = req.user.role === 'lead';
 
-  const conds = [];
+  // Drilldown WHERE — same r.deleted_at IS NULL guard as the main stats.
+  const conds = ['r.deleted_at IS NULL'];
   const params = [];
   let idx = 1;
 
@@ -178,8 +182,8 @@ router.get('/drilldown/:type', requireAuth, async (req, res) => {
   if (startDate) { conds.push(`r.report_date >= $${idx++}`); params.push(startDate); }
   if (endDate)   { conds.push(`r.report_date <= $${idx++}`); params.push(endDate); }
 
-  const WHERE = conds.length ? 'WHERE ' + conds.join(' AND ') : '';
-  const AND   = conds.length ? 'AND' : 'WHERE';
+  const WHERE = 'WHERE ' + conds.join(' AND ');
+  const AND   = 'AND';
 
   const quoteSelect = `
     q.*, c.company_name, c.contact_person, c.industry,

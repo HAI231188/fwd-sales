@@ -65,6 +65,16 @@ CREATE TABLE IF NOT EXISTS quotes (
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_reports_user_id ON reports(user_id);
 CREATE INDEX IF NOT EXISTS idx_reports_date ON reports(report_date);
+
+-- 2026-05-29 — soft-delete for reports (Golden Rule #1). Hard DELETE used to
+-- cascade via reports → customers (ON DELETE CASCADE) and wipe the audit trail.
+-- With deleted_at, customers under a soft-deleted report stay intact; all
+-- read paths (reports.js, stats.js, pipeline.js, customers.js, backfill) add
+-- r.deleted_at IS NULL to filter them out of the UI.
+ALTER TABLE reports ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE;
+CREATE INDEX IF NOT EXISTS idx_reports_deleted_at
+  ON reports(deleted_at) WHERE deleted_at IS NOT NULL;
+
 CREATE INDEX IF NOT EXISTS idx_customers_report_id ON customers(report_id);
 CREATE INDEX IF NOT EXISTS idx_customers_user_id ON customers(user_id);
 CREATE INDEX IF NOT EXISTS idx_customers_follow_up ON customers(follow_up_date);

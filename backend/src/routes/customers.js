@@ -153,7 +153,7 @@ router.get('/', requireAuth, async (req, res) => {
         STRING_AGG(DISTINCT q.status, ',') AS quote_statuses
       FROM customers c
       JOIN users u ON u.id = c.user_id
-      JOIN reports r ON r.id = c.report_id
+      JOIN reports r ON r.id = c.report_id AND r.deleted_at IS NULL
       LEFT JOIN quotes q ON q.customer_id = c.id
       ${where}
       GROUP BY c.id, u.name, u.code, u.avatar_color, r.report_date
@@ -174,7 +174,7 @@ router.get('/:id', requireAuth, async (req, res) => {
       `SELECT c.*, u.name AS user_name, u.code AS user_code, r.report_date
        FROM customers c
        JOIN users u ON u.id = c.user_id
-       JOIN reports r ON r.id = c.report_id
+       JOIN reports r ON r.id = c.report_id AND r.deleted_at IS NULL
        WHERE c.id = $1`,
       [req.params.id]
     );

@@ -7,7 +7,8 @@ router.get('/', requireAuth, async (req, res) => {
   const { userId, startDate, endDate, page = 1, limit = 20 } = req.query;
   const offset = (page - 1) * limit;
 
-  let conditions = [];
+  // Soft-delete filter applies to every read of `reports`.
+  let conditions = ['r.deleted_at IS NULL'];
   let params = [];
   let idx = 1;
 
@@ -23,7 +24,7 @@ router.get('/', requireAuth, async (req, res) => {
   if (startDate) { conditions.push(`r.report_date >= $${idx++}`); params.push(startDate); }
   if (endDate)   { conditions.push(`r.report_date <= $${idx++}`); params.push(endDate); }
 
-  const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
+  const where = 'WHERE ' + conditions.join(' AND ');
 
   try {
     const { rows } = await db.query(`
@@ -63,7 +64,7 @@ router.get('/:id', requireAuth, async (req, res) => {
     const { rows: reportRows } = await db.query(`
       SELECT r.*, u.name AS user_name, u.code AS user_code, u.avatar_color
       FROM reports r JOIN users u ON u.id = r.user_id
-      WHERE r.id = $1
+      WHERE r.id = $1 AND r.deleted_at IS NULL
     `, [req.params.id]);
 
     if (!reportRows[0]) return res.status(404).json({ error: 'Báo cáo không tồn tại' });
@@ -455,11 +456,15 @@ router.put('/:id', requireAuth, async (req, res) => {
   }
 });
 
-// Delete report
+// Delete report — soft-delete (Golden Rule #1). Hard DELETE used to cascade
+// via reports → customers and wipe the audit trail. With deleted_at, the
+// customer rows under this report remain queryable for audit; the report
+// just stops appearing in lists/stats/drilldowns.
 router.delete('/:id', requireAuth, async (req, res) => {
   try {
     const { rowCount } = await db.query(
-      'DELETE FROM reports WHERE id=$1 AND user_id=$2',
+      `UPDATE reports SET deleted_at = NOW(), updated_at = NOW()
+       WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL`,
       [req.params.id, req.user.id]
     );
     if (!rowCount) return res.status(404).json({ error: 'Không tìm thấy báo cáo' });

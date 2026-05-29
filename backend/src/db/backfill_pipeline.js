@@ -29,7 +29,7 @@ const STAGE_CTES = `
       c.source,
       c.interaction_type
     FROM customers c
-    JOIN reports r ON r.id = c.report_id
+    JOIN reports r ON r.id = c.report_id AND r.deleted_at IS NULL
     ORDER BY c.user_id, LOWER(c.company_name), r.report_date DESC, c.created_at DESC
   ),
   -- Last report date per salesperson+company
@@ -37,7 +37,7 @@ const STAGE_CTES = `
     SELECT c.user_id AS sales_id, LOWER(c.company_name) AS co_key,
            MAX(r.report_date) AS last_date
     FROM customers c
-    JOIN reports r ON r.id = c.report_id
+    JOIN reports r ON r.id = c.report_id AND r.deleted_at IS NULL
     GROUP BY c.user_id, LOWER(c.company_name)
   ),
   -- Whether any quote for this company+salesperson is booked

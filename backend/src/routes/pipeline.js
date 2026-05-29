@@ -93,12 +93,12 @@ router.get('/lead-all', requireAuth, async (req, res) => {
       FROM customer_pipeline cp
       JOIN users u ON u.id = cp.sales_id
       LEFT JOIN customers c ON c.pipeline_id = cp.id
-      LEFT JOIN reports r ON r.id = c.report_id
+      LEFT JOIN reports r ON r.id = c.report_id AND r.deleted_at IS NULL
       LEFT JOIN quotes q ON q.customer_id = c.id
       LEFT JOIN LATERAL (
         SELECT c2.interaction_type, c2.follow_up_date, c2.needs
         FROM customers c2
-        JOIN reports r2 ON r2.id = c2.report_id
+        JOIN reports r2 ON r2.id = c2.report_id AND r2.deleted_at IS NULL
         WHERE c2.pipeline_id = cp.id
         ORDER BY r2.report_date DESC, c2.created_at DESC
         LIMIT 1
@@ -288,7 +288,7 @@ router.get('/', requireAuth, async (req, res) => {
         MAX(r.report_date)                                                 AS last_report_date
       FROM customer_pipeline cp
       LEFT JOIN customers c   ON c.pipeline_id = cp.id
-      LEFT JOIN reports r     ON r.id = c.report_id
+      LEFT JOIN reports r     ON r.id = c.report_id AND r.deleted_at IS NULL
       LEFT JOIN quotes q      ON q.customer_id = c.id
       WHERE cp.sales_id = $1 AND cp.deleted_at IS NULL ${dateFilter}
       GROUP BY cp.id
@@ -364,7 +364,7 @@ router.put('/:id/info', requireAuth, async (req, res) => {
         updated_at        = NOW()
       WHERE id = (
         SELECT c.id FROM customers c
-        JOIN reports r ON r.id = c.report_id
+        JOIN reports r ON r.id = c.report_id AND r.deleted_at IS NULL
         WHERE c.pipeline_id = $6
         ORDER BY r.report_date DESC, c.created_at DESC
         LIMIT 1
@@ -446,7 +446,7 @@ router.get('/:id/detail', requireAuth, async (req, res) => {
       SELECT c.*, r.report_date
       FROM customers c
       JOIN reports r ON r.id = c.report_id
-      WHERE c.pipeline_id = $1
+      WHERE c.pipeline_id = $1 AND r.deleted_at IS NULL
       ORDER BY r.report_date DESC, c.created_at DESC
     `, [req.params.id]);
 
