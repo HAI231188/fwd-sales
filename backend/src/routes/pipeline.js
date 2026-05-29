@@ -477,33 +477,46 @@ router.post('/customers/:customerId/updates', requireAuth, async (req, res) => {
   const { note, follow_up_date } = req.body;
   if (!note?.trim()) return res.status(400).json({ error: 'Ghi chú không được để trống' });
 
+  // CIU INSERT + customer_pipeline.last_activity_date UPDATE must be atomic.
+  // If the UPDATE fails the new note still exists but last_activity_date is
+  // stale, which throws off the dormant/following auto-transition (L2).
+  const client = await db.pool.connect();
   try {
+    await client.query('BEGIN');
+
     // Verify the customer belongs to a pipeline the user can access
-    const { rows: check } = await db.query(`
+    const { rows: check } = await client.query(`
       SELECT c.id FROM customers c
       JOIN customer_pipeline cp ON cp.id = c.pipeline_id
       WHERE c.id = $1 AND (cp.sales_id = $2 OR $3 = 'lead')
     `, [req.params.customerId, req.user.id, req.user.role]);
 
-    if (!check[0]) return res.status(404).json({ error: 'Không tìm thấy' });
+    if (!check[0]) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Không tìm thấy' });
+    }
 
-    const { rows } = await db.query(`
+    const { rows } = await client.query(`
       INSERT INTO customer_interaction_updates (customer_id, note, follow_up_date, created_by)
       VALUES ($1, $2, $3, $4)
       RETURNING *
     `, [req.params.customerId, note.trim(), follow_up_date || null, req.user.id]);
 
     // Also bump last_activity_date on the pipeline entry
-    await db.query(`
+    await client.query(`
       UPDATE customer_pipeline cp
       SET last_activity_date = CURRENT_DATE, updated_at = NOW()
       FROM customers c
       WHERE c.id = $1 AND cp.id = c.pipeline_id
     `, [req.params.customerId]);
 
+    await client.query('COMMIT');
     res.status(201).json(rows[0]);
   } catch (err) {
+    await client.query('ROLLBACK');
     res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
   }
 });
 
