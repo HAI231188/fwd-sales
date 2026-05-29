@@ -201,7 +201,12 @@ router.get('/delete-requests', requireAuth, async (req, res) => {
   }
 });
 
-// POST /api/pipeline/delete-requests/:id/approve — lead approves: executes hard delete
+// POST /api/pipeline/delete-requests/:id/approve — lead approves: soft-deletes the pipeline
+// Soft-delete (deleted_at) preserves Golden Rule #1 (audit trail) and lets the
+// partial unique index re-revive (sales_id, LOWER(company_name)) per L17.
+// We do NOT wipe customer_interaction_updates — that is audit history and should
+// survive a soft-delete. The DR row is flipped to 'approved' explicitly because
+// the prior hard-delete relied on FK cascade from customer_pipeline to clear it.
 router.post('/delete-requests/:id/approve', requireAuth, async (req, res) => {
   if (req.user.role !== 'lead') return res.status(403).json({ error: 'Không có quyền' });
   const client = await db.pool.connect();
@@ -212,17 +217,25 @@ router.post('/delete-requests/:id/approve', requireAuth, async (req, res) => {
       `SELECT pipeline_id FROM pipeline_delete_requests WHERE id = $1 AND status = 'pending'`,
       [req.params.id]
     );
-    if (!drRows[0]) return res.status(404).json({ error: 'Không tìm thấy yêu cầu' });
+    if (!drRows[0]) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Không tìm thấy yêu cầu' });
+    }
 
     const pipelineId = drRows[0].pipeline_id;
 
-    await client.query(`
-      DELETE FROM customer_interaction_updates
-      WHERE customer_id IN (SELECT id FROM customers WHERE pipeline_id = $1)
-    `, [pipelineId]);
+    await client.query(
+      `UPDATE customer_pipeline SET deleted_at = NOW(), updated_at = NOW()
+       WHERE id = $1 AND deleted_at IS NULL`,
+      [pipelineId]
+    );
 
-    // Deleting pipeline cascades to pipeline_history and pipeline_delete_requests
-    await client.query(`DELETE FROM customer_pipeline WHERE id = $1`, [pipelineId]);
+    await client.query(
+      `UPDATE pipeline_delete_requests
+       SET status = 'approved', reviewed_at = NOW(), reviewed_by = $2
+       WHERE id = $1 AND status = 'pending'`,
+      [req.params.id, req.user.id]
+    );
 
     await client.query('COMMIT');
     res.json({ ok: true });
