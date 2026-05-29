@@ -337,7 +337,7 @@ Currently: `transport_companies.email_cc`. Future candidates: alternate phone nu
 3. Update every `ON CONFLICT` clause that references the rewritten index, with the matching `WHERE deleted_at IS NULL` predicate.
 4. The opposite pattern — hard delete with CASCADE — is also valid for tables where retention isn't needed. Choose deliberately; soft-delete adds long-term filter discipline.
 
-Applies to: `customer_pipeline.deleted_at` (added 2026-05-11), `transport_companies.deleted_at`. Future candidates: `jobs.deleted_at` (already exists; consider auditing its readers next).
+Applies to: `customer_pipeline.deleted_at` (added 2026-05-11), `transport_companies.deleted_at`, `reports.deleted_at` (added 2026-05-29 — see L28). Future candidates: `jobs.deleted_at` (already exists; consider auditing its readers next).
 
 ### L18 — Always deploy after push (Railway auto-deploy is unavailable)
 
@@ -857,6 +857,87 @@ Used by `ddPillInfo` to split `du_xe_cho_giao` into "chưa tick nâng hạ" / "c
 4. **Display filter rule:** PDF + form + display show ALL `r.ticked` rows, even when `calcRowAmount === 0`. The user explicitly ticked the row; suppressing zero-net rows from display loses information (e.g. complimentary X-RAY at rate 0).
 
 **Applies to:** `frontend/src/utils/seaQuoteCalc.js`, `backend/src/utils/seaQuoteCalc.cjs`, `backend/src/services/sea-quote-pdf.js`, and any future `*QuoteForm.jsx` / `*QuoteDisplay.jsx`. Future transport additions should pass `rowUsesDimensions(row, ctx)` tests for both their dim-basis and non-dim-basis rows before being wired into the integration components.
+
+---
+
+### L28 — Reports soft-delete + audit-preserving delete-approval (CỤM 1 audit, 2026-05-29)
+
+**Two related fixes ship together — both are about Golden Rule #1 (never hard-delete customer or report data):**
+
+**Part A — `reports.deleted_at` (new schema field).** `DELETE /api/reports/:id` used to do a hard `DELETE FROM reports`, which cascaded via FK (`reports → customers ON DELETE CASCADE`) and silently wiped the customer interaction audit trail. After this change:
+
+- Schema (idempotent — applied by `migrate.js` on every deploy):
+  ```sql
+  ALTER TABLE reports ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE;
+  CREATE INDEX IF NOT EXISTS idx_reports_deleted_at
+    ON reports(deleted_at) WHERE deleted_at IS NOT NULL;
+  ```
+- DELETE endpoint: `UPDATE reports SET deleted_at = NOW() WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL`.
+- Customer rows under a soft-deleted report are preserved — their `report_id` still points correctly. Readers filter via `r.deleted_at IS NULL` to hide them from normal UI.
+
+**Read-query sites guarded (15 total — full audit per L9):**
+| File | Sites |
+|---|---|
+| `routes/reports.js` | GET `/` (list + count) and GET `/:id` — `conditions` array seeded with `r.deleted_at IS NULL`; GET `/:id` adds `AND r.deleted_at IS NULL` to its WHERE. |
+| `routes/stats.js` | All 6 main-stat queries (`total_contacts`, `new_customers`, `total_quotes`, `booked`, `follow_up`, `closing_soon`) via shared `conds`/`rConds` arrays; per-sales breakdown adds `AND r.deleted_at IS NULL` to the LEFT JOIN; drilldown `quoteSelect` + `custSelect` also via `conds`. |
+| `routes/pipeline.js` | `lead-all` main + LATERAL `latest`; GET `/`; PUT `/:id/info` latest-customer subquery; GET `/:id/detail` interactions list. |
+| `routes/customers.js` | GET `/` list JOIN; GET `/:id` JOIN. |
+| `db/backfill_pipeline.js` | `STAGE_CTES` — `latest_customer` and `last_activity` CTEs. |
+
+**Intentional non-guards** (do not "fix" them later):
+- Follow-up stat IIFE blocks in `stats.js` (lines ~59-123) read `FROM customers c` directly without joining reports — soft-deleted reports' customers still surface for follow-up obligations. This is audit-preserving: the obligation belongs to the customer interaction, not the parent report. If product later wants follow-up suppression for deleted-report customers, add an EXISTS join on reports there explicitly.
+
+**Part B — pipeline approve-delete is now soft-delete too.** `POST /api/pipeline/delete-requests/:id/approve` used to do `DELETE FROM customer_pipeline` (and pre-emptively `DELETE FROM customer_interaction_updates` because the FK chain doesn't cascade to CIU). Both destroyed audit history and bypassed L17's partial-unique-index revival hack. After this change:
+
+- `UPDATE customer_pipeline SET deleted_at = NOW(), updated_at = NOW() WHERE id = $1 AND deleted_at IS NULL` — partial unique index on `(sales_id, LOWER(company_name)) WHERE deleted_at IS NULL` lets the same sales user re-create the same company later (L17 revival).
+- CIU rows are **intentionally NOT wiped** — they're audit history and must survive a soft-delete.
+- `pipeline_delete_requests.status` is now explicitly flipped to `'approved'` (with `reviewed_at`, `reviewed_by`) because the prior FK cascade from `customer_pipeline` that cleared this row no longer fires under soft-delete. Mirrors the existing `reject` path.
+
+**Rules:**
+1. When adding soft-delete to a new table that has child rows accessed via joins, audit EVERY `FROM <table>` / `JOIN <table>` site in `backend/src/**/*.js` and add `deleted_at IS NULL` to each in the same commit. Grep is the only safe enumeration — the schema doesn't tell you who reads it.
+2. Decide explicitly whether each read should hide soft-deleted rows or surface them for audit. Document the audit-preserving exceptions inline (the follow-up IIFEs are the example here).
+3. When converting a hard-delete to soft-delete on a table that previously cascaded, audit every dependent cleanup (the CIU manual DELETE in pipeline approve was this case) and the FK chain (delete-request row in pipeline_delete_requests was previously cascade-cleared; now needs explicit UPDATE).
+4. Partial unique indexes (`WHERE deleted_at IS NULL`) on soft-delete tables are mandatory if the table has any UNIQUE constraint, per L17. Without it, a re-create of a soft-deleted `(sales_id, company_name)` pair fails or — worse — silently updates the tombstoned row via ON CONFLICT.
+
+Applies to: `reports.deleted_at`, `customer_pipeline.deleted_at` approve-delete path (current). Future candidates: `jobs.deleted_at` if its hard-delete paths are ever revisited.
+
+---
+
+### L29 — Multi-table writes need transactions when downstream invariants depend on sibling state
+
+**Golden Rule #4** already mandates `BEGIN/COMMIT/ROLLBACK` for any mutation touching more than one table. Two recent (CỤM 1, 2026-05-29) violations show *why* skipping it isn't merely a "best practice" but a correctness bug:
+
+**Violation A — quotes PUT booked-promotion.** `PUT /api/quotes/:id` ran three sequential `db.query` calls on the booked-promotion branch: quotes UPDATE → customer_pipeline UPDATE → pipeline_history INSERT. A failure between calls 2 and 3 left the pipeline stage flipped to `'booked'` with no audit row in `pipeline_history`. A failure between calls 1 and 2 left a `quote.status='booked'` whose customer's pipeline still showed `'quoting'`. Both cases poison every downstream stat that infers state from the pipeline-vs-quote pair.
+
+**Violation B — pipeline interaction-update POST.** `POST /api/pipeline/customers/:customerId/updates` did two sequential writes: CIU INSERT → `customer_pipeline.last_activity_date` UPDATE. A failure between them left a new note saved but `last_activity_date` stale. That field is exactly what `applyAutoTransitions()` reads to flip `new`/`following` → `dormant` after 7 days (and what the CHỜ FOLLOW stat indirectly relies on per L2). Result: a customer with very recent activity would get auto-flipped to `dormant` despite the user just having recorded an interaction.
+
+**Pattern (when transaction is mandatory):**
+The presence of more-than-one-table writes is necessary but not the full test. The sharper test: **does a derived stat / auto-transition / downstream invariant read a "sibling" column that this write path also mutates?** If yes, the writes MUST be in one transaction, because a partial failure leaves the invariant silently violated and the bug shows up days later as "why is X dormant when I just talked to them" or "why is the pipeline still quoting when the quote is booked".
+
+**Both fixes use the standard pattern:**
+```js
+const client = await db.pool.connect();
+try {
+  await client.query('BEGIN');
+  // ... all writes via client.query, not db.query ...
+  // Early-return paths (404 etc.) also ROLLBACK before returning.
+  await client.query('COMMIT');
+  res.json(result);
+} catch (err) {
+  await client.query('ROLLBACK');
+  res.status(500).json({ error: err.message });
+} finally {
+  client.release();
+}
+```
+
+**Rules:**
+1. Any handler that mutates 2+ tables must use `pool.connect()` + BEGIN/COMMIT/ROLLBACK with `client.release()` in `finally`. Already in Golden Rule #4; the L29 reminder is *why* it matters.
+2. Early-return paths inside the try (404 not-found, ownership check failures, validation guards) must call `ROLLBACK` before returning. Forgetting this leaks an open transaction back to the pool and stalls the next request that picks up that client.
+3. Switch `db.query` → `client.query` for every statement inside the transaction. A stray `db.query` runs OUTSIDE the transaction and silently breaks atomicity without raising an error.
+4. When adding a new write path that touches a column another query path *reads* to compute a derived state (e.g. `last_activity_date` → dormant transition; `pipeline.stage` → quote-count stats; `truck_booking_status` → DD pill), prefer expanding an existing transaction over starting a new query. The invariant is the contract, not the table.
+
+Applies to (fixed in CỤM 1): `routes/quotes.js` PUT `/:id`, `routes/pipeline.js` POST `/customers/:customerId/updates`. Future candidates: any handler in `routes/` whose body has 2+ `db.query` calls — audit before adding a new one.
 
 ---
 
