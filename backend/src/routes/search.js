@@ -1,8 +1,7 @@
 const router = require('express').Router();
 const db = require('../db');
 const { requireAuth } = require('../middleware/auth');
-
-const LOG_ROLES = ['truong_phong_log', 'cus', 'cus1', 'cus2', 'cus3', 'dieu_do', 'ops'];
+const { LOG_ROLES } = require('../constants/roles');
 
 // GET /api/search?q=<keyword>&from=<YYYY-MM-DD>&to=<YYYY-MM-DD>
 // LOG-team global search across jobs (date-scoped) and customer pipeline (no date filter).

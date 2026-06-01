@@ -1,9 +1,7 @@
 const router = require('express').Router();
 const db = require('../db');
 const { requireAuth } = require('../middleware/auth');
-
-const WRITE_ROLES = ['truong_phong_log', 'dieu_do'];
-function canWrite(req) { return WRITE_ROLES.includes(req.user?.role); }
+const { canWrite } = require('../constants/roles');
 
 const FIELDS = ['name', 'tax_code', 'address', 'email', 'phone', 'contact_person', 'notes'];
 

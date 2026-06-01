@@ -5,19 +5,10 @@ const { suggestCus, suggestOps } = require('../services/ai-assignment');
 const { buildBbbgPdf } = require('../services/bbbg-pdf');
 const { checkAndCompleteJob: _checkAndCompleteJob, checkOpsTasksDone } = require('../services/job-completion');
 const { recordHistory } = require('../services/job-history');
+const { CUS_ROLES, AUTO_CUS_ROLES, LOG_ROLES, PLAN_ROLES } = require('../constants/roles');
 
 // In-memory suggestion cache (60s TTL) — invalidated on manual assignment
 let suggestionCache = { data: null, ts: 0 };
-
-const CUS_ROLES = ['cus', 'cus1', 'cus2', 'cus3'];
-const AUTO_CUS_ROLES = ['cus1', 'cus2', 'cus3'];
-const LOG_ROLES = ['truong_phong_log', 'dieu_do', 'cus', 'cus1', 'cus2', 'cus3', 'ops'];
-// "Đặt kế hoạch xe" surface roles — kept in sync with PLAN_ROLES in
-// routes/truck-bookings.js:32-33 (not exported there; replicated here).
-// PlanDeliveryModal is shared by CUS/DieuDo/TP; its read endpoints
-// (available-containers, past-delivery-locations) must allow this whole set.
-const PLAN_ROLES = ['dieu_do', 'truong_phong_log', 'lead', 'sales',
-                    'cus', 'cus1', 'cus2', 'cus3'];
 
 function withTimeout(promise, ms) {
   const timeout = new Promise(resolve => setTimeout(() => resolve(null), ms));

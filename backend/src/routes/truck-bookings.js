@@ -20,17 +20,13 @@ const router = require('express').Router();
 const db = require('../db');
 const { requireAuth } = require('../middleware/auth');
 const { checkAndCompleteJob } = require('../services/job-completion');
-
-const WRITE_ROLES = ['dieu_do', 'truong_phong_log'];
-function canWrite(req) { return WRITE_ROLES.includes(req.user?.role); }
+const { canWrite, PLAN_ROLES } = require('../constants/roles');
 
 // Phase 5 Step 2 — "Đặt kế hoạch xe" is open to a broader set of roles than
 // the carrier-side single POST (Quản lý đặt xe). CUS confirms delivery with
 // the customer, Sales confirms commercials, TPL/DD execute. Lead can override.
-// Role enum lives in schema.sql:183 — sales/lead/truong_phong_log/dieu_do/
-// cus/cus1/cus2/cus3/ops. ops is intentionally excluded (no plan-write role).
-const PLAN_ROLES = ['dieu_do', 'truong_phong_log', 'lead', 'sales',
-                    'cus', 'cus1', 'cus2', 'cus3'];
+// `ops` is intentionally excluded (no plan-write role). PLAN_ROLES is the
+// shared array from constants/roles.js.
 function canPlan(req) { return PLAN_ROLES.includes(req.user?.role); }
 
 // ─── Booking code generator ────────────────────────────────────────────────────

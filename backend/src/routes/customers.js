@@ -1,8 +1,7 @@
 const router = require('express').Router();
 const db = require('../db');
 const { requireAuth } = require('../middleware/auth');
-
-const LOG_ROLES = ['truong_phong_log', 'cus', 'cus1', 'cus2', 'cus3', 'dieu_do', 'ops'];
+const { LOG_ROLES } = require('../constants/roles');
 
 // GET /api/customers/:pipelineId/jobs?from=&to= — LOG-team customer-jobs view.
 // Returns the canonical customer info from the pipeline (joined with the
