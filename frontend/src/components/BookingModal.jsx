@@ -53,7 +53,7 @@ export default function BookingModal({ mode, jobId, jobCode, booking, onClose, o
 
   // Available containers — create mode only (edit shows the booking's own containers read-only).
   const { data: avail = [], isLoading: loadingAvail } = useQuery({
-    queryKey: ['availableContainers', jobId],
+    queryKey: ['available-containers', jobId],
     queryFn: () => getAvailableContainers(jobId),
     enabled: !isEdit && !!jobId,
   });

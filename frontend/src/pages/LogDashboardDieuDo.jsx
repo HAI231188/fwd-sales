@@ -787,8 +787,8 @@ export default function LogDashboardDieuDo() {
           onClose={() => setBookingModalState(null)}
           onSaved={() => {
             qc.invalidateQueries({ queryKey: ['jobs'] });
-            qc.invalidateQueries({ queryKey: ['truckBookings', bookingModalState.jobId] });
-            qc.invalidateQueries({ queryKey: ['availableContainers', bookingModalState.jobId] });
+            qc.invalidateQueries({ queryKey: ['truck-bookings', bookingModalState.jobId] });
+            qc.invalidateQueries({ queryKey: ['available-containers', bookingModalState.jobId] });
           }}
         />
       )}
@@ -798,8 +798,8 @@ export default function LogDashboardDieuDo() {
           onClose={() => setDeletingBooking(null)}
           onDeleted={() => {
             qc.invalidateQueries({ queryKey: ['jobs'] });
-            qc.invalidateQueries({ queryKey: ['truckBookings'] });
-            qc.invalidateQueries({ queryKey: ['availableContainers'] });
+            qc.invalidateQueries({ queryKey: ['truck-bookings'] });
+            qc.invalidateQueries({ queryKey: ['available-containers'] });
           }}
         />
       )}
@@ -880,7 +880,7 @@ function BookingManagementSection({ jobs, onOpenJob, onOpenPlanning, onOpenPlan,
 function BookingRow({ j, isOpen, total, booked, ieBg, ieFg, imp,
                      onOpenJob, onOpenPlanning, onOpenPlan, onEdit, onDelete, onToggleExpand }) {
   const { data: bookings = [], isLoading } = useQuery({
-    queryKey: ['truckBookings', j.id],
+    queryKey: ['truck-bookings', j.id],
     queryFn: () => getTruckBookings(j.id),
     enabled: isOpen, // lazy — only fetch when user expands the row
   });

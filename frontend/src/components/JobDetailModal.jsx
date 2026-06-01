@@ -103,16 +103,16 @@ function BookingsSection({ jobId, jobCode, customerName, truckBookingStatus, can
   const [bbbgBookingId, setBbbgBookingId] = useState(null);
 
   const { data: bookings = [], isLoading } = useQuery({
-    queryKey: ['truckBookings', jobId],
+    queryKey: ['truck-bookings', jobId],
     queryFn: () => getTruckBookings(jobId),
     enabled: !!jobId,
   });
 
   function refresh() {
-    qc.invalidateQueries({ queryKey: ['truckBookings', jobId] });
+    qc.invalidateQueries({ queryKey: ['truck-bookings', jobId] });
     qc.invalidateQueries({ queryKey: ['job', String(jobId)] });
     qc.invalidateQueries({ queryKey: ['jobs'] });
-    qc.invalidateQueries({ queryKey: ['availableContainers', jobId] });
+    qc.invalidateQueries({ queryKey: ['available-containers', jobId] });
   }
 
   async function handleDelete(b) {
