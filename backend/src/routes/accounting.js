@@ -18,6 +18,7 @@ const router            = require('express').Router();
 const jobActionsRouter  = require('express').Router();
 const db                = require('../db');
 const { requireAuth }   = require('../middleware/auth');
+const { recordHistory } = require('../services/job-history');
 
 const OVERDUE_DAYS = 30;
 const ALLOWED_RETURN_TARGETS = ['log', 'sales'];
@@ -33,16 +34,6 @@ function requireKeToan(req, res, next) {
 
 router.use(requireAuth, requireKeToan);
 jobActionsRouter.use(requireAuth, requireKeToan);
-
-// Local audit-history helper — mirrors recordHistory() in routes/jobs.js.
-// Defined locally to avoid touching jobs.js exports (per KT2 spec).
-async function recordHistory(client, jobId, changedBy, fieldName, oldValue, newValue) {
-  await client.query(
-    `INSERT INTO job_history (job_id, changed_by, field_name, old_value, new_value)
-     VALUES ($1, $2, $3, $4, $5)`,
-    [jobId, changedBy, fieldName, oldValue, newValue]
-  );
-}
 
 // Lightweight pre-fetch used by every mutation handler for validation gates.
 // Returns just the lifecycle fields — full denormalised payload is only

@@ -4,6 +4,7 @@ const { requireAuth } = require('../middleware/auth');
 const { suggestCus, suggestOps } = require('../services/ai-assignment');
 const { buildBbbgPdf } = require('../services/bbbg-pdf');
 const { checkAndCompleteJob: _checkAndCompleteJob, checkOpsTasksDone } = require('../services/job-completion');
+const { recordHistory } = require('../services/job-history');
 
 // In-memory suggestion cache (60s TTL) — invalidated on manual assignment
 let suggestionCache = { data: null, ts: 0 };
@@ -17,17 +18,6 @@ const LOG_ROLES = ['truong_phong_log', 'dieu_do', 'cus', 'cus1', 'cus2', 'cus3',
 // (available-containers, past-delivery-locations) must allow this whole set.
 const PLAN_ROLES = ['dieu_do', 'truong_phong_log', 'lead', 'sales',
                     'cus', 'cus1', 'cus2', 'cus3'];
-
-async function recordHistory(client, jobId, changedBy, fieldName, oldValue, newValue) {
-  if (String(oldValue) === String(newValue)) return;
-  await client.query(
-    `INSERT INTO job_history (job_id, changed_by, field_name, old_value, new_value)
-     VALUES ($1, $2, $3, $4, $5)`,
-    [jobId, changedBy, fieldName,
-     oldValue != null ? String(oldValue) : null,
-     newValue != null ? String(newValue) : null]
-  );
-}
 
 function withTimeout(promise, ms) {
   const timeout = new Promise(resolve => setTimeout(() => resolve(null), ms));
