@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { getCustomerJobs } from '../api';
 import { useModalZIndex } from '../hooks/useModalZIndex';
 import JobDetailModal from './JobDetailModal';
+import { fmtDate, fmtDateTimeYear as fmtDt } from '../utils/dateFmt';
 
 const TK_STATUS_LABEL = {
   chua_truyen: 'Chưa truyền',
@@ -19,18 +20,6 @@ const TK_STATUS_COLOR = {
   giai_phong:  '#3b82f6',
   bao_quan:    '#7c3aed',
 };
-
-function fmtDate(val) {
-  if (!val) return '—';
-  return new Date(val).toLocaleDateString('vi-VN');
-}
-function fmtDt(val) {
-  if (!val) return '—';
-  return new Date(val).toLocaleString('vi-VN', {
-    day: '2-digit', month: '2-digit', year: 'numeric',
-    hour: '2-digit', minute: '2-digit',
-  });
-}
 
 function InfoLine({ label, value }) {
   return (

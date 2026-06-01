@@ -8,15 +8,7 @@ import {
   calcRowAmount, calcRowVat, calcRowTotal,
   calcSectionTotals, calcGrandTotal, fmtAmount, formatVolume,
 } from '../utils/seaQuoteCalc';
-
-function fmtDate(d) {
-  if (!d) return '';
-  try {
-    const date = typeof d === 'string' ? new Date(d) : d;
-    if (Number.isNaN(date.getTime())) return String(d);
-    return date.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' });
-  } catch { return String(d); }
-}
+import { fmtDatePadded as fmtDate } from '../utils/dateFmt';
 
 export default function AirQuoteDisplay({ quote }) {
   const qd = quote.quote_data || {};

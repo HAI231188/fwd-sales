@@ -5,6 +5,7 @@ import { searchGlobal } from '../api';
 import { useModalZIndex } from '../hooks/useModalZIndex';
 import JobDetailModal from './JobDetailModal';
 import CustomerJobsModal from './CustomerJobsModal';
+import { fmtDate } from '../utils/dateFmt';
 
 const TK_STATUS_LABEL = {
   chua_truyen: 'Chưa truyền',
@@ -14,10 +15,6 @@ const TK_STATUS_LABEL = {
   bao_quan:    'Bảo quan',
 };
 
-function fmtDate(val) {
-  if (!val) return '—';
-  return new Date(val).toLocaleDateString('vi-VN');
-}
 
 // Case-insensitive substring highlight. Returns React fragments.
 function highlightMatch(text, keyword) {

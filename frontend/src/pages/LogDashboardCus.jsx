@@ -16,6 +16,7 @@ import {
   requestJobDelete, createJob,
   tickJobTkCost, untickJobTkCost,
 } from '../api';
+import { fmtDate, fmtDateTime as fmtDt } from '../utils/dateFmt';
 
 const TK_STATUS_OPTIONS = [
   { value: 'chua_truyen', label: 'Chưa truyền' },
@@ -37,10 +38,6 @@ const OTHER_SVC_LABEL = {
 // import them from a shared module — copy the map into the file that needs it").
 const SVC_LABEL = { tk: 'TK', truck: 'Xe', both: 'TK+Xe' };
 
-function fmtDate(val) {
-  if (!val) return '—';
-  return new Date(val).toLocaleDateString('vi-VN');
-}
 function toDatetimeLocal(val) {
   if (!val) return '';
   const d = new Date(val);
@@ -560,9 +557,6 @@ export default function LogDashboardCus() {
                   const isConfirmPending = j.cus_confirm_status === 'pending';
                   const missing = getMissingFields(j);
                   const flow = TK_FLOW_OPTIONS.find(o => o.value === j.tk_flow);
-                  const fmtDt = (val) => val
-                    ? new Date(val).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
-                    : '—';
                   return (
                     <CusCard key={j.id} job={j} onOpen={() => setDetailJobId(j.id)}
                       codeColor={tab === 'completed' ? 'var(--primary)' : 'var(--info)'}

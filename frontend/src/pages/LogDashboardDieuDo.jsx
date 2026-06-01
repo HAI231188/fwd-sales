@@ -25,6 +25,7 @@ import {
   // 2026-05-25: ddPillInfo/ddPillStyle extracted to the shared utils so TP can reuse.
   ddPillInfo, ddPillStyle,
 } from '../utils/truckBookingStatus';
+import { fmtDate } from '../utils/dateFmt';
 
 // waitingStatus: returns the list of "Chờ ..." items for the new Chờ column.
 //   - CUS thông quan blocker if job has TK + tk_status not terminal
@@ -46,10 +47,6 @@ function waitingStatus(j) {
   return items;
 }
 
-function fmtDate(val) {
-  if (!val) return '—';
-  return new Date(val).toLocaleDateString('vi-VN');
-}
 function fmtCargo(j) {
   if (j.cargo_type === 'lcl') {
     const parts = [];

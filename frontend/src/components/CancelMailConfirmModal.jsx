@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useModalZIndex } from '../hooks/useModalZIndex';
+import { fmtDateTimeDateFirst as fmtDt } from '../utils/dateFmt';
 
 // CP5.2 — Confirms a HỦY-mail send for one (job, transport). DD must see what
 // the carrier will be asked to drop before firing the destructive action.
@@ -15,14 +16,6 @@ import { useModalZIndex } from '../hooks/useModalZIndex';
 //   onConfirm     — async ({ reason }) => void — parent fires the POST and
 //                   handles success/error toasts + query invalidation.
 
-function fmtDt(val) {
-  if (!val) return '—';
-  const d = new Date(val);
-  if (isNaN(d.getTime())) return '—';
-  const pad = n => String(n).padStart(2, '0');
-  return `${pad(d.getDate())}/${pad(d.getMonth()+1)}/${d.getFullYear()} `
-       + `${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
 
 export default function CancelMailConfirmModal({ isOpen, onClose, transport, bookings, onConfirm }) {
   const zIndex = useModalZIndex();

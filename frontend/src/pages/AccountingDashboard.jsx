@@ -25,6 +25,7 @@ import {
   accountingCheck, accountingDebitSent, accountingPaymentReceived,
   accountingReturnToLog, accountingReturnToSales,
 } from '../api';
+import { fmtDate, fmtDateTime as fmtDt } from '../utils/dateFmt';
 
 // ─── Constants ─────────────────────────────────────────────────────────────
 const OVERDUE_DAYS       = 30; // Sub-tab 3: red badge if debit_sent_at + 30d
@@ -32,17 +33,6 @@ const WAITING_DEBIT_WARN = 3;  // Sub-tab 2: red badge if accounting_checked_at 
 
 const SVC_LABEL = { tk: 'TK', truck: 'Xe', both: 'TK+Xe' };
 
-// ─── Formatting helpers (cloned from LogDashboardTP convention) ────────────
-// Kept local rather than extracted to a shared utility — matches the
-// existing 4-dashboard pattern; a future cleanup can extract if/when a 5th
-// caller appears.
-function fmtDate(val) { if (!val) return '—'; return new Date(val).toLocaleDateString('vi-VN'); }
-function fmtDt(val) {
-  if (!val) return '—';
-  return new Date(val).toLocaleString('vi-VN', {
-    day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
-  });
-}
 function fmtCargo(j) {
   if (j.cargo_type === 'lcl') {
     const parts = [];

@@ -5,6 +5,7 @@ import { getDrilldown } from '../api';
 import { format } from 'date-fns';
 import CustomerDetailModal from './CustomerDetailModal';
 import { useModalZIndex } from '../hooks/useModalZIndex';
+import { localDateStr } from '../utils/dateFmt';
 
 const MODE_ICON = { sea: '🚢', air: '✈️', road: '🚛' };
 const MODE_CLASS = { sea: 'mode-sea', air: 'mode-air', road: 'mode-road' };
@@ -306,13 +307,8 @@ export default function DrilldownModal({ type, dateParams, userId, onClose }) {
     enabled: !!type,
   });
 
-  // Use local date parts to avoid UTC offset shifting the date across midnight in UTC+7
-  const localDateStr = (d) => {
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    return `${y}-${m}-${day}`;
-  };
+  // localDateStr (imported from utils/dateFmt) uses LOCAL date parts to avoid
+  // UTC offset shifting the date across midnight in UTC+7 (see L3).
   const today = localDateStr(new Date());
   const plus7 = localDateStr(new Date(Date.now() + 7 * 86400000));
 

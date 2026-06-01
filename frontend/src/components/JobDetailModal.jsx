@@ -14,6 +14,7 @@ import DateTimeInput24h from './DateTimeInput24h';
 import { useModalZIndex } from '../hooks/useModalZIndex';
 import { useAuth } from '../App';
 import { TRUCK_BOOKING_STATUS_LABELS, truckBookingPillStyle } from '../utils/truckBookingStatus';
+import { fmtDate, fmtDateTimeYear as fmtDt } from '../utils/dateFmt';
 
 const TK_FLOW_OPTIONS = [
   { value: 'xanh', label: 'Xanh', color: '#22c55e', bg: 'rgba(34,197,94,0.15)' },
@@ -51,14 +52,6 @@ const CUS_CONFIRM_COLOR = {
 const CONT_TYPES = ['20DC', '40DC', '40HC', '45HC', '20RF', '40RF'];
 const OPS_PARTNER_OPTIONS = ['OPS 1', 'OPS 2', 'TTN', 'CDK', 'CTX'];
 
-function fmtDt(val) {
-  if (!val) return '—';
-  return new Date(val).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-}
-function fmtDate(val) {
-  if (!val) return '—';
-  return new Date(val).toLocaleDateString('vi-VN');
-}
 function deadlineColor(dl) {
   if (!dl) return 'var(--text-2)';
   const ms = new Date(dl) - Date.now();

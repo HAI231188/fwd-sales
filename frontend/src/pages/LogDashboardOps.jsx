@@ -10,6 +10,7 @@ import {
   getJobStats, getJobs, requestJobDelete, updateJobTk,
   markOpsTaskDone, unmarkOpsTaskDone, tickOpsTaskCost, untickOpsTaskCost,
 } from '../api';
+import { fmtDate, fmtDateTime as fmtDt } from '../utils/dateFmt';
 
 // Per-task model helpers (2026-05-23). j.ops_tasks is the JSON array of task
 // rows returned by GET /api/jobs (see backend ops_tasks projection).
@@ -117,14 +118,6 @@ const TK_STATUS_OPTS = [
   { value: 'bao_quan', label: 'Bảo quan' },
 ];
 
-function fmtDate(val) {
-  if (!val) return '—';
-  return new Date(val).toLocaleDateString('vi-VN');
-}
-function fmtDt(val) {
-  if (!val) return '—';
-  return new Date(val).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
-}
 function fmtCargo(j) {
   if (j.cargo_type === 'lcl') {
     const parts = [];

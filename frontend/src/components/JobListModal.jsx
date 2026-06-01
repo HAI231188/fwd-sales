@@ -5,6 +5,7 @@ import { getFilteredJobs } from '../api';
 import JobDetailModal from './JobDetailModal';
 import { useModalZIndex } from '../hooks/useModalZIndex';
 import { TRUCK_BOOKING_STATUS_LABELS, truckBookingPillStyle } from '../utils/truckBookingStatus';
+import { fmtDate, fmtDateTime as fmtDt } from '../utils/dateFmt';
 
 // Phase 5 Step 1 add-on: 8 booking-level filterTypes share the same column set
 // + the same 3 tabs (Tất cả / Có vận tải / Chưa có vận tải). Date-bucket ones
@@ -124,11 +125,6 @@ const TK_STATUS_COLOR = {
 const TK_FLOW_LABEL = { xanh: 'Xanh', vang: 'Vàng', do: 'Đỏ' };
 const TK_FLOW_COLOR = { xanh: '#22c55e', vang: '#d97706', do: '#ef4444' };
 
-function fmtDate(val) { if (!val) return '—'; return new Date(val).toLocaleDateString('vi-VN'); }
-function fmtDt(val) {
-  if (!val) return '—';
-  return new Date(val).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
-}
 function deadlineStyle(dl, filterType) {
   if (!dl) return {};
   const ms = new Date(dl) - Date.now();

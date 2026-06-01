@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import { getLogStaff, updateCustomerPipeline } from '../api';
 import { useModalZIndex } from '../hooks/useModalZIndex';
+import { fmtDateTimeYear as fmtDt } from '../utils/dateFmt';
 
 // Edit modal for one customer_pipeline row (Data khách hàng).
 // Editable fields: company_name, company_full_name, tax_code, invoice_address, sales_id.
@@ -18,15 +19,6 @@ const STAGE_COLOR = {
   dormant: 'var(--text-2)', booked: 'var(--purple)',
 };
 
-function fmtDt(val) {
-  if (!val) return '—';
-  try {
-    return new Date(val).toLocaleString('vi-VN', {
-      day: '2-digit', month: '2-digit', year: 'numeric',
-      hour: '2-digit', minute: '2-digit',
-    });
-  } catch { return '—'; }
-}
 
 export default function CustomerEditModal({ pipeline, onClose, onSaved }) {
   const zIndex = useModalZIndex();

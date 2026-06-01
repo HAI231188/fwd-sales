@@ -13,6 +13,7 @@ import FilteredTable from '../components/FilteredTable';
 import JobDetailModal from '../components/JobDetailModal';
 import { getStats, getReports, getJobs, tickJobRevenue, untickJobRevenue } from '../api';
 import { useAuth } from '../App';
+import { fmtDate, fmtDateTime as fmtDt } from '../utils/dateFmt';
 
 const TYPE_LABEL = { saved: 'Lưu liên hệ', contacted: 'Đã liên hệ', quoted: 'Đã báo giá' };
 const TYPE_CLASS = { saved: 'type-saved', contacted: 'type-contacted', quoted: 'type-quoted' };
@@ -26,13 +27,6 @@ const TK_FLOW_LABEL  = { xanh: 'Xanh', vang: 'Vàng', do: 'Đỏ' };
 const TK_FLOW_COLOR  = { xanh: '#22c55e', vang: '#d97706', do: '#ef4444' };
 const TK_FLOW_BG     = { xanh: 'rgba(34,197,94,0.15)', vang: 'rgba(217,119,6,0.15)', do: 'rgba(239,68,68,0.15)' };
 
-function fmtDate(val) { if (!val) return '—'; return new Date(val).toLocaleDateString('vi-VN'); }
-function fmtDt(val) {
-  if (!val) return '—';
-  return new Date(val).toLocaleString('vi-VN', {
-    day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
-  });
-}
 function fmtCargo(j) {
   if (j.cargo_type === 'lcl') {
     const parts = [];

@@ -7,15 +7,11 @@ import {
 } from '../api';
 import { useAuth } from '../App';
 import { useModalZIndex } from '../hooks/useModalZIndex';
+import { fmtDate, fmtDateTime as fmtDt } from '../utils/dateFmt';
 
 const MODE_LABEL = { auto: 'Tự động', manual: 'Bán tự động' };
 const SVC_LABEL = { tk: 'TK', truck: 'Xe', both: 'TK+Xe' };
 
-function fmtDate(val) { if (!val) return '—'; return new Date(val).toLocaleDateString('vi-VN'); }
-function fmtDt(val) {
-  if (!val) return '—';
-  return new Date(val).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
-}
 
 export default function AssignmentModal({ initialTab = 'cus', onClose }) {
   const qc = useQueryClient();

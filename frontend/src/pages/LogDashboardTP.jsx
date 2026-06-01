@@ -21,6 +21,7 @@ import {
 // 2026-05-25: ddPillInfo shared with DD dashboard — used by tpStatusLines
 // to render the DD-line of TP's 3-dept Trạng thái pill.
 import { ddPillInfo } from '../utils/truckBookingStatus';
+import { fmtDate, fmtDateTime as fmtDt } from '../utils/dateFmt';
 
 // 2026-05-25 TP dept-level status helper.
 // tpStatusLines: returns an array of pending-dept status strings for this job.
@@ -122,7 +123,6 @@ const CONT_TYPES = ['20DC','40DC','40HC','45HC','20RF','40RF'];
 const OTHER_SVC_KEYS = ['ktcl','kiem_dich','hun_trung','co','khac'];
 const OTHER_SVC_LABEL = { ktcl:'KTCL', kiem_dich:'Kiểm dịch', hun_trung:'Hun trùng', co:'CO', khac:'Khác' };
 
-function fmtDate(val) { if (!val) return '—'; return new Date(val).toLocaleDateString('vi-VN'); }
 function fmtCargo(j) {
   if (j.cargo_type === 'lcl') {
     const parts = [];
@@ -139,10 +139,6 @@ function fmtCargo(j) {
   }
   if (j.cont_number) return `${j.cont_number}${j.cont_type ? ' / ' + j.cont_type : ''}`;
   return '—';
-}
-function fmtDt(val) {
-  if (!val) return '—';
-  return new Date(val).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
 function toDatetimeLocal(val) {
   if (!val) return '';
