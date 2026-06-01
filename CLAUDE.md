@@ -941,6 +941,29 @@ Applies to (fixed in CỤM 1): `routes/quotes.js` PUT `/:id`, `routes/pipeline.j
 
 ---
 
+### L30 — Shared helpers live in `services/` / `constants/` / `utils/`, never re-copied per file
+
+**Root cause pattern:** the same helper gets copy-pasted into each file that needs it, then the copies silently diverge — exactly the L24 (`checkAndCompleteJob` ×2) / L10 (fix-here-forget-there) failure mode, but for small utilities. CỤM 2 (2026-06-01) found three live instances:
+
+1. **`recordHistory`** defined in `routes/jobs.js` (skip-no-op) AND `routes/accounting.js` (always-write) → the same `job_history` audit table got two policies; KT actions wrote phantom no-op rows that LOG actions suppressed.
+2. **Role arrays** — `LOG_ROLES` in 3 files, `PLAN_ROLES` in 2, `WRITE_ROLES` + `canWrite()` in 2. Adding a role meant editing 3 places; order/membership drift made ACL inconsistent silently.
+3. **`fmtDate` / `fmtDt`** date formatters in 17 frontend files. The copies had diverged into **5 distinct output formats** (padded vs unpadded date; time-first/no-year `"10:05 01-06"` vs time-first/with-year vs date-first datetime), so a fix in one screen left the others wrong.
+
+**Fixes (the canonical homes):**
+- Backend cross-cutting logic → `backend/src/services/` (e.g. `services/job-history.js` — `recordHistory`, skip-no-op canonical; `services/job-completion.js` — `checkAndCompleteJob`).
+- Backend constants / ACL → `backend/src/constants/` (e.g. `constants/roles.js` — `LOG_ROLES`, `PLAN_ROLES`, `CUS_ROLES`, `AUTO_CUS_ROLES`, `WRITE_ROLES`, `SALES_ROLES`, `LEAD_ROLES`, `KT_ROLES`, `canWrite`). Ordering inside each array is irrelevant — all consumers use `.includes()` / `= ANY($1)`.
+- Frontend formatters / pure helpers → `frontend/src/utils/` (e.g. `utils/dateFmt.js`, `utils/seaQuoteCalc.js`, `utils/truckBookingStatus.js`).
+
+**Rules:**
+1. A helper used by 2+ files MUST live in `services/` / `constants/` / `utils/` and be imported — never re-declared locally. Before writing a `function fmtX` / `const X_ROLES =` / `async function recordY`, grep the codebase for the name; if it exists elsewhere, import it.
+2. **Unify on a single semantic, deliberately.** When merging divergent copies, pick the correct behavior (recordHistory → skip-no-op) and document why. Don't silently inherit whichever copy you happened to start from.
+3. **Preserve exact output when the divergence is real.** dateFmt kept all 5 formats as separate exports (`fmtDate`, `fmtDatePadded`, `fmtDateTime`, `fmtDateTimeYear`, `fmtDateTimeDateFirst`, `localDateStr`); each call site imports the variant matching its old output, usually aliased to its old local name (`import { fmtDateTime as fmtDt }`) so call sites stay byte-identical. A dedup must NOT silently change what the user sees — if the copies genuinely differ, ask whether to standardize or preserve before collapsing.
+4. **Exception — per-file label/color maps stay local** (per `frontend/src/CLAUDE.md`: `STAGE_INFO`, `STATUS_LABEL`, etc.). That convention is about display enums, not logic/formatters/constants; this lesson does not override it.
+
+Applies to (fixed in CỤM 2): `recordHistory` → `services/job-history.js`; role arrays → `constants/roles.js`; `fmtDate`/`fmtDt`/`localDateStr` → `utils/dateFmt.js`. Future candidates: any `function`/`const` duplicated across files — `toDatetimeLocal`, `fmtCargo`, `parseOptions`, etc.
+
+---
+
 ### Note — KT user `ketoan_cong_no` (id=2965)
 
 `role='ke_toan'`. Username `ketoan_cong_no` (renamed from `ketoan_test` on 2026-05-25). Name "Kế Toán Công Nợ". The first real KT user. Password reset to a known temporary on the same date — owner to rotate.
