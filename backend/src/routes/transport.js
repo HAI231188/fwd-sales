@@ -68,6 +68,99 @@ router.get('/', requireAuth, async (req, res) => {
   }
 });
 
+// GET /api/transport-companies/route-price-history?q=<location>&from=&to=
+// Đợt 1 (2026-06-02) — route price-history lookup. Fuzzy substring match on
+// pickup/delivery location; UNIONs imported history rows (transport_price_history)
+// with live priced truck_bookings. Read-open to any authenticated user (same
+// access as the carrier list). Aggregates (avg/min/max) computed over ALL
+// matched rows with cost IS NOT NULL via window functions (before the LIMIT),
+// while the row list is capped. MUST be declared before GET /:id so the literal
+// path isn't swallowed by the :id param route.
+router.get('/route-price-history', requireAuth, async (req, res) => {
+  const q = (req.query.q || '').trim();
+  const emptyAgg = { count: 0, avg_cost: null, min_cost: null, max_cost: null };
+  if (!q) return res.json({ rows: [], aggregates: emptyAgg, total_matched: 0 });
+  const like = `%${q}%`;
+  const from = (req.query.from || '').trim() || null;
+  const to   = (req.query.to   || '').trim() || null;
+  const LIMIT = 200;
+  try {
+    const { rows } = await db.query(`
+      WITH matched AS (
+        -- (1) imported / historical rows
+        SELECT tph.source             AS source,
+               tph.booked_at          AS booked_at,
+               tph.transport_name     AS carrier,
+               tph.cont_type          AS cont_type,
+               tph.cont_qty           AS cont_qty,
+               tph.vehicle_type       AS vehicle_type,
+               tph.pickup_location    AS pickup_location,
+               tph.delivery_location  AS delivery_location,
+               tph.cost               AS cost,
+               tph.vehicle_number     AS vehicle_number,
+               tph.notes              AS notes
+          FROM transport_price_history tph
+         WHERE tph.deleted_at IS NULL
+           AND (tph.delivery_location ILIKE $1 OR tph.pickup_location ILIKE $1)
+           AND ($2::timestamptz IS NULL OR tph.booked_at >= $2)
+           AND ($3::timestamptz IS NULL OR tph.booked_at <= $3)
+        UNION ALL
+        -- (2) live priced truck_bookings
+        SELECT 'live'::varchar        AS source,
+               tb.planned_datetime    AS booked_at,
+               COALESCE(tc.name, tb.transport_name) AS carrier,
+               cagg.cont_type         AS cont_type,
+               cagg.cont_qty          AS cont_qty,
+               NULL::varchar          AS vehicle_type,
+               tb.pickup_location     AS pickup_location,
+               tb.delivery_location   AS delivery_location,
+               tb.cost                AS cost,
+               tb.vehicle_number      AS vehicle_number,
+               tb.notes               AS notes
+          FROM truck_bookings tb
+          JOIN jobs j ON j.id = tb.job_id
+          LEFT JOIN transport_companies tc ON tc.id = tb.transport_company_id
+          LEFT JOIN LATERAL (
+            SELECT string_agg(DISTINCT jc.cont_type, '/' ORDER BY jc.cont_type) AS cont_type,
+                   COUNT(*)::int AS cont_qty
+              FROM truck_booking_containers tbc
+              JOIN job_containers jc ON jc.id = tbc.container_id
+             WHERE tbc.booking_id = tb.id
+          ) cagg ON TRUE
+         WHERE tb.deleted_at IS NULL
+           AND tb.cost IS NOT NULL
+           AND (tb.delivery_location ILIKE $1 OR tb.pickup_location ILIKE $1)
+           AND ($2::timestamptz IS NULL OR tb.planned_datetime >= $2)
+           AND ($3::timestamptz IS NULL OR tb.planned_datetime <= $3)
+      )
+      SELECT m.*,
+             COUNT(*)      OVER () AS total_matched,
+             COUNT(m.cost) OVER () AS priced_count,
+             AVG(m.cost)   OVER () AS avg_cost,
+             MIN(m.cost)   OVER () AS min_cost,
+             MAX(m.cost)   OVER () AS max_cost
+        FROM matched m
+       ORDER BY m.booked_at DESC
+       LIMIT ${LIMIT}
+    `, [like, from, to]);
+
+    const aggregates = rows.length ? {
+      count:    Number(rows[0].priced_count) || 0,
+      avg_cost: rows[0].avg_cost != null ? Number(rows[0].avg_cost) : null,
+      min_cost: rows[0].min_cost != null ? Number(rows[0].min_cost) : null,
+      max_cost: rows[0].max_cost != null ? Number(rows[0].max_cost) : null,
+    } : emptyAgg;
+    const total_matched = rows.length ? Number(rows[0].total_matched) : 0;
+    // Strip the window-aggregate columns from each row before returning.
+    const clean = rows.map(({ total_matched: _t, priced_count: _p, avg_cost: _a,
+                              min_cost: _mn, max_cost: _mx, ...r }) => r);
+    res.json({ rows: clean, aggregates, total_matched });
+  } catch (err) {
+    console.error('GET /transport-companies/route-price-history error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/transport-companies/:id — returns even soft-deleted (so historical FKs still resolve)
 router.get('/:id', requireAuth, async (req, res) => {
   try {

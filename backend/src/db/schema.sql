@@ -543,6 +543,50 @@ ALTER TABLE job_truck ADD COLUMN IF NOT EXISTS transport_company_id
 CREATE INDEX IF NOT EXISTS idx_job_truck_transport_company_id ON job_truck(transport_company_id);
 
 -- ============================================================
+-- Transport route price history (Đợt 1, 2026-06-02)
+-- Dedicated store for HISTORICAL transport bookings used by the "Lịch sử giá
+-- tuyến" lookup on the transport-management page. truck_bookings cannot hold
+-- these: its job_id is NOT NULL FK to a real job, and importing history there
+-- would require fake jobs that pollute every job-scoped query / dashboard /
+-- get_truck_booking_status(). This table has NO job dependency.
+--
+-- The lookup endpoint UNIONs these rows with live truck_bookings (cost IS NOT
+-- NULL). transport_name is a durable snapshot (L13): it survives carrier rename
+-- or delete and is the label shown even when transport_company_id is NULL.
+-- cost is plain VND NUMERIC (no currency column), nullable (a historical trip
+-- may have no recorded price). source distinguishes 'import' vs 'live'.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS transport_price_history (
+  id                    SERIAL PRIMARY KEY,
+  transport_company_id  INTEGER REFERENCES transport_companies(id) ON DELETE SET NULL,
+  transport_name        VARCHAR(200) NOT NULL,          -- carrier label (snapshot, durable)
+  cont_type             VARCHAR(10),                    -- 20DC/40DC/40HC/45HC/20RF/40RF
+  cont_qty              INTEGER,                        -- number of containers
+  vehicle_type          VARCHAR(20),                    -- 13m/15m/17.5m/45HC/Khác (optional)
+  pickup_location       TEXT,
+  delivery_location     TEXT NOT NULL,
+  cost                  NUMERIC(15,2),                  -- VND
+  vehicle_number        VARCHAR(50),                    -- plate, free text, optional
+  booked_at             TIMESTAMP WITH TIME ZONE NOT NULL,  -- historical date of the trip
+  source                VARCHAR(10) NOT NULL DEFAULT 'import',  -- 'import' | 'live'
+  notes                 TEXT,
+  created_by            INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at            TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  deleted_at            TIMESTAMP WITH TIME ZONE
+);
+-- booked_at drives ORDER BY booked_at DESC + the optional date-range filter.
+CREATE INDEX IF NOT EXISTS idx_tph_booked_at
+  ON transport_price_history(booked_at) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_tph_company
+  ON transport_price_history(transport_company_id) WHERE deleted_at IS NULL;
+-- NOTE: the location search is substring ILIKE ('%q%'), which neither a btree
+-- on delivery_location nor a gin(to_tsvector()) index can accelerate (the
+-- former needs a left-anchored prefix, the latter matches @@ tokens not
+-- substrings). A pg_trgm GIN index would, but we avoid requiring that
+-- extension on prod. At this table's size a seq-scan ILIKE is acceptable; add
+-- a pg_trgm trigram index here later if the row count grows materially.
+
+-- ============================================================
 -- Invoice info + short name on customer_pipeline (L15)
 -- Required for new customers added via CreateJobModal "Khách mới" tab.
 -- Existing rows fill with empty-string defaults.

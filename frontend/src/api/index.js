@@ -190,6 +190,10 @@ export const getTransportCompany = (id) => api.get(`/transport-companies/${id}`)
 export const createTransportCompany = (data) => api.post('/transport-companies', data);
 export const updateTransportCompany = (id, data) => api.patch(`/transport-companies/${id}`, data);
 export const deleteTransportCompany = (id) => api.delete(`/transport-companies/${id}`);
+// Đợt 1 — route price-history lookup. params: { q, from?, to? }.
+// Returns { rows: [...], aggregates: { count, avg_cost, min_cost, max_cost }, total_matched }.
+export const getRoutePriceHistory = (params) =>
+  api.get('/transport-companies/route-price-history', { params });
 
 // Gmail setup (per-user, encrypted at rest — Phase 5 Step 3 Part 2 CP2)
 export const getGmailSetup = () => api.get('/users/me/gmail-setup');
