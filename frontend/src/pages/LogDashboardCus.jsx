@@ -36,7 +36,7 @@ const OTHER_SVC_LABEL = {
 // Mirror of LogDashboardTP.jsx:22 — copied locally per the project convention
 // (frontend/src/CLAUDE.md: "Canonical maps live at the top of each file ... don't
 // import them from a shared module — copy the map into the file that needs it").
-const SVC_LABEL = { tk: 'TK', truck: 'Xe', both: 'TK+Xe' };
+const SVC_LABEL = { tk: 'TK', truck: 'Xe', both: 'TK+Xe', ops_hp: 'OPS HP' };
 
 function toDatetimeLocal(val) {
   if (!val) return '';

@@ -10,7 +10,7 @@ import { useModalZIndex } from '../hooks/useModalZIndex';
 import { fmtDate, fmtDateTime as fmtDt } from '../utils/dateFmt';
 
 const MODE_LABEL = { auto: 'Tự động', manual: 'Bán tự động' };
-const SVC_LABEL = { tk: 'TK', truck: 'Xe', both: 'TK+Xe' };
+const SVC_LABEL = { tk: 'TK', truck: 'Xe', both: 'TK+Xe', ops_hp: 'OPS HP' };
 
 
 export default function AssignmentModal({ initialTab = 'cus', onClose }) {

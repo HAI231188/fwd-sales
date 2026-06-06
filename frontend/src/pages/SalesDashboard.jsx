@@ -22,7 +22,7 @@ const TYPE_CLASS = { saved: 'type-saved', contacted: 'type-contacted', quoted: '
 // Cloned from LogDashboardTP / LogDashboardCus conventions. Kept local rather
 // than extracted to a shared module (matches the existing 4-dashboard pattern;
 // a future cleanup can extract if/when a 5th caller appears).
-const SVC_LABEL      = { tk: 'TK', truck: 'Xe', both: 'TK+Xe' };
+const SVC_LABEL      = { tk: 'TK', truck: 'Xe', both: 'TK+Xe', ops_hp: 'OPS HP' };
 const TK_FLOW_LABEL  = { xanh: 'Xanh', vang: 'Vàng', do: 'Đỏ' };
 const TK_FLOW_COLOR  = { xanh: '#22c55e', vang: '#d97706', do: '#ef4444' };
 const TK_FLOW_BG     = { xanh: 'rgba(34,197,94,0.15)', vang: 'rgba(217,119,6,0.15)', do: 'rgba(239,68,68,0.15)' };

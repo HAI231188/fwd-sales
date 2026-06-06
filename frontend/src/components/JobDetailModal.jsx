@@ -39,7 +39,7 @@ const TK_STATUS_COLOR = {
   chua_truyen: '#6b7280', dang_lam: '#d97706',
   thong_quan: '#22c55e', giai_phong: '#3b82f6', bao_quan: '#7c3aed',
 };
-const SVC_LABEL = { tk: 'Tờ khai', truck: 'Vận chuyển', both: 'TK + Vận chuyển' };
+const SVC_LABEL = { tk: 'Tờ khai', truck: 'Vận chuyển', both: 'TK + Vận chuyển', ops_hp: 'OPS HP (thao tác ngoài cảng)' };
 const OTHER_SVC_KEYS = ['ktcl', 'kiem_dich', 'hun_trung', 'co', 'khac'];
 const OTHER_SVC_LABEL = { ktcl: 'KTCL', kiem_dich: 'Kiểm dịch', hun_trung: 'Hun trùng', co: 'CO', khac: 'Khác' };
 const CUS_CONFIRM_LABEL = {

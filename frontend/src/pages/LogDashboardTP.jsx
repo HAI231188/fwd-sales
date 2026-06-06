@@ -63,6 +63,16 @@ function tpStatusLines(j) {
       lines.push(`DD: ${ddPillInfo(j).label}`);
     }
   }
+  // ops_hp line — OPS-only job. Gate on its single ops_hp task (done + cost),
+  // independent of destination, so an in-progress ops_hp job keeps emitting a
+  // pending line and stays visible in TP's "Đang làm" tab (was falsely empty →
+  // "Hoàn thành" before Step 2).
+  if (svc === 'ops_hp') {
+    const ohTasks = Array.isArray(j.ops_tasks) ? j.ops_tasks : [];
+    const oh = ohTasks.find(t => t.task_type === 'ops_hp');
+    if (!oh || !oh.completed) lines.push('OPS: chưa hoàn thành');
+    else if (!oh.cost_entered_at) lines.push('OPS: chưa nhập cost');
+  }
   // OPS line (HP only)
   if (isHp) {
     const tasks = Array.isArray(j.ops_tasks) ? j.ops_tasks : [];
@@ -110,7 +120,7 @@ function TpStatusCell({ job }) {
   );
 }
 
-const SVC_LABEL = { tk: 'TK', truck: 'Xe', both: 'TK+Xe' };
+const SVC_LABEL = { tk: 'TK', truck: 'Xe', both: 'TK+Xe', ops_hp: 'OPS HP' };
 const TK_STATUS_LABEL = {
   chua_truyen: 'Chưa truyền', dang_lam: 'Đang làm',
   thong_quan: 'Thông quan', giai_phong: 'Giải phóng', bao_quan: 'Bảo quan',

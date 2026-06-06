@@ -188,7 +188,7 @@ router.get('/stats', requireAuth, async (req, res) => {
           LEFT JOIN job_assignments ja ON ja.job_id = j.id
           WHERE j.status = 'pending' AND j.deleted_at IS NULL
             AND j.destination = 'hai_phong'
-            AND j.service_type IN ('tk','truck','both')
+            AND j.service_type IN ('tk','truck','both','ops_hp')
             AND (ja.ops_id IS NULL OR ja.id IS NULL)`),
         db.query(`
           SELECT COUNT(*) AS v FROM job_assignments ja
@@ -563,7 +563,7 @@ router.get('/waiting-assignments', requireAuth, async (req, res) => {
         LEFT JOIN job_assignments ja ON ja.job_id = j.id
         WHERE j.status = 'pending' AND j.deleted_at IS NULL
           AND j.destination = 'hai_phong'
-          AND j.service_type IN ('tk','truck','both')
+          AND j.service_type IN ('tk','truck','both','ops_hp')
           AND (ja.ops_id IS NULL OR ja.id IS NULL)
         ORDER BY j.created_at ASC
         LIMIT 10

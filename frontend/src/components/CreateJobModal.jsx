@@ -26,6 +26,9 @@ const INIT_FORM = {
   import_export: 'export',
   // CP4.2.1 — BBBG shipping document fields (rendered on BBBG when filled).
   shipper: '', vessel: '', voy: '', shipping_line: '', goods_description: '',
+  // ops_hp (Step 2) — free-text OPS work description, shown only when
+  // service_type === 'ops_hp' (HP-only OPS job).
+  ops_hp_note: '',
 };
 
 export default function CreateJobModal({ onClose, onCreated }) {
@@ -79,6 +82,7 @@ export default function CreateJobModal({ onClose, onCreated }) {
       'etd', 'eta', 'tons', 'cbm', 'kg', 'so_kien',
       'deadline', 'han_lenh', 'destination',
       'shipper', 'vessel', 'voy', 'shipping_line', 'goods_description',
+      'ops_hp_note',
     ];
     if (STRING_FIELDS.some(k => String(form[k] ?? '').trim().length >= 3)) return true;
 
@@ -148,6 +152,16 @@ export default function CreateJobModal({ onClose, onCreated }) {
       }
       return { ...f, import_export: next, han_lenh: newVal };
     });
+  }
+
+  // Destination change — if leaving Hải Phòng while 'ops_hp' is selected, reset
+  // service_type to 'tk' (ops_hp is HP-only). Otherwise just set destination.
+  function setDestination(next) {
+    setForm(f => ({
+      ...f,
+      destination: next,
+      service_type: (next !== 'hai_phong' && f.service_type === 'ops_hp') ? 'tk' : f.service_type,
+    }));
   }
 
   // Cargo-type switcher — per spec, FCL↔LCL transitions reset the matrix + rows.
@@ -276,6 +290,11 @@ export default function CreateJobModal({ onClose, onCreated }) {
         : 'Vui lòng nhập Cutoff time');
       return;
     }
+    // ops_hp: work description required (the point of an OPS-only job).
+    if (form.service_type === 'ops_hp' && !(form.ops_hp_note || '').trim()) {
+      setInvoiceErr('Vui lòng nhập nội dung công việc OPS');
+      return;
+    }
     // Hàng nhập: every auto-generated container row must carry cont_number + seal.
     // Hàng xuất: optional (carrier supplies later) — no row-level check.
     if (cargoType === 'fcl' && form.import_export === 'import') {
@@ -362,7 +381,16 @@ export default function CreateJobModal({ onClose, onCreated }) {
                 <option value="tk">Tờ khai (TK)</option>
                 <option value="truck">Vận chuyển (Truck)</option>
                 <option value="both">TK + Vận chuyển</option>
+                {/* ops_hp — HP-only; option appears only when destination is Hải Phòng. */}
+                {form.destination === 'hai_phong' && (
+                  <option value="ops_hp">OPS HP (thao tác ngoài cảng)</option>
+                )}
               </select>
+              {form.destination !== 'hai_phong' && (
+                <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 4 }}>
+                  Chọn điểm đến Hải Phòng để bật loại "OPS HP"
+                </div>
+              )}
             </div>
             <div className="form-group">
               <label className="form-label">Loại lô *</label>
@@ -388,7 +416,7 @@ export default function CreateJobModal({ onClose, onCreated }) {
             </div>
             <div className="form-group">
               <label className="form-label">Điểm đến</label>
-              <select className="form-select" value={form.destination || ''} onChange={e => set('destination', e.target.value || null)}>
+              <select className="form-select" value={form.destination || ''} onChange={e => setDestination(e.target.value || null)}>
                 <option value="">— Chọn —</option>
                 <option value="hai_phong">Hải Phòng</option>
                 <option value="other">Khác</option>
@@ -398,6 +426,18 @@ export default function CreateJobModal({ onClose, onCreated }) {
               )}
             </div>
           </div>
+
+          {/* ops_hp — free-text OPS work description (HP-only OPS job). Shown only
+              when service_type === 'ops_hp'; required on submit. */}
+          {form.service_type === 'ops_hp' && (
+            <div className="form-group" style={{ marginTop: 12 }}>
+              <label className="form-label">Nội dung công việc OPS *</label>
+              <textarea className="form-textarea" rows={3}
+                value={form.ops_hp_note}
+                onChange={e => set('ops_hp_note', e.target.value)}
+                placeholder="Mô tả công việc OPS cần làm tại Hải Phòng..." />
+            </div>
+          )}
 
           {/* FCL / LCL toggle — uses selectCargoType so switching resets the matrix. */}
           <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -734,18 +774,20 @@ export default function CreateJobModal({ onClose, onCreated }) {
             </div>
           )}
 
-          {/* Other services + assignment */}
-          <div style={{ marginTop: 12 }}>
-            <div className="form-label" style={{ marginBottom: 8 }}>Dịch vụ khác</div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
-              {OTHER_SVC_KEYS.map(k => (
-                <label key={k} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
-                  <input type="checkbox" checked={!!form.other_services[k]} onChange={() => toggleOs(k)} />
-                  {OTHER_SVC_LABEL[k]}
-                </label>
-              ))}
+          {/* Other services — CUS-handled extras; hidden for ops_hp (OPS-only job). */}
+          {form.service_type !== 'ops_hp' && (
+            <div style={{ marginTop: 12 }}>
+              <div className="form-label" style={{ marginBottom: 8 }}>Dịch vụ khác</div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
+                {OTHER_SVC_KEYS.map(k => (
+                  <label key={k} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
+                    <input type="checkbox" checked={!!form.other_services[k]} onChange={() => toggleOs(k)} />
+                    {OTHER_SVC_LABEL[k]}
+                  </label>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
           <div className="grid-2" style={{ gap: 12, marginTop: 12 }}>
             <div className="form-group">
               <label className="form-label">Deadline</label>

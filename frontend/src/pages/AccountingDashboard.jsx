@@ -31,7 +31,7 @@ import { fmtDate, fmtDateTime as fmtDt } from '../utils/dateFmt';
 const OVERDUE_DAYS       = 30; // Sub-tab 3: red badge if debit_sent_at + 30d
 const WAITING_DEBIT_WARN = 3;  // Sub-tab 2: red badge if accounting_checked_at + 3d
 
-const SVC_LABEL = { tk: 'TK', truck: 'Xe', both: 'TK+Xe' };
+const SVC_LABEL = { tk: 'TK', truck: 'Xe', both: 'TK+Xe', ops_hp: 'OPS HP' };
 
 function fmtCargo(j) {
   if (j.cargo_type === 'lcl') {

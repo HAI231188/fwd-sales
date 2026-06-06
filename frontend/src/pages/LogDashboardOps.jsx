@@ -30,6 +30,22 @@ function isDlDone(j) {
   const t = getOpsTask(j, 'doi_lenh');
   return !!t && t.completed === true && !!t.cost_entered_at;
 }
+// ops_hp (Step 2) — OPS-only job's single free-text task. Done = completed AND cost.
+function hasOpsHpTask(j) { return !!getOpsTask(j, 'ops_hp'); }
+function isOpsHpDone(j) {
+  const t = getOpsTask(j, 'ops_hp');
+  return !!t && t.completed === true && !!t.cost_entered_at;
+}
+function ohDoneAt(j) {
+  const t = getOpsTask(j, 'ops_hp');
+  return (t?.completed && t?.cost_entered_at) ? t.cost_entered_at : null;
+}
+function opsStatusOpsHp(j) {
+  const t = getOpsTask(j, 'ops_hp');
+  if (!t?.completed) return { label: 'Chưa hoàn thành', bg: 'rgba(217,119,6,0.12)', fg: '#d97706' };
+  if (!t?.cost_entered_at) return { label: 'Đã xong — chưa nhập cost', bg: 'rgba(217,119,6,0.12)', fg: '#b45309' };
+  return { label: 'Xong', bg: 'rgba(34,197,94,0.15)', fg: '#16a34a' };
+}
 
 // 2026-05-25 OPS dept-level status helpers.
 // Khu 1 (TQ+ĐL — for tk/both HP): column tracks tk_status + cost TQ.
@@ -80,7 +96,8 @@ function opsKhu2Done(j) {
 function opsAllRequiredDone(j) {
   const tqOk = !hasTqTask(j) || opsKhu1Done(j);
   const dlOk = !hasDlTask(j) || opsKhu2Done(j);
-  return tqOk && dlOk;
+  const ohOk = !hasOpsHpTask(j) || isOpsHpDone(j);
+  return tqOk && dlOk && ohOk;
 }
 function OpsStatusPill({ info }) {
   if (!info) return <span style={{ color: 'var(--text-3)', fontSize: 12 }}>—</span>;
@@ -98,7 +115,7 @@ function dlDoneAt(j) {
 }
 // Latest "OPS done" timestamp = max of available task finish times.
 function latestOpsDoneAt(j) {
-  const stamps = [tqDoneAt(j), dlDoneAt(j)].filter(Boolean).map(s => new Date(s).getTime());
+  const stamps = [tqDoneAt(j), dlDoneAt(j), ohDoneAt(j)].filter(Boolean).map(s => new Date(s).getTime());
   if (!stamps.length) return null;
   return new Date(Math.max(...stamps));
 }
@@ -261,6 +278,19 @@ const DL_COLS = [
   { key: 'ops_status',    label: 'Trạng thái' },
 ];
 
+// ops_hp (Step 2) — Công việc OPS tab columns.
+const OPSHP_COLS = [
+  { key: 'created_at',    label: 'Ngày' },
+  { key: 'job_code',      label: 'Job',           filterType: 'text' },
+  { key: 'si_number',     label: 'Mã SI',         filterType: 'text' },
+  { key: 'import_export', label: 'Loại' },
+  { key: 'customer_name', label: 'Khách hàng',    filterType: 'text', accessor: j => j.customer_name || '' },
+  { key: 'cargo',         label: 'Cont / Loại' },
+  { key: 'han_lenh',      label: 'Hạn lệnh / Cutoff' },
+  { key: 'ops_hp_note',   label: 'Nội dung công việc' },
+  { key: 'ops_status',    label: 'Trạng thái' },
+];
+
 const TODAY_COLS = [
   { key: 'created_at',    label: 'Ngày' },
   { key: 'job_code',      label: 'Job',           filterType: 'text' },
@@ -338,7 +368,16 @@ export default function LogDashboardOps() {
     mutationFn: ({ id, on }) => on ? markOpsTaskDone(id, 'doi_lenh') : unmarkOpsTaskDone(id, 'doi_lenh'),
     onSuccess: invalidate,
   });
-  const anyTickPending = tqCostMut.isPending || dlCostMut.isPending || dlDoneMut.isPending;
+  // ops_hp (Step 2) — done + cost ticks for the OPS-only task (reuses Step 1 endpoints).
+  const ohDoneMut = useMutation({
+    mutationFn: ({ id, on }) => on ? markOpsTaskDone(id, 'ops_hp') : unmarkOpsTaskDone(id, 'ops_hp'),
+    onSuccess: invalidate,
+  });
+  const ohCostMut = useMutation({
+    mutationFn: ({ id, on }) => on ? tickOpsTaskCost(id, 'ops_hp') : untickOpsTaskCost(id, 'ops_hp'),
+    onSuccess: invalidate,
+  });
+  const anyTickPending = tqCostMut.isPending || dlCostMut.isPending || dlDoneMut.isPending || ohDoneMut.isPending || ohCostMut.isPending;
   const tkMut = useMutation({
     mutationFn: ({ id, data }) => updateJobTk(id, data),
     onSuccess: () => {
@@ -371,6 +410,12 @@ export default function LogDashboardOps() {
     j.destination === 'hai_phong' &&
     hasDlTask(j) && !isDlDone(j)
   );
+  // ops_hp (Step 2) — OPS-only jobs still in progress (task not done+costed).
+  // Done ops_hp jobs leave this tab → surface in "Xong việc (3 ngày)" + "Hoàn thành",
+  // exactly like the tq/dl tabs.
+  const opsHpJobs = pendingJobs.filter(j =>
+    j.service_type === 'ops_hp' && hasOpsHpTask(j) && !isOpsHpDone(j)
+  );
   const todayJobs = pendingJobs.filter(j =>
     j.destination === 'hai_phong' &&
     (j.service_type === 'truck' || j.service_type === 'both') &&
@@ -383,11 +428,13 @@ export default function LogDashboardOps() {
     // require both finished; recency uses the most recent finish.
     const needsTq = hasTqTask(j);
     const needsDl = hasDlTask(j);
-    if (!needsTq && !needsDl) return false;
+    const needsOh = hasOpsHpTask(j);
+    if (!needsTq && !needsDl && !needsOh) return false;
     const tqOk = !needsTq || isTqDone(j);
     const dlOk = !needsDl || isDlDone(j);
-    if (!tqOk || !dlOk) return false;
-    const finishes = [tqDoneAt(j), dlDoneAt(j)].filter(Boolean).map(s => new Date(s));
+    const ohOk = !needsOh || isOpsHpDone(j);
+    if (!tqOk || !dlOk || !ohOk) return false;
+    const finishes = [tqDoneAt(j), dlDoneAt(j), ohDoneAt(j)].filter(Boolean).map(s => new Date(s));
     if (!finishes.length) return false;
     const latest = new Date(Math.max(...finishes.map(d => d.getTime())));
     return latest >= threeDaysAgo;
@@ -481,6 +528,33 @@ export default function LogDashboardOps() {
       />
     );
   }
+  // ops_hp tick buttons — no tk_status precondition (ops_hp has no TK row).
+  function ohDoneBtn(j) {
+    const t = getOpsTask(j, 'ops_hp');
+    if (!t) return null;
+    const ticked = t.completed === true;
+    return (
+      <TickButton
+        label="Hoàn thành việc"
+        ticked={ticked}
+        disabled={anyTickPending}
+        onClick={() => ohDoneMut.mutate({ id: j.id, on: !ticked })}
+      />
+    );
+  }
+  function ohCostBtn(j) {
+    const t = getOpsTask(j, 'ops_hp');
+    if (!t) return null;
+    const ticked = !!t.cost_entered_at;
+    return (
+      <TickButton
+        label="Cost"
+        ticked={ticked}
+        disabled={anyTickPending}
+        onClick={() => ohCostMut.mutate({ id: j.id, on: !ticked })}
+      />
+    );
+  }
 
   function opsTaskInfo(j) {
     const tasks = Array.isArray(j.ops_tasks) ? j.ops_tasks : [];
@@ -544,6 +618,9 @@ export default function LogDashboardOps() {
               </button>
               <button className={`tab ${tab === 'doi_lenh' ? 'active' : ''}`} onClick={() => setTab('doi_lenh')}>
                 Đổi lệnh<Badge n={dlJobs.length} color="var(--warning)" />
+              </button>
+              <button className={`tab ${tab === 'cong_viec_ops' ? 'active' : ''}`} onClick={() => setTab('cong_viec_ops')}>
+                Công việc OPS<Badge n={opsHpJobs.length} color="var(--info)" />
               </button>
               <button className={`tab ${tab === 'phai_doi_lenh' ? 'active' : ''}`} onClick={() => setTab('phai_doi_lenh')}>
                 Phải đổi lệnh hôm nay<Badge n={todayJobs.length} color="var(--danger)" />
@@ -725,6 +802,74 @@ export default function LogDashboardOps() {
                   </tr>
                 )}
               />
+            ) : tab === 'cong_viec_ops' ? (
+              <FilteredTable
+                columns={OPSHP_COLS}
+                data={opsHpJobs}
+                renderMobileCard={(j) => (
+                  <OpsCard key={j.id} job={j} onOpen={() => setDetailJobId(j.id)}
+                    body={
+                      <>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 12px', marginBottom: 6, fontSize: 12 }}>
+                          <div><span style={{ color: 'var(--text-2)' }}>Ngày:</span> {fmtDate(j.created_at)}</div>
+                          <div><span style={{ color: 'var(--text-2)' }}>Mã SI:</span> {j.si_number || '—'}</div>
+                        </div>
+                        <div style={{ fontSize: 12, marginBottom: 6 }}>
+                          <span style={{ color: 'var(--text-2)' }}>Hàng hóa:</span> {fmtCargo(j)}
+                        </div>
+                        <div style={{ fontSize: 12, marginBottom: 6 }}>
+                          <span style={{ color: 'var(--text-2)' }}>Hạn lệnh / Cutoff:</span>{' '}
+                          <span style={deadlineStyle(j.han_lenh)}>
+                            {j.han_lenh ? (j.import_export === 'import' ? fmtDate(j.han_lenh) : fmtDt(j.han_lenh)) : '—'}
+                          </span>
+                        </div>
+                        <div style={{ fontSize: 12, marginBottom: 6, padding: '6px 8px', background: 'var(--bg)', borderRadius: 6 }}>
+                          <div style={{ color: 'var(--text-2)', marginBottom: 2 }}>Nội dung công việc:</div>
+                          {j.ops_hp_note || '—'}
+                        </div>
+                        <div style={{ marginTop: 8, fontSize: 12 }}>
+                          <span style={{ color: 'var(--text-2)', marginRight: 6 }}>Trạng thái OPS:</span>
+                          <OpsStatusPill info={opsStatusOpsHp(j)} />
+                        </div>
+                      </>
+                    }
+                    actions={<>
+                      {ohDoneBtn(j)}
+                      {ohCostBtn(j)}
+                      {deleteBtn(j)}
+                      <button className="btn btn-ghost btn-sm btn-icon" onClick={e => { e.stopPropagation(); setDetailJobId(j.id); }}>🔍</button>
+                    </>}
+                  />
+                )}
+                emptyText="Không có việc OPS nào"
+                extraHeaderCells={<TH />}
+                tableStyle={{ fontSize: 13 }}
+                renderRow={j => (
+                  <tr key={j.id} style={{ background: rowBg(j), cursor: 'pointer' }} onDoubleClick={() => setDetailJobId(j.id)}>
+                    <TD style={{ whiteSpace: 'nowrap', fontSize: 12 }}>{fmtDate(j.created_at)}</TD>
+                    <TD style={{ fontWeight: 600, color: 'var(--info)', whiteSpace: 'nowrap' }}>
+                      {j.returned_to === 'log' && (
+                        <span style={{ marginRight: 4, cursor: 'help' }}
+                          title={`🟠 KT trả về\nLý do: ${j.returned_reason || '(không có)'}`}>🟠</span>
+                      )}
+                      {j.job_code || `#${j.id}`}
+                    </TD>
+                    <TD style={{ whiteSpace: 'nowrap', fontSize: 12, color: 'var(--text-2)' }}>{j.si_number || '—'}</TD>
+                    <IeCell value={j.import_export} />
+                    <TD style={{ maxWidth: 140 }}>{j.customer_name}</TD>
+                    <TD style={{ whiteSpace: 'nowrap', fontSize: 12 }}>{fmtCargo(j)}</TD>
+                    <TD style={{ whiteSpace: 'nowrap', ...deadlineStyle(j.han_lenh) }}>{j.han_lenh ? (j.import_export === 'import' ? fmtDate(j.han_lenh) : fmtDt(j.han_lenh)) : '—'}</TD>
+                    <TD style={{ maxWidth: 240, fontSize: 12, color: 'var(--text-2)' }}>{j.ops_hp_note || '—'}</TD>
+                    <TD><OpsStatusPill info={opsStatusOpsHp(j)} /></TD>
+                    <TD style={{ whiteSpace: 'nowrap', display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                      {ohDoneBtn(j)}
+                      {ohCostBtn(j)}
+                      {deleteBtn(j)}
+                      <button className="btn btn-ghost btn-sm btn-icon" onClick={e => { e.stopPropagation(); setDetailJobId(j.id); }}>🔍</button>
+                    </TD>
+                  </tr>
+                )}
+              />
             ) : tab === 'phai_doi_lenh' ? (
               <FilteredTable
                 columns={TODAY_COLS}
@@ -852,7 +997,7 @@ export default function LogDashboardOps() {
                    Khu ĐL xong   = opsKhu2Done (đổi lệnh + cost ĐL).
                    Jobs without OPS task rows (non-OPS-assigned) are excluded by the
                    hasTqTask/hasDlTask gates inside opsAllRequiredDone. */
-                data={completedJobs.filter(j => j.destination === 'hai_phong' && (hasTqTask(j) || hasDlTask(j)) && opsAllRequiredDone(j))}
+                data={completedJobs.filter(j => j.destination === 'hai_phong' && (hasTqTask(j) || hasDlTask(j) || hasOpsHpTask(j)) && opsAllRequiredDone(j))}
                 renderMobileCard={(j) => (
                   <OpsCard key={j.id} job={j} onOpen={() => setDetailJobId(j.id)} codeColor="var(--primary)"
                     body={
