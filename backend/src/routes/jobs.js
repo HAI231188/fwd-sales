@@ -1351,6 +1351,8 @@ router.post('/', requireAuth, async (req, res) => {
     company_full_name, invoice_address, invoice_tax_code,
     // Loại lô — required by the form; default 'export' as defensive fallback.
     import_export,
+    // ops_hp (Step 1) — free-text OPS work description for an OPS-only job.
+    ops_hp_note,
   } = req.body;
 
   if (!customer_name || !service_type) {
@@ -1375,7 +1377,11 @@ router.post('/', requireAuth, async (req, res) => {
     const settingsRes = await db.query(`SELECT assignment_mode FROM log_settings WHERE id = 1`);
     const mode = settingsRes.rows[0]?.assignment_mode || 'auto';
     const isTk = service_type === 'tk' || service_type === 'both';
-    const needsOps = destination === 'hai_phong' && ['tk','truck','both'].includes(service_type);
+    // ops_hp (Step 1) — OPS-only job. isTk stays false (no CUS/TK row), isDieuDo
+    // stays false (no DD). ops_hp implies HP, so it always needs OPS regardless
+    // of the destination value the form happens to send.
+    const isOpsHp = service_type === 'ops_hp';
+    const needsOps = isOpsHp || (destination === 'hai_phong' && ['tk','truck','both'].includes(service_type));
 
     let cusSuggestion = null;
     let opsSuggestion = null;
@@ -1402,8 +1408,9 @@ router.post('/', requireAuth, async (req, res) => {
         etd, eta, tons, cbm, deadline, service_type, other_services,
         cargo_type, so_kien, kg, destination, created_by, han_lenh,
         si_number, mbl_no, hbl_no, import_export,
-        shipper, vessel, voy, shipping_line, goods_description
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33)
+        shipper, vessel, voy, shipping_line, goods_description,
+        ops_hp_note
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34)
       RETURNING *
     `, [
       job_code || null, customer_id || null, customer_name,
@@ -1419,6 +1426,7 @@ router.post('/', requireAuth, async (req, res) => {
       importExport,
       shipper || null, vessel || null, voy || null,
       shipping_line || null, goods_description || null,
+      ops_hp_note || null,
     ]);
 
     const job = rows[0];
@@ -1602,7 +1610,16 @@ router.post('/', requireAuth, async (req, res) => {
     //   both  → 'thong_quan' + 'doi_lenh'
     // Rule: has TK (tk/both) → needs thong_quan; ANY HP job → needs doi_lenh.
     // Idempotent via partial UNIQUE (job_id, task_type) WHERE task_type IS NOT NULL.
-    if (destination === 'hai_phong' && ['tk','truck','both'].includes(service_type)) {
+    if (isOpsHp) {
+      // ops_hp (Step 1) — seed ONE free-text OPS task. This is the single unit
+      // OPS ticks (done + cost) to complete the job. NO thong_quan/doi_lenh.
+      const opsUserId = opsSuggestion?.user_id || null;
+      await client.query(
+        `INSERT INTO job_ops_task (job_id, ops_id, task_type, content) VALUES ($1, $2, 'ops_hp', $3)
+         ON CONFLICT (job_id, task_type) WHERE task_type IS NOT NULL DO NOTHING`,
+        [job.id, opsUserId, ops_hp_note || null]
+      );
+    } else if (destination === 'hai_phong' && ['tk','truck','both'].includes(service_type)) {
       const opsUserId = opsSuggestion?.user_id || null;
       if (service_type === 'tk' || service_type === 'both') {
         await client.query(
@@ -3049,7 +3066,12 @@ router.post('/:id/delete-request', requireAuth, async (req, res) => {
 // Each endpoint calls checkAndCompleteJob so the job auto-flips when all
 // required OPS + CUS + truck conditions are met.
 // =================================================================
-const OPS_TASK_TYPES = ['thong_quan', 'doi_lenh'];
+// ops_hp (Step 1) — an OPS-only job's single free-text task. Has BOTH a done
+// flag and a cost tick (like doi_lenh), so it appears in OPS_TASK_TYPES (cost
+// endpoints) AND OPS_DONE_TASK_TYPES (done endpoints). thong_quan stays
+// cost-only (no done flag — tk_status owns its "cleared" event).
+const OPS_TASK_TYPES = ['thong_quan', 'doi_lenh', 'ops_hp'];
+const OPS_DONE_TASK_TYPES = ['doi_lenh', 'ops_hp'];
 const TK_TERMINAL_STATUSES = ['thong_quan', 'giai_phong', 'bao_quan'];
 
 async function loadOpsTaskContext(client, jobId, taskType) {
@@ -3086,8 +3108,8 @@ function checkTkPrecondition(ctx) {
 // PATCH /api/jobs/:id/ops-task/:taskType/done   — only valid for 'doi_lenh'
 router.patch('/:id/ops-task/:taskType/done', requireAuth, async (req, res) => {
   const { id, taskType } = req.params;
-  if (taskType !== 'doi_lenh') {
-    return res.status(400).json({ error: 'Chỉ task doi_lenh có thao tác done' });
+  if (!OPS_DONE_TASK_TYPES.includes(taskType)) {
+    return res.status(400).json({ error: 'Task này không có thao tác done' });
   }
   const client = await db.pool.connect();
   try {
@@ -3118,8 +3140,8 @@ router.patch('/:id/ops-task/:taskType/done', requireAuth, async (req, res) => {
 // DELETE /api/jobs/:id/ops-task/:taskType/done  — un-tick đổi lệnh done
 router.delete('/:id/ops-task/:taskType/done', requireAuth, async (req, res) => {
   const { id, taskType } = req.params;
-  if (taskType !== 'doi_lenh') {
-    return res.status(400).json({ error: 'Chỉ task doi_lenh có thao tác done' });
+  if (!OPS_DONE_TASK_TYPES.includes(taskType)) {
+    return res.status(400).json({ error: 'Task này không có thao tác done' });
   }
   const client = await db.pool.connect();
   try {

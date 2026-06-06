@@ -222,7 +222,7 @@ CREATE TABLE IF NOT EXISTS jobs (
   tons              DECIMAL(10,2),
   cbm               DECIMAL(10,2),
   deadline          TIMESTAMP WITH TIME ZONE,
-  service_type      VARCHAR(10) CHECK (service_type IN ('tk', 'truck', 'both')),
+  service_type      VARCHAR(10) CHECK (service_type IN ('tk', 'truck', 'both', 'ops_hp')),
   other_services    JSONB DEFAULT '{}',
   assignment_mode   VARCHAR(10) DEFAULT 'auto' CHECK (assignment_mode IN ('auto', 'manual')),
   status            VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'completed')),
@@ -630,6 +630,21 @@ ALTER TABLE jobs ADD COLUMN IF NOT EXISTS goods_description VARCHAR(255);
 ALTER TABLE jobs DROP CONSTRAINT IF EXISTS jobs_import_export_check;
 ALTER TABLE jobs ADD CONSTRAINT jobs_import_export_check
   CHECK (import_export IN ('export', 'import'));
+
+-- ============================================================
+-- service_type 'ops_hp' (Step 1, 2026-06-06) — a job handled ONLY by OPS
+-- (no CUS/TK/DD), free-text task content, HP-only. Widen the service_type
+-- CHECK to admit the 4th value. DROP/ADD pair (Postgres has no
+-- `ADD CONSTRAINT ... IF NOT EXISTS`); the constraint name `jobs_service_type_check`
+-- is the auto-generated name from the inline CHECK in CREATE TABLE jobs.
+-- Widening an enum CHECK can never invalidate an existing row, so this is
+-- safe + idempotent on every deploy. ops_hp_note holds the free-text OPS
+-- work description (nullable — existing rows + non-ops_hp jobs stay NULL).
+-- ============================================================
+ALTER TABLE jobs DROP CONSTRAINT IF EXISTS jobs_service_type_check;
+ALTER TABLE jobs ADD CONSTRAINT jobs_service_type_check
+  CHECK (service_type IN ('tk', 'truck', 'both', 'ops_hp'));
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS ops_hp_note TEXT;
 
 -- ============================================================
 -- Phase 1: Multi-truck booking system

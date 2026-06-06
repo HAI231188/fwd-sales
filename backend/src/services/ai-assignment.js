@@ -220,7 +220,11 @@ async function assignCus(jobData, pool) {
 
 // Returns { user_id, user_name, reason, cost, fallback } or null if conditions not met — no DB writes
 async function suggestOps(jobData, pool) {
-  if (jobData.destination !== 'hai_phong' || !['tk', 'truck', 'both'].includes(jobData.service_type)) {
+  // ops_hp (Step 1) is an OPS-only job that implies HP → always eligible for an
+  // OPS suggestion regardless of the destination value the caller sends. Other
+  // service types still require HP destination + tk/truck/both.
+  const isOpsHp = jobData.service_type === 'ops_hp';
+  if (!isOpsHp && (jobData.destination !== 'hai_phong' || !['tk', 'truck', 'both'].includes(jobData.service_type))) {
     return null;
   }
 

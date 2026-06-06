@@ -54,19 +54,35 @@ async function checkOpsTasksDone(client, jobId) {
       (SELECT completed       FROM job_ops_task
          WHERE job_id = $1 AND task_type = 'doi_lenh')   AS dl_completed,
       (SELECT cost_entered_at FROM job_ops_task
-         WHERE job_id = $1 AND task_type = 'doi_lenh')   AS dl_cost_entered_at
+         WHERE job_id = $1 AND task_type = 'doi_lenh')   AS dl_cost_entered_at,
+      -- ops_hp (Step 1) — the single free-text OPS task on an OPS-only job.
+      -- Done = completed flag AND cost ticked, same shape as doi_lenh.
+      (SELECT id              FROM job_ops_task
+         WHERE job_id = $1 AND task_type = 'ops_hp')     AS oh_task_id,
+      (SELECT completed       FROM job_ops_task
+         WHERE job_id = $1 AND task_type = 'ops_hp')     AS oh_completed,
+      (SELECT cost_entered_at FROM job_ops_task
+         WHERE job_id = $1 AND task_type = 'ops_hp')     AS oh_cost_entered_at
   `, [jobId]);
   const tqRequired = r.tq_task_id !== null;
   const tqDone     = !tqRequired || !!r.tq_cost_entered_at;
   const dlRequired = r.dl_task_id !== null;
   const dlDone     = !dlRequired || (!!r.dl_completed && !!r.dl_cost_entered_at);
+  // oh_task_id is null for every non-ops_hp job → ohRequired false → ohDone true,
+  // so normal tk/truck/both jobs are completely unaffected by this gate.
+  const ohRequired = r.oh_task_id !== null;
+  const ohDone     = !ohRequired || (!!r.oh_completed && !!r.oh_cost_entered_at);
   const missing = [];
   if (!tqDone) missing.push('OPS chưa nhập cost thông quan');
   if (!dlDone) {
     if (!r.dl_completed)       missing.push('OPS chưa đổi lệnh xong');
     if (!r.dl_cost_entered_at) missing.push('OPS chưa nhập cost đổi lệnh');
   }
-  return { ready: tqDone && dlDone, missing };
+  if (!ohDone) {
+    if (!r.oh_completed)       missing.push('OPS chưa hoàn thành việc');
+    if (!r.oh_cost_entered_at) missing.push('OPS chưa nhập cost');
+  }
+  return { ready: tqDone && dlDone && ohDone, missing };
 }
 
 async function checkAndCompleteJob(client, jobId, changedBy, recordHistory) {
@@ -98,6 +114,10 @@ async function checkAndCompleteJob(client, jobId, changedBy, recordHistory) {
   if (j.service_type === 'tk')         ready = tkDone;
   else if (j.service_type === 'truck') ready = truckDone;
   else if (j.service_type === 'both')  ready = tkDone && truckDone;
+  // ops_hp (Step 1) — OPS-only job. No tk/truck/DD involvement; the sole gate
+  // is the ops_hp task (done + cost), enforced by the checkOpsTasksDone block
+  // below. Set ready=true here so that gate is the single deciding factor.
+  else if (j.service_type === 'ops_hp') ready = true;
 
   // OPS per-task gate (delegates to checkOpsTasksDone for single-source logic).
   // Only effective for service_type='tk' here — the truck/both ready expressions
