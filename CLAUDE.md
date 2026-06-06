@@ -79,6 +79,8 @@ fwd-sales/
 
 ### Current modules
 
+> **`jobs.service_type` (Loại dịch vụ)** has **4** values: `tk` / `truck` / `both` / `ops_hp`. `ops_hp` (OPS-only HP job, added 2026-06-06) — see the `jobs.service_type` Note in §5a + lesson **L31**.
+
 | Module | Routes | Key Files |
 |--------|--------|-----------|
 | AUTH | `/api/auth/*` | `routes/auth.js`, `middleware/auth.js` |
@@ -507,6 +509,14 @@ Applies to: `truck_bookings` + `truck_booking_containers` (current). Future cand
 4. The same pattern applies to drilldown endpoints, search endpoints, and any other polymorphic SELECT that branches on a query param.
 
 Applies to: `routes/jobs.js GET /` (current). Future candidates: any new tab-mode addition on any polymorphic endpoint (`/api/reports`, `/api/customers`, `/api/quotes` if they grow tab modes).
+
+### Note — `jobs.service_type` (Loại dịch vụ)
+
+Four-value enum on `jobs`: `tk` (CUS làm tờ khai) · `truck` (DD vận chuyển) · `both` (TK + vận chuyển) · `ops_hp` (OPS-only — thao tác ngoài cảng tại Hải Phòng, no CUS/DD). CHECK enforced via DROP/ADD pair (`jobs_service_type_check`, idempotent — Postgres has no `ADD CONSTRAINT ... IF NOT EXISTS`). `ops_hp` (added 2026-06-06, commits `1529bc5` Step 1 backend + `41f266e` Step 2 frontend):
+- **OPS-only:** create seeds **one** `job_ops_task` `task_type='ops_hp'` (free-text `jobs.ops_hp_note`), auto-assigns OPS like a normal HP job; **no** `job_tk` row, **no** `dieu_do_id`, **no** thong_quan/doi_lenh tasks.
+- **HP-only:** `CreateJobModal` shows the "OPS HP (thao tác ngoài cảng)" option only when `destination='hai_phong'`; switching destination away from HP resets `service_type`.
+- **Cost gates completion:** OPS ticks **done** + **cost** on the `ops_hp` task via `/api/jobs/:id/ops-task/ops_hp/{done,cost}`; both required before the job auto-completes.
+- Full mechanics + the service_type ripple list in **L31**.
 
 ### Note — `jobs.import_export` (Loại lô)
 
@@ -961,6 +971,44 @@ Applies to (fixed in CỤM 1): `routes/quotes.js` PUT `/:id`, `routes/pipeline.j
 4. **Exception — per-file label/color maps stay local** (per `frontend/src/CLAUDE.md`: `STAGE_INFO`, `STATUS_LABEL`, etc.). That convention is about display enums, not logic/formatters/constants; this lesson does not override it.
 
 Applies to (fixed in CỤM 2): `recordHistory` → `services/job-history.js`; role arrays → `constants/roles.js`; `fmtDate`/`fmtDt`/`localDateStr` → `utils/dateFmt.js`. Future candidates: any `function`/`const` duplicated across files — `toDatetimeLocal`, `fmtCargo`, `parseOptions`, etc.
+
+---
+
+### L31 — `ops_hp` service_type (OPS-only job) + the service_type ripple list
+
+**Shipped 2026-06-06** — commits `1529bc5` (Step 1: backend create + OPS-task + completion gate) + `41f266e` (Step 2: create form, OPS tab, TP visibility, labels). `service_type` now has **4** values: `tk` / `truck` / `both` / `ops_hp`.
+
+**What `ops_hp` is:** a job handled **only by OPS** (no CUS/TK, no DD/truck), **HP-only**, with a free-text work description in `jobs.ops_hp_note`. It auto-assigns OPS exactly like a normal HP job (`suggestOps` accepts `ops_hp`; `needsOps` includes it). Create seeds **one** `job_ops_task` `task_type='ops_hp'` and **nothing else** — no `job_tk` row, no `dieu_do_id`, no thong_quan/doi_lenh. **Cost is required before completion.**
+
+**Completion (the load-bearing part — `services/job-completion.js`):**
+- `checkAndCompleteJob` has an `ops_hp` branch: `ready = true`, gated **solely** by `checkOpsTasksDone`. Without this branch the job can never reach `status='completed'` (the `if/else if` chain falls through → `ready` stays false → stuck forever). Any future 5th service_type MUST add its own branch here.
+- `checkOpsTasksDone` recognizes the `ops_hp` task: `ohRequired = task exists`, `ohDone = completed && cost_entered_at`. A job with **no** `ops_hp` task → `ohRequired=false → ohDone=true`, so tk/truck/both are unaffected.
+- `OPS_DONE_TASK_TYPES = ['doi_lenh','ops_hp']` (jobs.js) gates the `/ops-task/:taskType/done` endpoints; `OPS_TASK_TYPES` (which `/cost` uses) gains `ops_hp` too. `thong_quan` stays cost-only. `checkTkPrecondition` passes `ops_hp` freely (no `job_tk`).
+
+**Post-completion is service_type-agnostic — no special-casing.** Once `status='completed'`, the Sales revenue-tick (`/api/jobs?tab=revenue_pending`, `PATCH /:id/revenue-tick`) and the entire KT chain (`routes/accounting.js`) key purely on lifecycle timestamps (`completed_at`, `revenue_entered_at`, `accounting_checked_at`, `debit_sent_at`, `payment_received_at`) — zero `service_type`/`job_tk`/`truck` filtering. So `ops_hp` flows to Sales → Accounting identically to any other completed job (verified end-to-end via the live HTTP route).
+
+**tpStatusLines fix (don't skip this for any new service_type):** `LogDashboardTP.jsx tpStatusLines` derives "Đang làm" vs "Hoàn thành" client-side; if it emits `[]` for a pending job, TP renders a false green "Hoàn thành" pill **and the job drops out of TP's pending tab**. `ops_hp` needed its own branch emitting "OPS: chưa hoàn thành" / "OPS: chưa nhập cost". Any service_type that isn't already covered by the tk/truck/HP branches must add a line here or it becomes invisible to TP while in-progress.
+
+**The service_type ripple list — 11 touch-points** (follow this exact path for the next service_type; ⚠ = silent-break risk if skipped):
+1. **`schema.sql`** — DROP/ADD `jobs_service_type_check` to widen the enum (+ any new column like `ops_hp_note`). ⚠ inline CHECK in `CREATE TABLE` only applies to fresh DBs.
+2. **`services/job-completion.js`** — `checkAndCompleteJob` branch (⚠ no branch = never completes) + `checkOpsTasksDone` recognition if OPS-gated.
+3. **`routes/jobs.js` POST `/`** — destructure new field + INSERT column list + `VALUES ($n)` + params array (⚠ all three or the value silently drops); routing flags (`isTk`/`needsOps`/`isDieuDo`), task seeding, `suggestOps`/`suggestCus` guards.
+4. **`routes/jobs.js` PUT `/:id`** — add new column to `FIELDS` (edit path) + service_type validation if whitelisted.
+5. **GET `/` + GET `/:id`** — use `j.*`, so a new column is auto-returned (no change unless a derived alias is needed).
+6. **`routes/jobs.js` `/filtered` + `/stats` + `/waiting-*`** — ⚠ explicit column lists + `service_type IN (...)` gates; extend where the role needs to see the work (e.g. `waiting_ops`, `waiting-assignments`). Leave task-specific filters (thong_quan/doi_lenh) alone.
+7. **`CreateJobModal.jsx`** — `INIT_FORM` + the select option (+ conditional visibility) + submit validation + `hasUserInput` dirty-guard + null-coerce in the payload.
+8. **`JobDetailModal.jsx`** — `buildDraft` + readonly Row + edit input (L8) + `SVC_LABEL`.
+9. **Each dashboard** (`LogDashboard{TP,Cus,Ops,DieuDo}.jsx`) — tab/filter + column array **and** the matching `renderMobileCard` (L26 cell-count parity); `tpStatusLines` (see above).
+10. **`SVC_LABEL` ×6** — `SalesDashboard`, `AccountingDashboard`, `LogDashboardTP`, `LogDashboardCus`, `AssignmentModal`, `JobDetailModal` (⚠ else the raw `service_type` string shows).
+11. **`JobListModal.jsx` / BBBG** — drilldown column rendering; BBBG (`bbbg-data` SELECT + `bbbg-pdf` + `services/bbbg-pdf.js`) only if the type prints to BBBG.
+
+**Rules:**
+1. The completion gate (touch-point 2) is the one that makes-or-breaks a new service_type. Verify a freshly-created job of the new type can actually reach `status='completed'` before shipping the UI.
+2. `tpStatusLines` (touch-point 9) is the silent-visibility trap — a new type with no branch looks "done" to TP. Always add a line.
+3. Post-completion (Sales/KT) needs **no** change — keep it that way; never add `service_type` checks to `routes/accounting.js` or the revenue-tick path.
+4. Audit all `service_type IN ('tk',...)` lists (`grep`) when adding a type — include it only where that role legitimately needs the work; document intentional omissions.
+
+Applies to: `ops_hp` (current). Future candidates: any 5th service_type (e.g. warehouse-only, multimodal) follows the same 11 touch-points.
 
 ---
 
