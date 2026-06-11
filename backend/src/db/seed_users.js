@@ -34,11 +34,14 @@ async function seedUsers() {
   try {
     await client.query('BEGIN');
 
-    // Only touch sales/lead users — LOG staff (cus*, ops, dieu_do, etc.) are managed separately
-    // and may have FK references in ai_assignment_logs that prevent deletion
-    await client.query(`DELETE FROM users WHERE username IS NULL AND role IN ('sales','lead')`);
-    const realCodes = USERS.map(u => u.code);
-    await client.query(`DELETE FROM users WHERE code != ALL($1::text[]) AND role IN ('sales','lead')`, [realCodes]);
+    // The seed NO LONGER deletes any users. It previously pruned sales/lead
+    // users whose code wasn't in the hardcoded list, which hard-deleted
+    // admin-created salespeople/leads on every deploy (and risked FK violations
+    // — see L7). Pruning is the admin panel's job now: disable (soft) is the
+    // proper off-switch, not a deploy-time hard delete. The seed only INSERTs
+    // missing seed users and refreshes cosmetic name/code/avatar (role,
+    // password_hash, gmail_address on existing rows are preserved — see the
+    // ON CONFLICT clause below).
 
     const seededTemps = [];
     for (const user of USERS) {
