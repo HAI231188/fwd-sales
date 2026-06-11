@@ -96,6 +96,7 @@ fwd-sales/
 | CUSTOMER_PIPELINE | `/api/customer-pipeline/*` | `routes/customer-pipeline.js`, `CustomerEditModal.jsx`, `CustomerDataPage.jsx` (route `/customers`) — Data khách hàng. Admin (TP + lead) management page: list, edit (company_name + invoice fields + sales_id), soft-delete (TP only). GET returns sales JOIN + job_count (LOWER(j.customer_name)=LOWER(cp.company_name)). PATCH detects sales_id change → applies L14 transfer pattern (DELETE old pipeline + children, UPSERT under new sales, notifications, audit). Mounted at `/api/customer-pipeline` not `/api/customers` to avoid collision with `routes/customers.js` PUT/DELETE on the `customers` (interaction) table. Navbar link visible only to `truong_phong_log` + `lead`. Soft delete via `customer_pipeline.deleted_at` — partial unique index `idx_pipeline_sales_company_active WHERE deleted_at IS NULL` lets the same (sales, company) be re-created post-delete; the L14 UPSERT in `routes/jobs.js` POST `/` matches via `ON CONFLICT (sales_id, LOWER(company_name)) WHERE deleted_at IS NULL`. |
 | EMAIL_SYSTEM | `/api/email/*` + `/api/users/me/gmail-setup` | `schema.sql` (`users.gmail_address`, `users.gmail_app_password_encrypted`, `users.gmail_display_name`, `email_history` table), `utils/encryption.js` (AES-256-GCM, key from `GMAIL_ENCRYPTION_KEY` env var = 64 hex chars), `services/email-sender.js`, `routes/email.js`, `routes/users.js`, `ChangePassword.jsx` Gmail card, `TruckPlanningModal.jsx` Vùng 2 send wiring. **CP1**: DB columns + `email_history` audit table (soft-deletable, JSONB `last_sent_data` snapshot for "có thay đổi" diff). **CP2**: AES-256-GCM helper + `/api/users/me/gmail-setup` GET/PUT/DELETE + extended `/change-password` page. **CP3**: nodemailer Gmail SMTP send via `POST /api/email/send-planning` (DD+TPL), `GET /api/email/history` (DD+TPL+lead), rendered Vietnamese subject + body for `mail_type ∈ ('new','cancel')`. **Domain whitelist**: `@gmail.com`, `@googlemail.com`, `@slbglobal.com` (Google Workspace). `email_cc` parsed via L16. SMTP creds AES-256-GCM at rest; transcript/log never see plaintext. **Deferred**: BBBG PDF attachment (CP4), per-card real status logic + HỦY workflow trigger UI + edit-after-send notifications (CP5). |
 | SALES_REVENUE_TICK | `GET /api/jobs?tab=revenue_pending` + `GET /api/jobs?tab=revenue_entered` + `PATCH /api/jobs/:id/revenue-tick` + `DELETE /api/jobs/:id/revenue-tick` | `schema.sql` (`jobs.revenue_entered_at TIMESTAMPTZ NULL`, `jobs.revenue_entered_by INTEGER NULL FK users(id) ON DELETE SET NULL`, partial composite index `idx_jobs_revenue_status` on `(sales_id, completed_at, revenue_entered_at) WHERE deleted_at IS NULL`), `routes/jobs.js` (4 tab modes in `GET /` — `pending`/`completed`/`revenue_pending`/`revenue_entered` — plus 2 tick endpoints; unified Sales role guard scopes `j.sales_id = req.user.id` on every tab), `pages/SalesDashboard.jsx` Tab 3 "Quản lý công việc" with 3 sub-tabs (🔵 Job pending / 🟡 Yêu cầu nhập thu / 🟢 Đã nhập thu), `SalesCard` mobile card frame (Phase B3 style), header stat card #7 "💰 Yêu cầu nhập thu" with 30s polling + amber→red urgency cue at count >5. **M1**: schema. **M2**: backend endpoints + Sales filter promotion + closes prior `tab=completed` cross-sales exposure gap. **M3**: frontend skeleton + sub-tab nav + lazy queries. **M4**: 12/9/9 column sets + tick/un-tick action buttons + 3 mobile card variants + `revenue_entered_by_name` JOIN on `GET /api/jobs`. **M5**: header stat card #7 + this documentation. Sales ticks completed LOG jobs as "đã nhập thu" after entering revenue into external accounting software — no amount stored, just a timestamp + acting user. Un-tick allowed anytime (no time limit). See L22 + Note below. |
+| ADMIN | `/api/admin/users` + `/:id` + `/:id/role` + `/:id/disable` + `/:id/enable` + `/:id/reset-password` | `routes/admin.js`, `services/admin-guards.js`, `middleware/auth.js` (`requireAdmin`), `constants/roles.js` (`ADMIN_ROLES`/`ALL_ROLES`), `db/make_admin.js`, `pages/AdminPage.jsx` (route `/admin`), `Navbar.jsx` (🛡️ Quản trị pill). **App-wide user administrator** — role `'admin'` sits above every department (distinct from `truong_phong_log`). Router-gated `requireAuth + requireAdmin` (mirrors `requireKeToan`). Endpoints: list / create / edit / change-role / disable / enable / reset-password. Create + reset-password return a one-time random temp password (bcrypt at rest; **never returns `password_hash`** or gmail secrets). Self-lock + last-admin invariants in `admin-guards.js` (an admin can't disable/demote themselves; the last active admin can't be removed). **`users.disabled_at`** soft-disable (NULL=active) enforced at BOTH `auth.js` login AND `requireAuth` (7-day JWT → block every request). Auto-assign toggle on `/admin` reuses `/api/jobs/settings` (gate widened to `admin`). Bootstrap the first admin out-of-band via `make_admin.js` (see Note + §6). See **L32–L34** + the `admin` role Note in §5a. |
 
 ### Future modules (do not build yet)
 
@@ -1009,6 +1010,60 @@ Applies to (fixed in CỤM 2): `recordHistory` → `services/job-history.js`; ro
 4. Audit all `service_type IN ('tk',...)` lists (`grep`) when adding a type — include it only where that role legitimately needs the work; document intentional omissions.
 
 Applies to: `ops_hp` (current). Future candidates: any 5th service_type (e.g. warehouse-only, multimodal) follows the same 11 touch-points.
+
+---
+
+### L32 — Soft-disable (`disabled_at`) must be filtered in EVERY staff-enumerating query
+
+**Root cause pattern:** adding `users.disabled_at` and checking it only at login + `requireAuth` blocks a disabled user from *accessing* the app, but every OTHER query that enumerates staff (auto-assign candidate pools, workload, stats, pickers, notification recipients) still treats them as active — so jobs get auto-routed to someone who can't log in, disabled staff clutter dashboards, and they stay selectable in assignment pickers. A soft-disable that only gates login is half a feature: "khóa" must mean "removed from operations," not just "can't sign in."
+
+**Rule:** when a soft-disable / active flag is added, EVERY query that lists or picks users by role MUST add `AND disabled_at IS NULL` (or `u.disabled_at IS NULL`). Grep `role = ANY`, `role IN`, `role =` across the codebase; no staff-enumerating query may omit it.
+
+**Sites filtered (2026-06-11, commit `feae57e`):**
+- `services/ai-assignment.js` — `suggestCus` pool (now `role = ANY($1) AND disabled_at IS NULL`, `$1 = CUS_ROLES` — see L34) + `suggestOps` pool (`role = 'ops' AND disabled_at IS NULL`).
+- `routes/jobs.js` — the 3 shared stats helpers `queryCusStaffStats` / `queryDieuDoStaffStats` / `queryOpsStaffStats` (`WHERE (${where}) AND u.disabled_at IS NULL`); `GET /staff-workload`; `GET /users/log-staff`; `GET /overview` staff distribution; the DD round-robin auto-assign on job create (`WHERE u.role='dieu_do' AND u.disabled_at IS NULL`); and all 3 TP-notification recipient lookups (`role='truong_phong_log' AND disabled_at IS NULL`).
+
+**P2 companion — validate assignment targets:** pickers hide disabled users, but a crafted/stale id must still be rejected server-side. `routes/jobs.js` `validateAssignee(client, userId, allowedRoles, label)` rejects a `cus_id`/`ops_id` that is missing, **disabled**, or wrong-role; wired into `assign`, `manual-assign`, `reassign-cus`, `reassign-ops`.
+
+Verified live: disabling a `cus` removes them from `/users/log-staff` + `/staff-workload`; enabling restores them. Applies to: `users.disabled_at`. Future candidates: any soft-active flag on a table enumerated elsewhere.
+
+---
+
+### L33 — The seed must NEVER overwrite or delete admin-controlled state on existing users
+
+**Root cause pattern:** `start.js` runs `seed_users.js` (+ KT seed) on EVERY deploy. Two mechanisms silently reverted admin actions, breaking the admin panel's durability:
+1. **`ON CONFLICT (username) DO UPDATE SET role = EXCLUDED.role`** overwrote every seeded user's role back to its hardcoded value — an admin promotion (e.g. `hai` lead→admin) and any admin role change to a seeded user was undone on the next deploy. The KT seed also overwrote `gmail_address`, clobbering a user's self-set SMTP (set via `/users/me/gmail-setup`).
+2. **`DELETE FROM users WHERE code != ALL($seedCodes) AND role IN ('sales','lead')`** hard-deleted any sales/lead user whose code wasn't in the hardcoded list — an admin-CREATED salesperson/lead was deleted on the next deploy (also the FK/restart-loop risk of **L7**).
+
+**Rule:** an idempotent seed that runs every deploy may ONLY (a) INSERT users that don't exist yet, and (b) refresh purely-cosmetic fields (`name`/`code`/`avatar_color`) on conflict. On an existing user it must NEVER overwrite `role`, `password_hash`, or `gmail_address`, and must NEVER hard-delete users. Removing a user is the admin panel's job via **disable** (soft, reversible) — never a deploy-time op. A deploy must preserve admin-set roles AND admin-created accounts.
+
+**Fixed (2026-06-11/12, commits `1ae482d` + `aaf82e0`):** `seed_users.js` + `seed_ke_toan.js` `ON CONFLICT` SET = `name`/`code`/`avatar_color` only; `seed_users.js` DELETE statements removed entirely (+ unused `realCodes`). Verified live end-to-end: `hai` stayed `admin` through a deploy+seed; an admin-created `sales` user (code not in seed) survived a deploy; seed still logs "11 users" and still creates missing seed users.
+
+Applies to: `seed_users.js`, `seed_ke_toan.js`. General rule: any seed/migration that runs on every deploy treats admin/user-mutable columns as read-only on existing rows.
+
+---
+
+### L34 — CUS auto-assign uses `CUS_ROLES` (includes bare `'cus'`), not `AUTO_CUS_ROLES`
+
+**Root cause:** `AUTO_CUS_ROLES = ['cus1','cus2','cus3']` (worker variants only); `CUS_ROLES = ['cus','cus1','cus2','cus3']` (includes the bare `'cus'` role). `suggestCus` and `/staff-workload` keyed off the cus1/2/3-only set, so a CUS hired under the bare `'cus'` role was NEVER auto-assigned and was invisible to the workload view (though they appeared in other stats). A new CUS person must be auto-assignable.
+
+**Rule:** all CUS enumeration (auto-assign pool, workload, stats) uses `CUS_ROLES`. Don't re-introduce the `('cus1','cus2','cus3')` literal — import the constant. Reserve `AUTO_CUS_ROLES` only for a deliberate "exclude the supervisor" case and document why at the site.
+
+**Fixed (2026-06-11, commit `feae57e`):** `ai-assignment.js suggestCus` → `role = ANY(CUS_ROLES)`; `queryCusStaffStats` + `/staff-workload` literals → `CUS_ROLES`. (`AUTO_CUS_ROLES` is now an unused import in `jobs.js` — left in place.) Note: this makes role `'cus'` (Giám Sát) auto-assignable; if a future supervisor must be excluded from routing, give them a non-CUS role or re-introduce a documented exclusion. Boundary: adding a PERSON to an existing role is data-driven; a genuinely new CUS *role token* (`cus4`) still needs the `users_role_check` CHECK + `roles.js` edits.
+
+---
+
+### Note — `admin` role + user-management panel (2026-06-11)
+
+`'admin'` = app-wide user administrator, above every department and distinct from `truong_phong_log`. Only admins reach `/api/admin/*` (router-gated `requireAuth + requireAdmin`; `requireAdmin` in `middleware/auth.js` mirrors `requireKeToan`). Endpoints (`routes/admin.js`): list / create / edit / `:id/role` / `:id/disable` / `:id/enable` / `:id/reset-password`. Create + reset-password return a one-time random temp password (bcrypt at rest; `password_hash` and gmail secrets are never returned). Self-lock + last-admin invariants live in `services/admin-guards.js` (`isValidRole` / `isSelf` / `wouldRemoveLastAdmin`). UI: `pages/AdminPage.jsx` (`/admin`, `ProtectedRoute roles={['admin']}`), the 🛡️ "Quản trị" Navbar pill (admin only, desktop + mobile), and the auto-assign toggle reusing `/api/jobs/settings` (gate widened to `admin`).
+
+**`users.disabled_at`** (soft-disable, NULL=active) is enforced at BOTH `routes/auth.js` login AND `requireAuth` — a 7-day JWT means the lock must be checked on every request. Operational propagation (auto-assign / workload / pickers / notifications) is L32.
+
+**Bootstrap the first admin** (the `/api/admin/*` endpoints are admin-gated, so the first admin is set out-of-band):
+```
+railway ssh --service fwd-sales -- node /app/backend/src/db/make_admin.js <username>
+```
+Idempotent; also clears `disabled_at`; durable across deploys after L33 (the seed no longer reverts roles). Current first admin: `hai` (Mr Hải, id=15).
 
 ---
 
