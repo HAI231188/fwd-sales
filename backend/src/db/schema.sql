@@ -723,51 +723,12 @@ ALTER TABLE truck_bookings
 ALTER TABLE truck_bookings
   ADD COLUMN IF NOT EXISTS cost_entered_ticked    BOOLEAN NOT NULL DEFAULT FALSE;
 
--- One-shot backfill: walk every 'sent new' email_history row, parse its
--- booking_ids from last_sent_data (handles both CP5.1 new shape and legacy
--- `bookings[].id`), and tag the referenced truck_bookings with that mail
--- row's id. Idempotent: only updates rows where mail_group_id IS NULL.
-DO $$
-DECLARE
-  m RECORD;
-  ids INT[];
-BEGIN
-  FOR m IN
-    SELECT eh.id AS email_id, eh.last_sent_data AS data
-      FROM email_history eh
-     WHERE eh.mail_type = 'new'
-       AND eh.status   = 'sent'
-       AND eh.deleted_at IS NULL
-  LOOP
-    IF m.data IS NULL THEN CONTINUE; END IF;
-    -- CP5.1+ shape: top-level booking_ids array
-    IF m.data ? 'booking_ids' THEN
-      ids := ARRAY(
-        SELECT (x)::int
-          FROM jsonb_array_elements_text(m.data->'booking_ids') AS x
-         WHERE x ~ '^\d+$'
-      );
-    ELSIF m.data ? 'bookings' THEN
-      -- Legacy CP3+ shape: bookings: [{id, ...}, ...]
-      ids := ARRAY(
-        SELECT (b->>'id')::int
-          FROM jsonb_array_elements(m.data->'bookings') AS b
-         WHERE (b->>'id') ~ '^\d+$'
-      );
-    ELSE
-      CONTINUE;
-    END IF;
-
-    IF ids IS NULL OR array_length(ids, 1) IS NULL THEN CONTINUE; END IF;
-
-    UPDATE truck_bookings
-       SET mail_group_id = m.email_id,
-           updated_at    = NOW()
-     WHERE id = ANY(ids)
-       AND mail_group_id IS NULL
-       AND deleted_at   IS NULL;
-  END LOOP;
-END $$;
+-- NOTE (fresh-DB execution order): the one-shot backfill that populates
+-- truck_bookings.mail_group_id reads FROM email_history, so it MUST run after
+-- the email_history CREATE TABLE (defined far below in the "CP1 — Email history"
+-- section). It was moved there. Running it here would fail on a brand-new empty
+-- DB with "relation email_history does not exist". See the "mail_group_id
+-- backfill" block immediately after the email_history indexes.
 
 -- Phase 5 Step 3 — booking_code (Mã kế hoạch).
 -- Format "KH-{job_code}-{NN}", NN = 2-digit (or longer) sequential per job.
@@ -1110,6 +1071,55 @@ CREATE INDEX IF NOT EXISTS idx_email_history_sender
   ON email_history(sender_user_id) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_email_history_status
   ON email_history(status) WHERE deleted_at IS NULL;
+
+-- mail_group_id backfill (moved here from the truck_bookings section so it runs
+-- AFTER email_history exists — fixes fresh-DB "relation email_history does not
+-- exist"). One-shot: walk every 'sent new' email_history row, parse its
+-- booking_ids from last_sent_data (handles both CP5.1 new shape and legacy
+-- `bookings[].id`), and tag the referenced truck_bookings with that mail row's
+-- id. Idempotent: only updates rows where mail_group_id IS NULL — a fresh DB
+-- has zero email_history rows, so this is a harmless no-op there.
+DO $$
+DECLARE
+  m RECORD;
+  ids INT[];
+BEGIN
+  FOR m IN
+    SELECT eh.id AS email_id, eh.last_sent_data AS data
+      FROM email_history eh
+     WHERE eh.mail_type = 'new'
+       AND eh.status   = 'sent'
+       AND eh.deleted_at IS NULL
+  LOOP
+    IF m.data IS NULL THEN CONTINUE; END IF;
+    -- CP5.1+ shape: top-level booking_ids array
+    IF m.data ? 'booking_ids' THEN
+      ids := ARRAY(
+        SELECT (x)::int
+          FROM jsonb_array_elements_text(m.data->'booking_ids') AS x
+         WHERE x ~ '^\d+$'
+      );
+    ELSIF m.data ? 'bookings' THEN
+      -- Legacy CP3+ shape: bookings: [{id, ...}, ...]
+      ids := ARRAY(
+        SELECT (b->>'id')::int
+          FROM jsonb_array_elements(m.data->'bookings') AS b
+         WHERE (b->>'id') ~ '^\d+$'
+      );
+    ELSE
+      CONTINUE;
+    END IF;
+
+    IF ids IS NULL OR array_length(ids, 1) IS NULL THEN CONTINUE; END IF;
+
+    UPDATE truck_bookings
+       SET mail_group_id = m.email_id,
+           updated_at    = NOW()
+     WHERE id = ANY(ids)
+       AND mail_group_id IS NULL
+       AND deleted_at   IS NULL;
+  END LOOP;
+END $$;
 
 -- ============================================================
 -- CUS "Nhập cost" tick on job_tk (2026-05-21)
