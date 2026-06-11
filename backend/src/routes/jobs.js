@@ -6,6 +6,7 @@ const { buildBbbgPdf } = require('../services/bbbg-pdf');
 const { checkAndCompleteJob: _checkAndCompleteJob, checkOpsTasksDone } = require('../services/job-completion');
 const { recordHistory } = require('../services/job-history');
 const { CUS_ROLES, AUTO_CUS_ROLES, LOG_ROLES, PLAN_ROLES } = require('../constants/roles');
+const { canViewJob, canEditJob, canEditJobTk, canReassignOwnerOrStatus } = require('../services/job-access');
 
 // In-memory suggestion cache (60s TTL) — invalidated on manual assignment
 let suggestionCache = { data: null, ts: 0 };
@@ -1744,6 +1745,19 @@ router.get('/:id', requireAuth, async (req, res) => {
     `, [req.params.id]);
     if (!rows[0]) return res.status(404).json({ error: 'Không tìm thấy job' });
 
+    // B1 (ĐỢT 1 security fix) — VIEW scope by department/ownership. The SELECT
+    // above already exposes sales_id, service_type, destination, and the
+    // assignment ids (ja.cus_id/ops_id/dieu_do_id) on rows[0]. No field masking:
+    // if canViewJob passes, the full payload (incl. cost + customer) is returned.
+    const _assignment = {
+      cus_id: rows[0].cus_id,
+      ops_id: rows[0].ops_id,
+      dieu_do_id: rows[0].dieu_do_id,
+    };
+    if (!canViewJob(req.user, rows[0], _assignment)) {
+      return res.status(403).json({ error: 'Không có quyền xem công việc này' });
+    }
+
     const [tkR, truckR, opsR, histR, contsR] = await Promise.all([
       db.query(`SELECT jt.*, u.name AS cus_name FROM job_tk jt LEFT JOIN users u ON u.id = jt.cus_id WHERE jt.job_id = $1`, [req.params.id]),
       db.query(`SELECT * FROM job_truck WHERE job_id = $1`, [req.params.id]),
@@ -1765,7 +1779,7 @@ router.put('/:id', requireAuth, async (req, res) => {
   if (req.body.deadline !== undefined && req.user.role !== 'truong_phong_log')
     return res.status(403).json({ error: 'Chỉ Trưởng phòng mới được đổi deadline' });
 
-  const FIELDS = ['job_code','customer_name','customer_address','customer_tax_code',
+  const BASE_FIELDS = ['job_code','customer_name','customer_address','customer_tax_code',
     'pol','pod','cont_number','cont_type','seal_number',
     'etd','eta','tons','cbm','deadline','service_type','other_services','status',
     'cargo_type','so_kien','kg','destination','han_lenh','si_number','mbl_no','hbl_no',
@@ -1776,6 +1790,14 @@ router.put('/:id', requireAuth, async (req, res) => {
     // can switch the displayed date semantic (cutoff vs hạn lệnh). Existing
     // han_lenh value is preserved; only the label/input type follows the toggle.
     'import_export'];
+  // B2 (ĐỢT 1 security fix) — only TP/lead may change ownership (sales_id) or
+  // force status. Strip both for every other caller so an assigned dept user
+  // (or owner-sales) can edit job info but cannot steal a job or force-complete
+  // it via the generic field loop. The DD completion flow (body.completed_at)
+  // is unaffected — it writes dd_completed_at, not status.
+  const FIELDS = canReassignOwnerOrStatus(req.user)
+    ? BASE_FIELDS
+    : BASE_FIELDS.filter(f => f !== 'sales_id' && f !== 'status');
 
   // import_export validation guard — mirror POST behavior at jobs.js:1349-1352.
   // Only fires when the field is present in the body; absent leaves the row's
@@ -1790,6 +1812,19 @@ router.put('/:id', requireAuth, async (req, res) => {
     await client.query('BEGIN');
     const { rows: cur } = await client.query(`SELECT * FROM jobs WHERE id = $1 AND deleted_at IS NULL`, [req.params.id]);
     if (!cur[0]) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Không tìm thấy' }); }
+
+    // B2 (ĐỢT 1 security fix) — EDIT scope by assignment. Only the assigned dept
+    // user (CUS=cus_id / DD=dieu_do_id), the owner-sales (sales_id), or TP/lead
+    // may edit. Mirrors the job_assignments lookup used by PATCH /:id/complete.
+    // (ops is already blocked above at the top of the handler.)
+    const { rows: _ja } = await client.query(
+      `SELECT cus_id, ops_id, dieu_do_id FROM job_assignments WHERE job_id = $1`,
+      [req.params.id]
+    );
+    if (!canEditJob(req.user, cur[0], _ja[0] || null)) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: 'Không có quyền chỉnh sửa công việc này' });
+    }
 
     // han_lenh / Cutoff guard — mirror POST behavior. Only fires when the field
     // is explicitly present in the body; absent fields leave the existing value
@@ -2720,7 +2755,17 @@ router.patch('/:id/set-deadline', requireAuth, async (req, res) => {
 
 // PATCH /api/jobs/:id/tk
 router.patch('/:id/tk', requireAuth, async (req, res) => {
-  const isOps = req.user.role === 'ops';
+  const role = req.user.role;
+  const isOps = role === 'ops';
+  const isCus = CUS_ROLES.includes(role);
+  const isTpLead = role === 'truong_phong_log' || role === 'lead';
+  // B3 (ĐỢT 1 security fix) — role allowlist: CUS + TP/lead may edit the TK
+  // record; OPS keeps its legacy status-only narrowing. Every other role (sales,
+  // dieu_do, ke_toan, ...) is rejected — previously ANY authed user could rewrite
+  // any job's customs declaration by id.
+  if (!isOps && !isCus && !isTpLead) {
+    return res.status(403).json({ error: 'Không có quyền chỉnh sửa TK' });
+  }
   const FIELDS = isOps
     ? ['tk_status']
     : ['tk_datetime','tk_number','tk_flow','tk_status','tq_datetime',
@@ -2730,6 +2775,20 @@ router.patch('/:id/tk', requireAuth, async (req, res) => {
     await client.query('BEGIN');
     const { rows: cur } = await client.query(`SELECT * FROM job_tk WHERE job_id = $1`, [req.params.id]);
     if (!cur[0]) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Không tìm thấy TK' }); }
+
+    // B3 — assigned-CUS gate (mirror PATCH /:id/complete:3254). A CUS may only
+    // edit TK on a job assigned to them; TP/lead bypass. OPS is status-only and
+    // keeps its existing (un-scoped) behavior per spec.
+    if (isCus) {
+      const { rows: _ja } = await client.query(
+        `SELECT cus_id FROM job_assignments WHERE job_id = $1`,
+        [req.params.id]
+      );
+      if (!canEditJobTk(req.user, _ja[0] || null)) {
+        await client.query('ROLLBACK');
+        return res.status(403).json({ error: 'Không có quyền chỉnh sửa TK của công việc này' });
+      }
+    }
 
     // Validate truck_booked precondition: cannot tick without delivery info
     if (req.body.truck_booked === true) {

@@ -6,6 +6,7 @@
 //   railway ssh --service fwd-sales -- node /app/backend/src/db/seed_ke_toan.js
 // or via the SSH+base64 helper used by M1 / KT1 application steps.
 require('dotenv').config({ path: require('path').join(__dirname, '../../.env') });
+const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const db = require('./index');
 
@@ -24,7 +25,13 @@ const USERS = [
   },
 ];
 
-const DEFAULT_PASSWORD = 'fwd2026';
+// SECURITY (ĐỢT 1): no plaintext passwords in seed files. A newly-INSERTED KT
+// account gets a random one-time temp password printed to the log once; existing
+// accounts are never re-passworded (ON CONFLICT does not touch password_hash).
+// To rotate an account already on a compromised default, run reset_passwords.js.
+function randomTempPassword() {
+  return crypto.randomBytes(18).toString('base64').replace(/[+/=]/g, '').slice(0, 18);
+}
 
 async function seedKeToan() {
   const client = await db.pool.connect();
@@ -40,9 +47,13 @@ async function seedKeToan() {
       [realUsernames]
     );
 
+    const seededTemps = [];
     for (const user of USERS) {
-      const hash = await bcrypt.hash(user.password || DEFAULT_PASSWORD, 10);
-      await client.query(`
+      const tempPw = randomTempPassword();
+      const hash = await bcrypt.hash(tempPw, 10);
+      // RETURNING (xmax = 0) → true only for a fresh INSERT, so we reveal a temp
+      // password only for genuinely new accounts; existing keep their password.
+      const { rows } = await client.query(`
         INSERT INTO users (name, username, code, role, avatar_color, password_hash, gmail_address)
         VALUES ($1, $2, $3, $4, $5, $6, $7)
         ON CONFLICT (username) DO UPDATE SET
@@ -51,11 +62,19 @@ async function seedKeToan() {
           role          = EXCLUDED.role,
           avatar_color  = EXCLUDED.avatar_color,
           gmail_address = EXCLUDED.gmail_address
+        RETURNING (xmax = 0) AS inserted
       `, [user.name, user.username, user.code, user.role, user.avatar_color, hash, user.email]);
+      if (rows[0] && rows[0].inserted) seededTemps.push({ username: user.username, tempPw });
     }
 
     await client.query('COMMIT');
     console.log(`✅ KT users seeded successfully (${USERS.length} user${USERS.length === 1 ? '' : 's'})`);
+    if (seededTemps.length) {
+      console.log('🔑 NEW KT accounts — one-time temporary passwords (change on first login):');
+      for (const t of seededTemps) console.log(`   • ${t.username}: ${t.tempPw}`);
+    } else {
+      console.log('ℹ️  No new KT accounts created — existing passwords left untouched.');
+    }
   } catch (err) {
     await client.query('ROLLBACK');
     console.error('❌ KT seed failed:', err.message);
