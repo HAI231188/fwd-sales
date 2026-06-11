@@ -238,4 +238,14 @@ export const getNotifications = () => api.get('/notifications');
 export const getUnreadCount = () => api.get('/notifications/unread-count');
 export const markNotificationsRead = (payload) => api.post('/notifications/mark-read', payload);
 
+// Admin — user management (role 'admin' only; backend enforces). create +
+// resetUserPassword return { user, temp_password } (temp shown once).
+export const getAdminUsers     = ()        => api.get('/admin/users');
+export const createAdminUser   = (data)    => api.post('/admin/users', data);
+export const updateAdminUser   = (id, data) => api.patch(`/admin/users/${id}`, data);
+export const changeUserRole    = (id, role) => api.patch(`/admin/users/${id}/role`, { role });
+export const disableUser       = (id)      => api.patch(`/admin/users/${id}/disable`);
+export const enableUser        = (id)      => api.patch(`/admin/users/${id}/enable`);
+export const resetUserPassword = (id)      => api.post(`/admin/users/${id}/reset-password`);
+
 export default api;

@@ -12,6 +12,7 @@ import LogDashboardOps from './pages/LogDashboardOps';
 import TransportCompaniesPage from './pages/TransportCompaniesPage';
 import CustomerDataPage from './pages/CustomerDataPage';
 import AccountingDashboard from './pages/AccountingDashboard';
+import AdminPage from './pages/AdminPage';
 
 const LOG_ROLES = ['truong_phong_log', 'dieu_do', 'cus', 'cus1', 'cus2', 'cus3', 'ops'];
 
@@ -39,6 +40,8 @@ function ProtectedRoute({ children, roles }) {
 function RootRedirect() {
   const { user } = useAuth();
   if (!user) return <Navigate to="/login" replace />;
+  // 'admin' is app-wide administrator — lands on the user-management page.
+  if (user.role === 'admin') return <Navigate to="/admin" replace />;
   if (user.role === 'lead') return <Navigate to="/dashboard" replace />;
   // KT3 — 'ke_toan' is its own standalone role (NOT part of LOG_ROLES);
   // check before the LOG fallback so it routes to the accounting dashboard.
@@ -108,6 +111,11 @@ export default function App() {
           <Route path="/accounting-dashboard" element={
             <ProtectedRoute roles={['ke_toan']}>
               <AccountingDashboard />
+            </ProtectedRoute>
+          } />
+          <Route path="/admin" element={
+            <ProtectedRoute roles={['admin']}>
+              <AdminPage />
             </ProtectedRoute>
           } />
           <Route path="*" element={<Navigate to="/" replace />} />

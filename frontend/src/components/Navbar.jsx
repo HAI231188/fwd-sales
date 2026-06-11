@@ -19,6 +19,9 @@ const ROLE_LABEL = {
   // KT3 — Accounting role pill. Teal #0891b2 matches the seed_ke_toan
   // default avatar color. '💼' (briefcase) signals back-office finance role.
   ke_toan: { icon: '💼', text: 'Kế Toán', color: '#0891b2' },
+  // Admin (2026-06-11) — app-wide administrator. Red shield signals top-level
+  // privilege, distinct from the purple Trưởng Phòng LOG pill.
+  admin: { icon: '🛡️', text: 'Quản trị viên', color: '#dc2626' },
 };
 
 export default function Navbar() {
@@ -53,7 +56,8 @@ export default function Navbar() {
 
   const goLogoHome = () => {
     setMenuOpen(false);
-    if (user?.role === 'lead') navigate('/dashboard');
+    if (user?.role === 'admin') navigate('/admin');
+    else if (user?.role === 'lead') navigate('/dashboard');
     // KT3 — 'ke_toan' is its own role family (not LOG_ROLES). Check before
     // the LOG fallback so the logo link sends KT to /accounting-dashboard.
     else if (user?.role === 'ke_toan') navigate('/accounting-dashboard');
@@ -61,9 +65,10 @@ export default function Navbar() {
     else navigate('/my-dashboard');
   };
 
+  const showAdminPill = user && user.role === 'admin';
   const showVansaiPill = user && (user.role === 'truong_phong_log' || user.role === 'dieu_do');
   const showCustomersPill = user && (user.role === 'truong_phong_log' || user.role === 'lead');
-  const showAnyPill = showVansaiPill || showCustomersPill;
+  const showAnyPill = showAdminPill || showVansaiPill || showCustomersPill;
   const showGlobalSearch = user && LOG_ROLES.includes(user.role);
   const role = user && (ROLE_LABEL[user.role] || null);
 
@@ -100,6 +105,16 @@ export default function Navbar() {
             {/* Menu pills */}
             {showAnyPill && (
               <div style={{ display: 'flex', gap: 4 }}>
+                {showAdminPill && (
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => navigate('/admin')}
+                    style={{ fontSize: 12, padding: '5px 10px', color: '#dc2626' }}
+                    title="Quản trị hệ thống — quản lý người dùng"
+                  >
+                    🛡️ Quản trị
+                  </button>
+                )}
                 {showVansaiPill && (
                   <button
                     className="btn btn-ghost btn-sm"
@@ -202,6 +217,15 @@ export default function Navbar() {
           {/* Menu pills — stacked */}
           {showAnyPill && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {showAdminPill && (
+                <button
+                  className="btn btn-ghost"
+                  onClick={() => { setMenuOpen(false); navigate('/admin'); }}
+                  style={{ fontSize: 13, justifyContent: 'flex-start', width: '100%', color: '#dc2626' }}
+                >
+                  🛡️ Quản trị
+                </button>
+              )}
               {showVansaiPill && (
                 <button
                   className="btn btn-ghost"

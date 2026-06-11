@@ -201,7 +201,16 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_pipeline_delete_requests_pending
 -- code; the KT dashboard is its own route at /accounting-dashboard.
 ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check;
 ALTER TABLE users ADD CONSTRAINT users_role_check
-  CHECK (role IN ('sales', 'lead', 'truong_phong_log', 'dieu_do', 'cus', 'cus1', 'cus2', 'cus3', 'ops', 'ke_toan'));
+  CHECK (role IN ('sales', 'lead', 'truong_phong_log', 'dieu_do', 'cus', 'cus1', 'cus2', 'cus3', 'ops', 'ke_toan', 'admin'));
+
+-- Admin user-management (2026-06-11). 'admin' = app-wide administrator (above
+-- every department, distinct from truong_phong_log). Only admins manage users.
+-- disabled_at = account lock: a non-NULL value blocks BOTH login AND requireAuth
+-- (JWTs live 7 days, so the lock must be enforced on every request, not just at
+-- login). NULL = active.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS disabled_at TIMESTAMP WITH TIME ZONE;
+CREATE INDEX IF NOT EXISTS idx_users_disabled_at
+  ON users(disabled_at) WHERE disabled_at IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS jobs (
   id                SERIAL PRIMARY KEY,

@@ -508,9 +508,9 @@ router.get('/delete-requests', requireAuth, async (req, res) => {
   }
 });
 
-// GET /api/jobs/settings  (truong_phong_log only)
+// GET /api/jobs/settings  (truong_phong_log + admin)
 router.get('/settings', requireAuth, async (req, res) => {
-  if (req.user.role !== 'truong_phong_log') return res.status(403).json({ error: 'Không có quyền' });
+  if (!['truong_phong_log', 'admin'].includes(req.user.role)) return res.status(403).json({ error: 'Không có quyền' });
   try {
     const { rows } = await db.query(`SELECT * FROM log_settings WHERE id = 1`);
     res.json(rows[0] || { id: 1, assignment_mode: 'auto' });
@@ -519,9 +519,9 @@ router.get('/settings', requireAuth, async (req, res) => {
   }
 });
 
-// PATCH /api/jobs/settings/assignment-mode  (truong_phong_log only)
+// PATCH /api/jobs/settings/assignment-mode  (truong_phong_log + admin)
 router.patch('/settings/assignment-mode', requireAuth, async (req, res) => {
-  if (req.user.role !== 'truong_phong_log') return res.status(403).json({ error: 'Không có quyền' });
+  if (!['truong_phong_log', 'admin'].includes(req.user.role)) return res.status(403).json({ error: 'Không có quyền' });
   const { assignment_mode } = req.body;
   if (!['auto', 'manual'].includes(assignment_mode)) return res.status(400).json({ error: 'Chế độ không hợp lệ' });
   try {

@@ -34,6 +34,15 @@ const SALES_ROLES = ['sales'];
 const LEAD_ROLES = ['lead'];
 const KT_ROLES = ['ke_toan'];
 
+// App-wide administrator (2026-06-11) — manages users across every department,
+// distinct from truong_phong_log. Only admins reach /api/admin/*.
+const ADMIN_ROLES = ['admin'];
+
+// Full set of assignable role values — mirrors users_role_check in schema.sql.
+// The admin user-management endpoints validate create/change-role against this.
+const ALL_ROLES = ['sales', 'lead', 'truong_phong_log', 'dieu_do',
+  'cus', 'cus1', 'cus2', 'cus3', 'ops', 'ke_toan', 'admin'];
+
 // Shared predicate — identical in transport.js and truck-bookings.js before
 // this refactor. Returns true when the request's user holds a WRITE_ROLES role.
 function canWrite(req) { return WRITE_ROLES.includes(req.user?.role); }
@@ -47,5 +56,7 @@ module.exports = {
   SALES_ROLES,
   LEAD_ROLES,
   KT_ROLES,
+  ADMIN_ROLES,
+  ALL_ROLES,
   canWrite,
 };

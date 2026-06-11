@@ -17,6 +17,7 @@ const customerPipelineRoutes = require('./routes/customer-pipeline');
 const truckBookingsRoutes = require('./routes/truck-bookings');
 const usersRoutes = require('./routes/users');
 const emailRoutes = require('./routes/email');
+const adminRoutes = require('./routes/admin');
 // KT2 — Accounting module exports two routers (both KT-role-gated):
 //   accountingRouter  → mounted at /api/accounting (the GET list endpoint)
 //   jobActionsRouter  → mounted at /api/jobs       (5 lifecycle mutations)
@@ -57,6 +58,7 @@ app.use('/api/customer-pipeline', customerPipelineRoutes);
 app.use('/api/truck-bookings', truckBookingsRoutes);
 app.use('/api/users', usersRoutes);
 app.use('/api/email', emailRoutes);
+app.use('/api/admin', adminRoutes);
 // KT2 — Accounting endpoints. accountingJobActions mounts AFTER jobsRoutes
 // (line 48 above) — Express falls through to it when jobsRoutes doesn't
 // match a sub-path. The new KT sub-paths (/:id/accounting-check etc.) do

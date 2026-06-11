@@ -13,7 +13,7 @@ router.post('/login', async (req, res) => {
 
   try {
     const { rows } = await db.query(
-      'SELECT id, name, username, code, role, avatar_color, password_hash FROM users WHERE username = $1',
+      'SELECT id, name, username, code, role, avatar_color, password_hash, disabled_at FROM users WHERE username = $1',
       [username.trim().toLowerCase()]
     );
 
@@ -32,13 +32,19 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ error: 'Tên đăng nhập hoặc mật khẩu không đúng' });
     }
 
+    // Account lock — checked AFTER password validation so a disabled account
+    // can't be distinguished from a wrong password by an unauthenticated probe.
+    if (user.disabled_at) {
+      return res.status(403).json({ error: 'Tài khoản đã bị khóa. Liên hệ quản trị viên.' });
+    }
+
     const token = jwt.sign(
       { userId: user.id, role: user.role },
       JWT_SECRET,
       { expiresIn: '7d' }
     );
 
-    const { password_hash, ...safeUser } = user;
+    const { password_hash, disabled_at, ...safeUser } = user;
     res.json({ user: safeUser, token });
   } catch (err) {
     res.status(500).json({ error: err.message });
