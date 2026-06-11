@@ -27,11 +27,26 @@ async function checkAndCompleteJob(client, jobId, changedBy) {
   return _checkAndCompleteJob(client, jobId, changedBy, recordHistory);
 }
 
+// P2 — validate an assignment target before writing it: the id must exist, be
+// ACTIVE (disabled_at IS NULL), and hold one of the allowed roles. Returns
+// { ok: true } or { ok: false, error: '<vi message>' }. Used by the assign /
+// manual-assign / reassign-cus / reassign-ops handlers so a disabled or
+// wrong-role user can never be assigned (even via a crafted/stale id).
+async function validateAssignee(client, userId, allowedRoles, label) {
+  const { rows } = await client.query(
+    `SELECT id, role, disabled_at FROM users WHERE id = $1`, [userId]
+  );
+  if (!rows[0]) return { ok: false, error: `Không tìm thấy ${label}` };
+  if (rows[0].disabled_at) return { ok: false, error: `${label} đã bị khóa — không thể phân job` };
+  if (!allowedRoles.includes(rows[0].role)) return { ok: false, error: `Người dùng không đúng vai trò ${label}` };
+  return { ok: true };
+}
+
 // ─── Staff stats query helpers ─────────────────────────────────────────────────
 // scope: { userId } → single row for that user; {} → all matching role users.
 function queryCusStaffStats(scope) {
   const where = scope.userId ? `u.id = $1` : `u.role = ANY($1)`;
-  const params = scope.userId ? [scope.userId] : [['cus','cus1','cus2','cus3']];
+  const params = scope.userId ? [scope.userId] : [CUS_ROLES];
   return db.query(`
     SELECT u.id, u.name, u.role, u.code, u.avatar_color,
       COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND j.service_type IN ('tk','both')) AS pending_tk,
@@ -51,7 +66,7 @@ function queryCusStaffStats(scope) {
     LEFT JOIN job_assignments ja ON ja.cus_id = u.id
     LEFT JOIN jobs j ON j.id = ja.job_id
     LEFT JOIN job_tk jt ON jt.job_id = j.id
-    WHERE ${where}
+    WHERE (${where}) AND u.disabled_at IS NULL
     GROUP BY u.id, u.name, u.role, u.code, u.avatar_color
     ORDER BY u.name
   `, params);
@@ -142,7 +157,7 @@ function queryDieuDoStaffStats(scope) {
     LEFT JOIN job_assignments ja ON ja.dieu_do_id = u.id
     LEFT JOIN jobs j ON j.id = ja.job_id
     LEFT JOIN truck_bookings tb ON tb.job_id = j.id AND tb.deleted_at IS NULL
-    WHERE ${where}
+    WHERE (${where}) AND u.disabled_at IS NULL
     GROUP BY u.id, u.name, u.role, u.code, u.avatar_color
     ORDER BY u.name
   `, params);
@@ -164,7 +179,7 @@ function queryOpsStaffStats(scope) {
     LEFT JOIN job_assignments ja ON ja.ops_id = u.id
     LEFT JOIN jobs j ON j.id = ja.job_id
     LEFT JOIN job_tk jt ON jt.job_id = j.id
-    WHERE ${where}
+    WHERE (${where}) AND u.disabled_at IS NULL
     GROUP BY u.id, u.name, u.role, u.code, u.avatar_color
     ORDER BY u.name
   `, params);
@@ -431,10 +446,10 @@ router.get('/staff-workload', requireAuth, async (req, res) => {
       LEFT JOIN jobs j ON j.id = jt.job_id
       LEFT JOIN job_assignments ja2 ON ja2.cus_id = u.id
       LEFT JOIN jobs j2 ON j2.id = ja2.job_id
-      WHERE u.role = ANY($1)
+      WHERE u.role = ANY($1) AND u.disabled_at IS NULL
       GROUP BY u.id, u.name, u.role, u.code, u.avatar_color
       ORDER BY u.role, u.name
-    `, [AUTO_CUS_ROLES]);
+    `, [CUS_ROLES]);
     res.json(rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -447,7 +462,7 @@ router.get('/users/log-staff', requireAuth, async (req, res) => {
   try {
     const { rows } = await db.query(`
       SELECT id, name, role, code, avatar_color
-      FROM users WHERE role = ANY($1)
+      FROM users WHERE role = ANY($1) AND disabled_at IS NULL
       ORDER BY role, name
     `, [ALL_STAFF_ROLES]);
     res.json(rows);
@@ -637,7 +652,7 @@ router.get('/overview', requireAuth, async (req, res) => {
           (u.role = 'dieu_do' AND ja.dieu_do_id = u.id)
         )
         LEFT JOIN jobs j ON j.id = ja.job_id
-        WHERE u.role IN ('cus','cus1','cus2','cus3','ops','dieu_do')
+        WHERE u.role IN ('cus','cus1','cus2','cus3','ops','dieu_do') AND u.disabled_at IS NULL
         GROUP BY u.id, u.name, u.role
         ORDER BY u.role, u.name
       `),
@@ -1539,7 +1554,7 @@ router.post('/', requireAuth, async (req, res) => {
     let ddUserId = null;
     if (isDieuDo) {
       const ddRes = await client.query(`
-        SELECT u.id FROM users u WHERE u.role = 'dieu_do'
+        SELECT u.id FROM users u WHERE u.role = 'dieu_do' AND u.disabled_at IS NULL
         ORDER BY (
           SELECT COUNT(*) FROM job_assignments ja2
           JOIN jobs j2 ON j2.id = ja2.job_id
@@ -1640,7 +1655,7 @@ router.post('/', requireAuth, async (req, res) => {
 
     // Trigger G: notify all TP when a sales user creates a job
     if (req.user.role === 'sales') {
-      const { rows: tps } = await client.query(`SELECT id FROM users WHERE role = 'truong_phong_log'`);
+      const { rows: tps } = await client.query(`SELECT id FROM users WHERE role = 'truong_phong_log' AND disabled_at IS NULL`);
       const { rows: salesU } = await client.query(`SELECT name FROM users WHERE id = $1`, [req.user.id]);
       const salesName = salesU[0]?.name || 'Sales';
       for (const tp of tps) {
@@ -2134,6 +2149,15 @@ router.post('/:id/assign', requireAuth, async (req, res) => {
   const client = await db.pool.connect();
   try {
     await client.query('BEGIN');
+    // P2 — reject disabled / wrong-role assignment targets.
+    if (cus_id) {
+      const v = await validateAssignee(client, cus_id, CUS_ROLES, 'CUS');
+      if (!v.ok) { await client.query('ROLLBACK'); return res.status(400).json({ error: v.error }); }
+    }
+    if (ops_id) {
+      const v = await validateAssignee(client, ops_id, ['ops'], 'OPS');
+      if (!v.ok) { await client.query('ROLLBACK'); return res.status(400).json({ error: v.error }); }
+    }
     const { rows: existing } = await client.query(`SELECT * FROM job_assignments WHERE job_id = $1`, [req.params.id]);
 
     if (existing[0]) {
@@ -2234,7 +2258,7 @@ router.patch('/:id/request-deadline', requireAuth, async (req, res) => {
     const cusName = cusU[0]?.name || 'CUS';
     const jc = meta[0]?.job_code || `#${req.params.id}`;
     const dl = new Date(proposed_deadline).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
-    const { rows: tps } = await client.query(`SELECT id FROM users WHERE role = 'truong_phong_log'`);
+    const { rows: tps } = await client.query(`SELECT id FROM users WHERE role = 'truong_phong_log' AND disabled_at IS NULL`);
     for (const tp of tps) {
       await client.query(
         `INSERT INTO notifications (user_id, type, title, message, job_id)
@@ -2264,6 +2288,16 @@ router.post('/:id/manual-assign', requireAuth, async (req, res) => {
     await client.query('BEGIN');
     const { rows: job } = await client.query(`SELECT * FROM jobs WHERE id = $1 AND deleted_at IS NULL`, [req.params.id]);
     if (!job[0]) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Không tìm thấy job' }); }
+
+    // P2 — reject disabled / wrong-role assignment targets.
+    if (cus_id) {
+      const v = await validateAssignee(client, cus_id, CUS_ROLES, 'CUS');
+      if (!v.ok) { await client.query('ROLLBACK'); return res.status(400).json({ error: v.error }); }
+    }
+    if (ops_id) {
+      const v = await validateAssignee(client, ops_id, ['ops'], 'OPS');
+      if (!v.ok) { await client.query('ROLLBACK'); return res.status(400).json({ error: v.error }); }
+    }
 
     const { rows: existing } = await client.query(`SELECT * FROM job_assignments WHERE job_id = $1`, [req.params.id]);
     if (existing[0]) {
@@ -2347,8 +2381,9 @@ router.patch('/:id/reassign-cus', requireAuth, async (req, res) => {
     if (j.status !== 'pending') { await client.query('ROLLBACK'); return res.status(400).json({ error: 'Job không ở trạng thái pending, không thể đổi CUS' }); }
     if (j.tk_completed_at) { await client.query('ROLLBACK'); return res.status(400).json({ error: 'TK đã hoàn thành, không thể đổi CUS' }); }
 
-    const { rows: nu } = await client.query(`SELECT id, name, role FROM users WHERE id = $1`, [newCusId]);
+    const { rows: nu } = await client.query(`SELECT id, name, role, disabled_at FROM users WHERE id = $1`, [newCusId]);
     if (!nu[0] || !CUS_ROLES.includes(nu[0].role)) { await client.query('ROLLBACK'); return res.status(400).json({ error: 'Người dùng không phải CUS' }); }
+    if (nu[0].disabled_at) { await client.query('ROLLBACK'); return res.status(400).json({ error: 'CUS đã bị khóa — không thể phân job' }); }
 
     const { rows: ou } = await client.query(`SELECT name FROM users WHERE id = $1`, [j.old_cus_id]);
     const oldName = ou[0]?.name || '(chưa có)';
@@ -2439,8 +2474,9 @@ router.patch('/:id/reassign-ops', requireAuth, async (req, res) => {
     // for the new OPS, regardless of prior progress (owner spec: RESET all tasks).
     // Legacy ja.ops_done guard removed — ops_done is no longer authoritative.
 
-    const { rows: nu } = await client.query(`SELECT id, name, role FROM users WHERE id = $1`, [newOpsId]);
+    const { rows: nu } = await client.query(`SELECT id, name, role, disabled_at FROM users WHERE id = $1`, [newOpsId]);
     if (!nu[0] || nu[0].role !== 'ops') { await client.query('ROLLBACK'); return res.status(400).json({ error: 'Người dùng không phải OPS' }); }
+    if (nu[0].disabled_at) { await client.query('ROLLBACK'); return res.status(400).json({ error: 'OPS đã bị khóa — không thể phân job' }); }
 
     const { rows: ou } = await client.query(`SELECT name FROM users WHERE id = $1`, [j.old_ops_id]);
     const oldName = ou[0]?.name || '(chưa có)';
@@ -3093,7 +3129,7 @@ router.post('/:id/delete-request', requireAuth, async (req, res) => {
     const requesterName = requesterU[0]?.name || 'Người dùng';
     const jc = meta[0]?.job_code || `#${req.params.id}`;
     const reasonText = reason || 'Không có lý do';
-    const { rows: tps } = await client.query(`SELECT id FROM users WHERE role = 'truong_phong_log'`);
+    const { rows: tps } = await client.query(`SELECT id FROM users WHERE role = 'truong_phong_log' AND disabled_at IS NULL`);
     for (const tp of tps) {
       await client.query(
         `INSERT INTO notifications (user_id, type, title, message, job_id)

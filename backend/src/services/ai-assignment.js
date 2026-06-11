@@ -1,6 +1,7 @@
 'use strict';
 
 const Anthropic = require('@anthropic-ai/sdk');
+const { CUS_ROLES } = require('../constants/roles');
 
 const MODEL = 'claude-sonnet-4-5';
 const COST_INPUT_PER_M  = 3.0;
@@ -139,8 +140,12 @@ async function getOpsContext(pool, candidateIds) {
 
 // Returns { user_id, user_name, reason, cost, fallback } — no DB writes
 async function suggestCus(jobData, pool) {
+  // P3 — CUS_ROLES includes the bare 'cus' role (not just cus1/cus2/cus3), so a
+  // newly-added CUS is auto-assignable. P1 — exclude disabled accounts so a
+  // locked user is never routed jobs they can't log in to handle.
   const { rows: candidates } = await pool.query(
-    `SELECT id FROM users WHERE role IN ('cus1','cus2','cus3')`
+    `SELECT id FROM users WHERE role = ANY($1) AND disabled_at IS NULL`,
+    [CUS_ROLES]
   );
   const candidateIds = candidates.map(r => r.id);
   if (candidateIds.length === 0) throw new Error('No CUS candidates found in database');
@@ -228,8 +233,9 @@ async function suggestOps(jobData, pool) {
     return null;
   }
 
+  // P1 — exclude disabled accounts from the OPS auto-assign pool.
   const { rows: candidates } = await pool.query(
-    `SELECT id FROM users WHERE role = 'ops'`
+    `SELECT id FROM users WHERE role = 'ops' AND disabled_at IS NULL`
   );
   const candidateIds = candidates.map(r => r.id);
   if (candidateIds.length === 0) throw new Error('No OPS candidates found in database');
