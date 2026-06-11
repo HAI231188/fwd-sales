@@ -50,10 +50,13 @@ async function seedUsers() {
       const { rows } = await client.query(`
         INSERT INTO users (name, username, code, role, avatar_color, password_hash)
         VALUES ($1, $2, $3, $4, $5, $6)
+        -- NEVER overwrite role or password_hash on existing users: those are
+        -- admin/user-controlled and must survive redeploys (an admin promotion
+        -- e.g. lead → admin would otherwise be reverted every deploy). The seed
+        -- only INSERTs missing users and refreshes cosmetic name/code/avatar.
         ON CONFLICT (username) DO UPDATE SET
           name         = EXCLUDED.name,
           code         = EXCLUDED.code,
-          role         = EXCLUDED.role,
           avatar_color = EXCLUDED.avatar_color
         RETURNING (xmax = 0) AS inserted
       `, [user.name, user.username, user.code, user.role, user.avatar_color, hash]);

@@ -56,12 +56,16 @@ async function seedKeToan() {
       const { rows } = await client.query(`
         INSERT INTO users (name, username, code, role, avatar_color, password_hash, gmail_address)
         VALUES ($1, $2, $3, $4, $5, $6, $7)
+        -- NEVER overwrite role, password_hash, or gmail_address on existing
+        -- users: role is admin-controlled and gmail_address is the user's own
+        -- self-set SMTP/contact email (via /users/me/gmail-setup). Overwriting
+        -- either on every deploy would revert admin promotions / break a KT
+        -- user's configured email. Seed only INSERTs missing users + refreshes
+        -- cosmetic name/code/avatar.
         ON CONFLICT (username) DO UPDATE SET
           name          = EXCLUDED.name,
           code          = EXCLUDED.code,
-          role          = EXCLUDED.role,
-          avatar_color  = EXCLUDED.avatar_color,
-          gmail_address = EXCLUDED.gmail_address
+          avatar_color  = EXCLUDED.avatar_color
         RETURNING (xmax = 0) AS inserted
       `, [user.name, user.username, user.code, user.role, user.avatar_color, hash, user.email]);
       if (rows[0] && rows[0].inserted) seededTemps.push({ username: user.username, tempPw });
