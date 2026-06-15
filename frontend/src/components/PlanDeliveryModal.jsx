@@ -9,7 +9,7 @@ import {
 } from '../api';
 import { useModalZIndex } from '../hooks/useModalZIndex';
 import DateTimeInput24h from './DateTimeInput24h';
-import { toDatetimeLocal, vnLocalToIso } from '../utils/dateFmt';
+import { vnLocalToIso } from '../utils/dateFmt';
 
 // Phase 5 Step 2 — "Đặt kế hoạch xe"
 //
@@ -81,7 +81,8 @@ export default function PlanDeliveryModal({ jobId, jobCode, onClose, onSaved }) 
         cont_number: null,
         cont_type: null,
         booking_id: b.id,
-        planned_datetime: toDatetimeLocal(b.planned_datetime),
+        // Raw stored value — DateTimeInput24h normalizes to VN internally (B2).
+        planned_datetime: b.planned_datetime || '',
         delivery_location: b.delivery_location || '',
         note: b.note || '',
         existing: true,
@@ -107,7 +108,8 @@ export default function PlanDeliveryModal({ jobId, jobCode, onClose, onSaved }) 
           cont_number: c.cont_number,
           cont_type: c.cont_type,
           booking_id: b.id,
-          planned_datetime: toDatetimeLocal(b.planned_datetime),
+          // Raw stored value — DateTimeInput24h normalizes to VN internally (B2).
+          planned_datetime: b.planned_datetime || '',
           delivery_location: b.delivery_location || '',
           note: b.note || '',
           existing: true,
@@ -135,8 +137,15 @@ export default function PlanDeliveryModal({ jobId, jobCode, onClose, onSaved }) 
 
   const [rows, setRows] = useState([]);
 
+  // B1 / L3 / Golden Rule 7 — don't clobber in-progress edits when the
+  // bookings/avail queries refetch (refetchOnWindowFocus or the post-save
+  // invalidate). Seed on first load and refresh from the server only while
+  // nothing is dirty; once any row is being edited, keep the local rows so a
+  // background refetch can't snap a picked datetime back to the stored value
+  // (the "jumps after save" bug). PlanDeliveryModal closes on save, so the
+  // saved state is re-read fresh next open — no post-save re-sync needed here.
   useEffect(() => {
-    setRows(initialRows);
+    setRows(prev => (prev.length === 0 || !prev.some(r => r.dirty)) ? initialRows : prev);
   }, [initialRows]);
 
   function updateRow(idx, field, value) {
@@ -144,7 +153,9 @@ export default function PlanDeliveryModal({ jobId, jobCode, onClose, onSaved }) 
   }
 
   function toggleRow(idx) {
-    setRows(rs => rs.map((r, i) => i === idx ? { ...r, enabled: !r.enabled } : r));
+    // dirty:true so a checkbox change also counts as an in-progress edit and
+    // survives a background refetch (B1).
+    setRows(rs => rs.map((r, i) => i === idx ? { ...r, enabled: !r.enabled, dirty: true } : r));
   }
 
   // LCL only — add another whole-lot truck row (the occasional 2nd truck).
@@ -152,7 +163,9 @@ export default function PlanDeliveryModal({ jobId, jobCode, onClose, onSaved }) 
     setRows(rs => [...rs, {
       container_id: null, cont_number: null, cont_type: null,
       booking_id: null, planned_datetime: '', delivery_location: '',
-      note: '', existing: false, enabled: true, dirty: false,
+      // dirty:true so a freshly-added row isn't wiped by a background refetch
+      // before the user fills it in (B1).
+      note: '', existing: false, enabled: true, dirty: true,
     }]);
   }
 

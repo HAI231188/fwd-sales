@@ -9,7 +9,7 @@ import {
 import TransportPicker from './TransportPicker';
 import DateTimeInput24h from './DateTimeInput24h';
 import { useModalZIndex } from '../hooks/useModalZIndex';
-import { toDatetimeLocal, vnLocalToIso } from '../utils/dateFmt';
+import { vnLocalToIso } from '../utils/dateFmt';
 
 // Create / edit one truck_booking.
 // Props:
@@ -29,11 +29,13 @@ export default function BookingModal({ mode, jobId, jobCode, booking, onClose, o
       ? { transport_company_id: booking?.transport_company_id, transport_name: booking?.transport_name }
       : { transport_company_id: null, transport_name: null }
   );
+  // Raw stored value — DateTimeInput24h normalizes to VN internally; emitting
+  // via vnLocalToIso on save (B2 — no redundant outer toDatetimeLocal wrap).
   const [plannedDt, setPlannedDt] = useState(
-    isEdit ? toDatetimeLocal(booking?.planned_datetime) : ''
+    isEdit ? (booking?.planned_datetime || '') : ''
   );
   const [actualDt, setActualDt] = useState(
-    isEdit ? toDatetimeLocal(booking?.actual_datetime) : ''
+    isEdit ? (booking?.actual_datetime || '') : ''
   );
   const [pickupLoc, setPickupLoc] = useState(isEdit ? (booking?.pickup_location || '') : '');
   const [deliveryLoc, setDeliveryLoc] = useState(isEdit ? (booking?.delivery_location || '') : '');

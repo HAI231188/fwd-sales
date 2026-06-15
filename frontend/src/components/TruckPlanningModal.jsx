@@ -265,7 +265,15 @@ export default function TruckPlanningModal({ jobId, jobCode, onClose }) {
   }, [isLcl, containers, bookings]);
 
   const [rows, setRows] = useState([]);
-  useEffect(() => { setRows(initialRows); }, [initialRows]);
+  // B1 / L3 / Golden Rule 7 — don't clobber in-progress edits when the bookings
+  // query refetches (refetchOnWindowFocus or the post-save refetch). Seed on
+  // first load and refresh only while nothing is dirty; once any row is being
+  // edited, keep the local rows so a background refetch can't wipe in-progress
+  // cost/vehicle/receiver edits. save() clears the dirty flags after a
+  // successful PATCH so the post-save refetch re-seeds from fresh server data.
+  useEffect(() => {
+    setRows(prev => (prev.length === 0 || !prev.some(r => r.dirty)) ? initialRows : prev);
+  }, [initialRows]);
 
   function updateRow(idx, patch) {
     setRows(rs => rs.map((r, i) => i === idx ? { ...r, ...patch, dirty: true } : r));
@@ -294,6 +302,10 @@ export default function TruckPlanningModal({ jobId, jobCode, onClose }) {
           cost_entered_ticked:    !!r.cost_entered_ticked,
         });
       }
+      // B1 — mark the just-saved rows clean so the freeze-if-dirty guard lets
+      // the post-save refetch re-seed from fresh server data (otherwise the grid
+      // would stay frozen on the local copy after saving).
+      setRows(rs => rs.map(r => r.dirty ? { ...r, dirty: false } : r));
       toast.success(`Đã lưu ${dirty.length} kế hoạch`);
       refetchBookings();
       // CP5.2 — re-evaluate the per-transport status pills after any save;
