@@ -248,27 +248,13 @@ function buildBbbgPdf(data) {
 // CP4.2 — Multi-booking BBBG (1 PDF, N pages, 1 page per booking)
 // ════════════════════════════════════════════════════════════════════════════
 
-function fmtDtVn(val) {
-  if (!val) return '—';
-  const d = new Date(val);
-  if (isNaN(d.getTime())) return '—';
-  const pad = n => String(n).padStart(2, '0');
-  return `${pad(d.getDate())}/${pad(d.getMonth()+1)}/${d.getFullYear()} `
-       + `${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-// L19 — han_lenh meaning depends on jobs.import_export. 'import' = date only,
-// 'export' = full datetime cutoff.
-function fmtHanLenhVn(val, impExp) {
-  if (!val) return '—';
-  const d = new Date(val);
-  if (isNaN(d.getTime())) return '—';
-  const pad = n => String(n).padStart(2, '0');
-  if (impExp === 'import') {
-    return `${pad(d.getDate())}/${pad(d.getMonth()+1)}/${d.getFullYear()}`;
-  }
-  return `${pad(d.getDate())}/${pad(d.getMonth()+1)}/${d.getFullYear()} `
-       + `${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
+// Vietnam-time datetime rendering (L3) — shared helper in utils/vnTime.js,
+// imported under the historical local names so the call sites below stay
+// unchanged. fmtDtVn = "DD/MM/YYYY HH:mm" for planned_datetime; fmtHanLenhVn
+// branches on import (date only) / export (full datetime) per L19. Storage is
+// UTC; the old Date#getHours()/getDate() getters printed −7h on this PDF (the
+// sheet the driver carries) and day-shifted the import han_lenh.
+const { fmtVnDateTime: fmtDtVn, fmtVnHanLenh: fmtHanLenhVn } = require('../utils/vnTime');
 function fmtCostVn(c) {
   if (c == null || c === '') return '—';
   const n = Number(c);

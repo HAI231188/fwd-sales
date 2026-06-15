@@ -7,6 +7,7 @@ const { checkAndCompleteJob: _checkAndCompleteJob, checkOpsTasksDone } = require
 const { recordHistory } = require('../services/job-history');
 const { CUS_ROLES, AUTO_CUS_ROLES, LOG_ROLES, PLAN_ROLES } = require('../constants/roles');
 const { canViewJob, canEditJob, canEditJobTk, canReassignOwnerOrStatus } = require('../services/job-access');
+const { fmtVnDeadline } = require('../utils/vnTime');
 
 // In-memory suggestion cache (60s TTL) — invalidated on manual assignment
 let suggestionCache = { data: null, ts: 0 };
@@ -2022,9 +2023,7 @@ router.put('/:id', requireAuth, async (req, res) => {
         const cusId = ja[0]?.cus_id || null;
         if (cusId) {
           const jc = cur[0].job_code || `#${req.params.id}`;
-          const dl = new Date(newDeadline).toLocaleString('vi-VN', {
-            day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
-          });
+          const dl = fmtVnDeadline(newDeadline);
           await client.query(
             `INSERT INTO notifications (user_id, type, title, message, job_id)
              VALUES ($1, 'deadline_request', 'TP yêu cầu xác nhận deadline', $2, $3)`,
@@ -2257,7 +2256,7 @@ router.patch('/:id/request-deadline', requireAuth, async (req, res) => {
     const { rows: cusU } = await client.query(`SELECT name FROM users WHERE id = $1`, [req.user.id]);
     const cusName = cusU[0]?.name || 'CUS';
     const jc = meta[0]?.job_code || `#${req.params.id}`;
-    const dl = new Date(proposed_deadline).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+    const dl = fmtVnDeadline(proposed_deadline);
     const { rows: tps } = await client.query(`SELECT id FROM users WHERE role = 'truong_phong_log' AND disabled_at IS NULL`);
     for (const tp of tps) {
       await client.query(
@@ -2762,9 +2761,7 @@ router.patch('/:id/set-deadline', requireAuth, async (req, res) => {
       const cusId = ja[0]?.cus_id || null;
       if (cusId) {
         const jc = cur[0].job_code || `#${req.params.id}`;
-        const dl = new Date(deadline).toLocaleString('vi-VN', {
-          day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
-        });
+        const dl = fmtVnDeadline(deadline);
         await client.query(
           `INSERT INTO notifications (user_id, type, title, message, job_id)
            VALUES ($1, 'deadline_request', 'TP yêu cầu xác nhận deadline', $2, $3)`,
