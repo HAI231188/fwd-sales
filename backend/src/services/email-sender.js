@@ -48,31 +48,53 @@ const SLB_INVOICE_INFO_EN = Object.freeze({
   address: '8th Floor, Diamond Building, No 7 Lot 8A Le Hong Phong, Ngo Quyen, Hai Phong, Viet Nam',
 });
 
+// ── Vietnam-time rendering (L3) ──────────────────────────────────────────────
+// Storage is UTC TIMESTAMPTZ and the server process runs in UTC on Railway, so
+// the previous Date#getHours()/getDate() getters printed UTC — carrier mails
+// showed −7h (19:00 → 12:00) and a VN-midnight han_lenh day-shifted to the
+// previous calendar day. vnParts extracts the Vietnam (Asia/Ho_Chi_Minh, fixed
+// +07:00, no DST) wall-clock via Intl. Self-contained — the frontend
+// utils/dateFmt.js is a different runtime and is intentionally NOT imported.
+const VN_TZ = 'Asia/Ho_Chi_Minh';
+const VN_DT_FMT = new Intl.DateTimeFormat('en-GB', {
+  timeZone: VN_TZ, year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', minute: '2-digit', hour12: false,
+});
+function vnParts(val) {
+  const d = new Date(val);
+  if (Number.isNaN(d.getTime())) return null;
+  const p = {};
+  for (const part of VN_DT_FMT.formatToParts(d)) p[part.type] = part.value;
+  // hour12:false can surface '24' at midnight on some engines — normalize to 00.
+  return {
+    year: p.year, month: p.month, day: p.day,
+    hour: p.hour === '24' ? '00' : p.hour, minute: p.minute,
+  };
+}
+
 function fmtDt(val) {
   if (!val) return '—';
-  const d = new Date(val);
-  const pad = n => String(n).padStart(2, '0');
-  return `${pad(d.getDate())}/${pad(d.getMonth()+1)}/${d.getFullYear()} `
-       + `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  const v = vnParts(val);
+  if (!v) return '—';
+  return `${v.day}/${v.month}/${v.year} ${v.hour}:${v.minute}`;
 }
 // L19 — han_lenh meaning depends on jobs.import_export. For 'import' the value
 // is a calendar date (date-only on UI); for 'export' it's a precise cutoff
-// datetime. Same column, different format.
+// datetime. Same column, different format. Both branches render in VN time.
 function fmtHanLenh(val, impExp) {
   if (!val) return '—';
-  const d = new Date(val);
-  const pad = n => String(n).padStart(2, '0');
+  const v = vnParts(val);
+  if (!v) return '—';
   if (impExp === 'import') {
-    return `${pad(d.getDate())}/${pad(d.getMonth()+1)}/${d.getFullYear()}`;
+    return `${v.day}/${v.month}/${v.year}`;
   }
-  return `${pad(d.getDate())}/${pad(d.getMonth()+1)}/${d.getFullYear()} `
-       + `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return `${v.day}/${v.month}/${v.year} ${v.hour}:${v.minute}`;
 }
 function shortDate(val) {
   if (!val) return '';
-  const d = new Date(val);
-  const pad = n => String(n).padStart(2, '0');
-  return `${pad(d.getDate())}/${pad(d.getMonth()+1)}`;
+  const v = vnParts(val);
+  if (!v) return '';
+  return `${v.day}/${v.month}`;
 }
 function firstWord(s) {
   if (!s) return '';
