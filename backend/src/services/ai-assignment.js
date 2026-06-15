@@ -1,7 +1,7 @@
 'use strict';
 
 const Anthropic = require('@anthropic-ai/sdk');
-const { CUS_ROLES } = require('../constants/roles');
+const { AUTO_CUS_ROLES } = require('../constants/roles');
 
 const MODEL = 'claude-sonnet-4-5';
 const COST_INPUT_PER_M  = 3.0;
@@ -140,12 +140,13 @@ async function getOpsContext(pool, candidateIds) {
 
 // Returns { user_id, user_name, reason, cost, fallback } — no DB writes
 async function suggestCus(jobData, pool) {
-  // P3 — CUS_ROLES includes the bare 'cus' role (not just cus1/cus2/cus3), so a
-  // newly-added CUS is auto-assignable. P1 — exclude disabled accounts so a
-  // locked user is never routed jobs they can't log in to handle.
+  // Auto-assignment targets ONLY the 3 worker roles cus1/cus2/cus3 (AUTO_CUS_ROLES),
+  // NOT the bare 'cus' supervisor role (Giám Sát CUS): the supervisor reviews work but
+  // is never in the round-robin customs pool. P1 (L32) — exclude disabled accounts so
+  // a locked user is never routed jobs they can't log in to handle. See L34.
   const { rows: candidates } = await pool.query(
     `SELECT id FROM users WHERE role = ANY($1) AND disabled_at IS NULL`,
-    [CUS_ROLES]
+    [AUTO_CUS_ROLES]
   );
   const candidateIds = candidates.map(r => r.id);
   if (candidateIds.length === 0) throw new Error('No CUS candidates found in database');

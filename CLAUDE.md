@@ -1027,7 +1027,7 @@ Applies to: `ops_hp` (current). Future candidates: any 5th service_type (e.g. wa
 **Rule:** when a soft-disable / active flag is added, EVERY query that lists or picks users by role MUST add `AND disabled_at IS NULL` (or `u.disabled_at IS NULL`). Grep `role = ANY`, `role IN`, `role =` across the codebase; no staff-enumerating query may omit it.
 
 **Sites filtered (2026-06-11, commit `feae57e`):**
-- `services/ai-assignment.js` — `suggestCus` pool (now `role = ANY($1) AND disabled_at IS NULL`, `$1 = CUS_ROLES` — see L34) + `suggestOps` pool (`role = 'ops' AND disabled_at IS NULL`).
+- `services/ai-assignment.js` — `suggestCus` pool (`role = ANY($1) AND disabled_at IS NULL`, `$1 = AUTO_CUS_ROLES` — supervisor excluded, corrected in L34) + `suggestOps` pool (`role = 'ops' AND disabled_at IS NULL`).
 - `routes/jobs.js` — the 3 shared stats helpers `queryCusStaffStats` / `queryDieuDoStaffStats` / `queryOpsStaffStats` (`WHERE (${where}) AND u.disabled_at IS NULL`); `GET /staff-workload`; `GET /users/log-staff`; `GET /overview` staff distribution; the DD round-robin auto-assign on job create (`WHERE u.role='dieu_do' AND u.disabled_at IS NULL`); and all 3 TP-notification recipient lookups (`role='truong_phong_log' AND disabled_at IS NULL`).
 
 **P2 companion — validate assignment targets:** pickers hide disabled users, but a crafted/stale id must still be rejected server-side. `routes/jobs.js` `validateAssignee(client, userId, allowedRoles, label)` rejects a `cus_id`/`ops_id` that is missing, **disabled**, or wrong-role; wired into `assign`, `manual-assign`, `reassign-cus`, `reassign-ops`.
@@ -1050,13 +1050,15 @@ Applies to: `seed_users.js`, `seed_ke_toan.js`. General rule: any seed/migration
 
 ---
 
-### L34 — CUS auto-assign uses `CUS_ROLES` (includes bare `'cus'`), not `AUTO_CUS_ROLES`
+### L34 — CUS auto-assign targets `AUTO_CUS_ROLES` (cus1/cus2/cus3); bare `'cus'` is a supervisor, NOT auto-assigned
 
-**Root cause:** `AUTO_CUS_ROLES = ['cus1','cus2','cus3']` (worker variants only); `CUS_ROLES = ['cus','cus1','cus2','cus3']` (includes the bare `'cus'` role). `suggestCus` and `/staff-workload` keyed off the cus1/2/3-only set, so a CUS hired under the bare `'cus'` role was NEVER auto-assigned and was invisible to the workload view (though they appeared in other stats). A new CUS person must be auto-assignable.
+**Design (corrected 2026-06-15):** `AUTO_CUS_ROLES = ['cus1','cus2','cus3']` = the 3 customs *workers* that receive auto-assigned jobs. `CUS_ROLES = ['cus','cus1','cus2','cus3']` additionally includes the bare `'cus'` role = the **Giám Sát CUS supervisor**, who reviews work but is NOT part of the round-robin pool. The two constants now mean different things and must not be conflated.
 
-**Rule:** all CUS enumeration (auto-assign pool, workload, stats) uses `CUS_ROLES`. Don't re-introduce the `('cus1','cus2','cus3')` literal — import the constant. Reserve `AUTO_CUS_ROLES` only for a deliberate "exclude the supervisor" case and document why at the site.
+**Rule:**
+- **Auto-assignment pool** → `AUTO_CUS_ROLES` (supervisor excluded). Only site: `suggestCus` in `services/ai-assignment.js`.
+- **Everything else** (view/edit permission checks in `job-access.js`, dashboard/filter/permission branching in `jobs.js`, the staff-workload/stats view `queryCusStaffStats`, and MANUAL assignment validation `validateAssignee`) → keep `CUS_ROLES`, so the supervisor can still see CUS jobs, appear in the workload view, and be a valid *manual* assignment target. Don't re-introduce the `('cus1','cus2','cus3')` literal anywhere — import the constant.
 
-**Fixed (2026-06-11, commit `feae57e`):** `ai-assignment.js suggestCus` → `role = ANY(CUS_ROLES)`; `queryCusStaffStats` + `/staff-workload` literals → `CUS_ROLES`. (`AUTO_CUS_ROLES` is now an unused import in `jobs.js` — left in place.) Note: this makes role `'cus'` (Giám Sát) auto-assignable; if a future supervisor must be excluded from routing, give them a non-CUS role or re-introduce a documented exclusion. Boundary: adding a PERSON to an existing role is data-driven; a genuinely new CUS *role token* (`cus4`) still needs the `users_role_check` CHECK + `roles.js` edits.
+**History:** earlier (2026-06-11, commit `feae57e`) `suggestCus` was switched the OTHER way (→ `CUS_ROLES`) so a CUS hired under the bare `'cus'` role would be auto-assignable. That was reversed on 2026-06-15 after a duplicate-account cleanup made the supervisor/worker split explicit: a bare-`'cus'` account is a supervisor by design, and customs work must land only on the 3 workers `cus1/cus2/cus3`. Boundary unchanged: adding a PERSON to an existing worker role is data-driven; a genuinely new CUS *role token* (`cus4`) still needs the `users_role_check` CHECK + `roles.js` edits.
 
 ---
 
