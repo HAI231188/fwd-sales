@@ -686,12 +686,14 @@ export default function LogDashboardDieuDo() {
                           : dash}
                       </td>
                       <td style={{ ...cs, minWidth: 180 }} onClick={stop}>
-                        {/* CP4.5.1 — TH ngày giờ now binds to jobs.completed_at
-                            (per job). DateTimeInput24h emits the picked value or
-                            null/empty to clear. Backend guard returns 400 if the
-                            job isn't ready (status must be 'du_xe_cho_giao' or
-                            'hoan_thanh') — toast surfaces the friendly error. */}
-                        <DateTimeInput24h value={j.completed_at}
+                        {/* TH ngày giờ binds to jobs.dd_completed_at — the DD's own
+                            stamp (L25 DD-split). jobs.completed_at stays NULL until
+                            CUS+DD+OPS are all done, so reading completed_at here made
+                            the saved value blank on reload (FIX 1). DateTimeInput24h
+                            emits a VN-anchored ISO or ''/null to clear. Backend guard
+                            returns 400 if the job isn't ready (status must be
+                            'du_xe_cho_giao' or 'hoan_thanh') — toast surfaces it. */}
+                        <DateTimeInput24h value={j.dd_completed_at}
                           onChange={v => completeJobMut.mutate({ jobId: j.id, completed_at: v || null })} />
                       </td>
                       <td style={{ ...cs, minWidth: 100 }} onClick={stop}>

@@ -14,6 +14,7 @@ import DateTimeInput24h from './DateTimeInput24h';
 import { useModalZIndex } from '../hooks/useModalZIndex';
 import { useAuth } from '../App';
 import { TRUCK_BOOKING_STATUS_LABELS, truckBookingPillStyle } from '../utils/truckBookingStatus';
+import { toDatetimeLocal, vnLocalToIso } from '../utils/dateFmt';
 import { fmtDate, fmtDateTimeYear as fmtDt } from '../utils/dateFmt';
 
 const TK_FLOW_OPTIONS = [
@@ -62,12 +63,6 @@ function deadlineColor(dl) {
 function fmtDest(d) {
   if (d === 'hai_phong') return 'Hải Phòng';
   return d || '—';
-}
-function toDatetimeLocal(val) {
-  if (!val) return '';
-  const d = new Date(val);
-  const pad = n => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 function parseJson(val) {
   if (!val) return {};
@@ -297,11 +292,23 @@ function ERow({ label, children }) {
 
 function InlineInput({ value, onSave, type = 'text' }) {
   const [editing, setEditing] = useState(false);
-  const [val, setVal] = useState(value || '');
   const ref = useRef();
 
-  function start() { setVal(value || ''); setEditing(true); setTimeout(() => ref.current?.focus(), 0); }
-  function save() { setEditing(false); if (val !== (value || '')) onSave(val || null); }
+  function start() { setEditing(true); setTimeout(() => ref.current?.focus(), 0); }
+  function save() {
+    setEditing(false);
+    // UNCONTROLLED: read the live DOM value at save time (the previous version
+    // compared stale React state `val`, so datetime-local edits — whose onChange
+    // is unreliable — were silently dropped). (FIX 2)
+    const raw = ref.current?.value ?? '';
+    if (type === 'datetime-local') {
+      // Always emit on a real save; vnLocalToIso anchors the picked wall-clock to
+      // Vietnam time (+07:00) so storage is unambiguous. (FIX 3)
+      onSave(vnLocalToIso(raw));
+      return;
+    }
+    if (raw !== (value || '')) onSave(raw || null);
+  }
 
   if (!editing) return (
     <span onClick={start} title="Click để sửa"
@@ -310,8 +317,7 @@ function InlineInput({ value, onSave, type = 'text' }) {
     </span>
   );
   return (
-    <input ref={ref} type={type} value={val}
-      onChange={e => setVal(e.target.value)}
+    <input ref={ref} type={type} defaultValue={value || ''}
       onBlur={save}
       onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') setEditing(false); }}
       style={{ width: '100%', maxWidth: 200, padding: '2px 6px', border: '1px solid var(--primary)', borderRadius: 4, fontSize: 13 }} />
@@ -532,7 +538,10 @@ export default function JobDetailModal({
 
   const tkMut = useMutation({
     mutationFn: data => updateJobTk(jobId, data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['job', jobId] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['job', jobId] });
+      qc.invalidateQueries({ queryKey: ['jobs'] }); // FIX 4: refresh the TP/CUS grid after a modal TK edit
+    },
     onError: (err) => toast.error(err?.response?.data?.error || err?.error || err?.message || 'Không lưu được số tờ khai'),
   });
   // Phase 4: truckMut removed (legacy section is read-only).
@@ -628,6 +637,11 @@ export default function JobDetailModal({
     for (const f of NULLABLE_WHEN_BLANK) {
       if (payload[f] === '' || payload[f] === undefined) payload[f] = null;
     }
+    // FIX 3 — anchor datetime fields to Vietnam time so storage is unambiguous.
+    // vnLocalToIso converts "...THH:mm" -> "...+07:00" and leaves date-only
+    // (etd/eta/han_lenh-import) and null values untouched.
+    if (payload.han_lenh) payload.han_lenh = vnLocalToIso(payload.han_lenh);
+    if (payload.deadline) payload.deadline = vnLocalToIso(payload.deadline);
     editMut.mutate(payload);
   }
   function handleDelete() {

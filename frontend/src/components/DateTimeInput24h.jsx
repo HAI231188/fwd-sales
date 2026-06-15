@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
+import { toDatetimeLocal, vnLocalToIso } from '../utils/dateFmt';
 
 // DateTimeInput24h — replacement for <input type="datetime-local"> when we
 // need a deterministic 24-hour picker without browser locale leakage and
@@ -29,9 +30,12 @@ const HOUR_OPTIONS = Array.from({ length: 24 }, (_, h) => {
 
 export default function DateTimeInput24h({ value, onChange, required, disabled }) {
   const parsed = useMemo(() => {
-    if (!value || typeof value !== 'string') return { date: '', hour: '08' };
-    const dateMatch = value.match(/^(\d{4}-\d{2}-\d{2})/);
-    const hourMatch = value.match(/T(\d{2})/);
+    // Normalize ANY incoming form (raw UTC ISO from the backend, a VN-anchored
+    // ISO from a prior edit, or a naive local string) to the VN "YYYY-MM-DDTHH:mm"
+    // wall-clock, so the picker shows Vietnam time regardless of source/browser.
+    const local = value ? toDatetimeLocal(value) : '';
+    const dateMatch = local.match(/^(\d{4}-\d{2}-\d{2})/);
+    const hourMatch = local.match(/T(\d{2})/);
     return {
       date: dateMatch ? dateMatch[1] : '',
       hour: hourMatch ? hourMatch[1] : '08',
@@ -45,15 +49,18 @@ export default function DateTimeInput24h({ value, onChange, required, disabled }
 
   const date = parsed.date;
 
+  // Emit a Vietnam-anchored ISO ("...+07:00") so storage is unambiguous (the
+  // naive "YYYY-MM-DDTHH:00" would otherwise be stored in the UTC session TZ
+  // and shift +7h on read-back). Cleared date still emits "" (callers null it).
   function setDate(newDate) {
     if (!newDate) { onChange?.(''); return; }
-    onChange?.(`${newDate}T${localHour}:00`);
+    onChange?.(vnLocalToIso(`${newDate}T${localHour}:00`));
   }
   function setHour(newHour) {
     setLocalHour(newHour);
     // Only emit when a date is already present — without a date the value
     // would be malformed ("T08:00") which the backend wouldn't accept.
-    if (date) onChange?.(`${date}T${newHour}:00`);
+    if (date) onChange?.(vnLocalToIso(`${date}T${newHour}:00`));
   }
 
   const baseInp = {

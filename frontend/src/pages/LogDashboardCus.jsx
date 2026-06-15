@@ -16,7 +16,7 @@ import {
   requestJobDelete, createJob,
   tickJobTkCost, untickJobTkCost,
 } from '../api';
-import { fmtDate, fmtDateTime as fmtDt } from '../utils/dateFmt';
+import { fmtDate, fmtDateTime as fmtDt, toDatetimeLocal, vnLocalToIso } from '../utils/dateFmt';
 
 const TK_STATUS_OPTIONS = [
   { value: 'chua_truyen', label: 'Chưa truyền' },
@@ -38,12 +38,6 @@ const OTHER_SVC_LABEL = {
 // import them from a shared module — copy the map into the file that needs it").
 const SVC_LABEL = { tk: 'TK', truck: 'Xe', both: 'TK+Xe', ops_hp: 'OPS HP' };
 
-function toDatetimeLocal(val) {
-  if (!val) return '';
-  const d = new Date(val);
-  const pad = n => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
 function deadlineStyle(dl) {
   if (!dl) return {};
   const ms = new Date(dl) - Date.now();
@@ -69,16 +63,22 @@ function StatCard({ label, value, color, onClick }) {
 
 function InlineInput({ value, onSave, type = 'text' }) {
   const [editing, setEditing] = useState(false);
-  const [val, setVal] = useState(value || '');
   const ref = useRef();
 
-  function start() { setVal(value || ''); setEditing(true); setTimeout(() => ref.current?.focus(), 0); }
+  function start() { setEditing(true); setTimeout(() => ref.current?.focus(), 0); }
   function save() {
     setEditing(false);
-    // Read from the DOM directly — datetime-local pickers don't always fire
-    // onChange synchronously in every browser, so React state `val` can lag.
-    const current = ref.current?.value ?? val;
-    if (current !== (value || '')) onSave(current || null);
+    // UNCONTROLLED input: read the live DOM value at save time. datetime-local's
+    // onChange is unreliable and a controlled value could be reset by a mid-edit
+    // refetch, so we never trust React state here. (FIX 2)
+    const raw = ref.current?.value ?? '';
+    if (type === 'datetime-local') {
+      // Always emit on a real save for datetime; vnLocalToIso anchors the picked
+      // wall-clock to Vietnam time (+07:00) so storage is unambiguous. (FIX 3)
+      onSave(vnLocalToIso(raw));
+      return;
+    }
+    if (raw !== (value || '')) onSave(raw || null);
   }
 
   if (!editing) return (
@@ -88,8 +88,7 @@ function InlineInput({ value, onSave, type = 'text' }) {
     </span>
   );
   return (
-    <input ref={ref} type={type} value={val}
-      onChange={e => setVal(e.target.value)}
+    <input ref={ref} type={type} defaultValue={value || ''}
       onBlur={save}
       onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') setEditing(false); }}
       style={{ width: '100%', padding: '2px 6px', border: '1px solid var(--primary)', borderRadius: 4, fontSize: 13 }} />

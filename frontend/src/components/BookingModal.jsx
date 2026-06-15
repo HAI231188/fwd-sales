@@ -9,6 +9,7 @@ import {
 import TransportPicker from './TransportPicker';
 import DateTimeInput24h from './DateTimeInput24h';
 import { useModalZIndex } from '../hooks/useModalZIndex';
+import { toDatetimeLocal, vnLocalToIso } from '../utils/dateFmt';
 
 // Create / edit one truck_booking.
 // Props:
@@ -18,13 +19,6 @@ import { useModalZIndex } from '../hooks/useModalZIndex';
 //   booking:  full booking row when mode==='edit'
 //   onClose:  () => void
 //   onSaved:  (result) => void
-
-function toDatetimeLocal(val) {
-  if (!val) return '';
-  const d = new Date(val);
-  const pad = n => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
 
 export default function BookingModal({ mode, jobId, jobCode, booking, onClose, onSaved }) {
   const zIndex = useModalZIndex();
@@ -87,8 +81,8 @@ export default function BookingModal({ mode, jobId, jobCode, booking, onClose, o
       if (isEdit) {
         const body = {
           transport_company_id: transport.transport_company_id,
-          planned_datetime: plannedDt,
-          actual_datetime: actualDt === '' ? null : actualDt,
+          planned_datetime: vnLocalToIso(plannedDt),
+          actual_datetime: vnLocalToIso(actualDt),
           pickup_location: pickupLoc.trim() === '' ? null : pickupLoc.trim(),
           delivery_location: deliveryLoc.trim(),
           cost: cost === '' ? null : Number(cost),
@@ -103,8 +97,8 @@ export default function BookingModal({ mode, jobId, jobCode, booking, onClose, o
         const body = {
           job_id: jobId,
           transport_company_id: transport.transport_company_id,
-          planned_datetime: plannedDt,
-          actual_datetime: actualDt === '' ? null : actualDt,
+          planned_datetime: vnLocalToIso(plannedDt),
+          actual_datetime: vnLocalToIso(actualDt),
           pickup_location: pickupLoc.trim() === '' ? null : pickupLoc.trim(),
           delivery_location: deliveryLoc.trim(),
           cost: cost === '' ? null : Number(cost),

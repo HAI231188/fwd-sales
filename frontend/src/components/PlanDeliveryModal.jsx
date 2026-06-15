@@ -9,6 +9,7 @@ import {
 } from '../api';
 import { useModalZIndex } from '../hooks/useModalZIndex';
 import DateTimeInput24h from './DateTimeInput24h';
+import { toDatetimeLocal, vnLocalToIso } from '../utils/dateFmt';
 
 // Phase 5 Step 2 — "Đặt kế hoạch xe"
 //
@@ -22,13 +23,6 @@ import DateTimeInput24h from './DateTimeInput24h';
 //   • PATCH /api/truck-bookings/:id   for each dirty existing row
 //
 // DD assigns the carrier later via the Quản lý đặt xe workspace (Step 3).
-
-function toDatetimeLocal(val) {
-  if (!val) return '';
-  const d = new Date(val);
-  const pad = n => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
 
 export default function PlanDeliveryModal({ jobId, jobCode, onClose, onSaved }) {
   const zIndex = useModalZIndex();
@@ -199,7 +193,7 @@ export default function PlanDeliveryModal({ jobId, jobCode, onClose, onSaved }) 
         await createTruckBookingsBatch(newOnes.map(r => ({
           job_id: jobId,
           ...(r.container_id != null ? { container_id: r.container_id } : {}),
-          planned_datetime: r.planned_datetime,
+          planned_datetime: vnLocalToIso(r.planned_datetime),
           delivery_location: r.delivery_location.trim(),
           note: r.note?.trim() || null,
         })));
@@ -207,7 +201,7 @@ export default function PlanDeliveryModal({ jobId, jobCode, onClose, onSaved }) 
 
       for (const r of dirtyExisting) {
         await updateTruckBooking(r.booking_id, {
-          planned_datetime: r.planned_datetime,
+          planned_datetime: vnLocalToIso(r.planned_datetime),
           delivery_location: r.delivery_location.trim(),
           note: r.note?.trim() || null,
         });

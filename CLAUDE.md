@@ -179,6 +179,11 @@ const today = localDateStr(new Date());
 ```
 Apply the same local-date extraction when parsing server date strings for comparison.
 
+**Extended 2026-06-15 — Vietnam time applies to the WRITE/save path too, not just read/compare.** The company operates ONLY in Vietnam (`Asia/Ho_Chi_Minh`, fixed +07:00, no DST); storage is UTC `TIMESTAMPTZ`. The LOG dashboards had silent datetime corruption/loss because the save side ignored this:
+- **Single source of truth:** all date/datetime helpers live in `frontend/src/utils/dateFmt.js` — `fmtDate`/`fmtDateTime`(=`fmtDt`)/etc. format in `Asia/Ho_Chi_Minh`; **`toDatetimeLocal(stored)`** renders the stored instant to a VN `"YYYY-MM-DDTHH:mm"` for an input's value; **`vnLocalToIso(naive)`** turns that back into a VN-anchored `"...+07:00"` ISO for the backend. NEVER re-copy these into a component (the old per-file `toDatetimeLocal` copies all used browser-local getters and drifted). `localDateStr` stays on local parts (the sales follow-up/stats compare path above — do not change it).
+- **WRITE rule:** every datetime save must send a VN-anchored ISO (via `vnLocalToIso`), NOT a naive `"YYYY-MM-DDTHH:mm"`. A naive string is stored in the DB session TZ (UTC) and reads back +7h shifted. Applies to `tk_datetime`, `tq_datetime`, `delivery_datetime`, `planned_datetime`, `actual_datetime`, `dd_completed_at`, TP `deadline`, `han_lenh` (export). `DateTimeInput24h` now does this conversion centrally on emit; inline `<input type="datetime-local">` saves convert in their `save()`.
+- **datetime-local inputs must be UNCONTROLLED + read the DOM ref at save** (`defaultValue` + `ref.current.value`), never a controlled `value={state}` read back from React state. `datetime-local`'s `onChange` is unreliable, so a controlled input's state lags (or gets reset by a mid-edit refetch) → the edit is silently dropped or saves `null`. Text inputs are fine either way. This was the `tk_datetime` "saves but blank on F5" bug.
+
 ### L4 — CHỜ FOLLOW drilldown uses UNION ALL, not DISTINCT ON
 The `waiting_follow_up` drilldown returns **one row per follow-up task**, not one row per company. A company with two pending CIU dates (e.g., 18/04 and 20/04) appears **twice** — once in "Hôm nay" and once in "7 ngày tới". This is intentional: each row is an action item.
 
@@ -788,6 +793,8 @@ Applies to: `checkAndCompleteJob` (current). General rule: any function found de
 1. Whenever you add a dept-level completion stamp, mirror this pattern: separate `*_completed_at` + `*_completed_by` on `jobs`, plus a state in `get_truck_booking_status` (or analogous derived function) if it affects truck progression.
 2. Don't conflate "this dept finished" with "the whole job finished". The two are different signals; downstream consumers (Sales revenue-tick, KT lifecycle) key off whole-job.
 3. The 23 historical backfill is one-shot and idempotent — re-running the migration block on container boot is safe.
+
+**Binding gotcha (2026-06-15):** because DD's "TH ngày giờ" writes `jobs.dd_completed_at` (NOT `jobs.completed_at`, which stays NULL until CUS+DD+OPS are all done), the DD dashboard's "TH ngày giờ" inline cell MUST bind its `value` to **`j.dd_completed_at`**, not `j.completed_at`. It originally read `j.completed_at`, so the DD's saved value showed blank on reload (the value was correctly stored in `dd_completed_at`, just read back from the wrong column). The partition logic (`LogDashboardDieuDo.jsx` "Đang làm/Hoàn thành") already keyed off `dd_completed_at`; the input cell's `value=` was the missed half. Rule: when a dept stamp lives in `<dept>_completed_at`, every reader for that dept (display, input value, partition) reads that column — never the whole-job `completed_at`.
 
 ### L26 — Per-dept status columns + tab filters (cross-dashboard pattern)
 

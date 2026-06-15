@@ -21,7 +21,7 @@ import {
 // 2026-05-25: ddPillInfo shared with DD dashboard — used by tpStatusLines
 // to render the DD-line of TP's 3-dept Trạng thái pill.
 import { ddPillInfo } from '../utils/truckBookingStatus';
-import { fmtDate, fmtDateTime as fmtDt } from '../utils/dateFmt';
+import { fmtDate, fmtDateTime as fmtDt, toDatetimeLocal, vnLocalToIso } from '../utils/dateFmt';
 
 // 2026-05-25 TP dept-level status helper.
 // tpStatusLines: returns an array of pending-dept status strings for this job.
@@ -150,12 +150,6 @@ function fmtCargo(j) {
   if (j.cont_number) return `${j.cont_number}${j.cont_type ? ' / ' + j.cont_type : ''}`;
   return '—';
 }
-function toDatetimeLocal(val) {
-  if (!val) return '';
-  const d = new Date(val);
-  const pad = n => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
 function deadlineStyle(dl) {
   if (!dl) return {};
   const ms = new Date(dl) - Date.now();
@@ -263,11 +257,12 @@ function StatCard({ label, value, color, onClick, badge, rows }) {
 
 function InlineDeadline({ value, onSave }) {
   const [editing, setEditing] = useState(false);
-  const [val, setVal] = useState('');
   const ref = useRef();
 
-  function start() { setVal(toDatetimeLocal(value) || ''); setEditing(true); setTimeout(() => ref.current?.focus(), 0); }
-  function save() { setEditing(false); if (val) onSave(val); }
+  function start() { setEditing(true); setTimeout(() => ref.current?.focus(), 0); }
+  // UNCONTROLLED + read DOM ref at save (FIX 2 — datetime-local's onChange is
+  // unreliable; the deadline is VN-anchored at the setDlMut mutationFn). (FIX 3)
+  function save() { setEditing(false); const raw = ref.current?.value ?? ''; if (raw) onSave(raw); }
 
   if (!editing) return (
     <div>
@@ -279,7 +274,7 @@ function InlineDeadline({ value, onSave }) {
   );
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-      <input ref={ref} type="datetime-local" value={val} onChange={e => setVal(e.target.value)}
+      <input ref={ref} type="datetime-local" defaultValue={toDatetimeLocal(value) || ''}
         onBlur={save} onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') setEditing(false); }}
         style={{ padding: '2px 6px', border: '1px solid var(--primary)', borderRadius: 4, fontSize: 12 }} />
     </div>
@@ -639,7 +634,9 @@ export default function LogDashboardTP() {
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['jobs'] }); setAssigningJob(null); },
   });
   const setDlMut = useMutation({
-    mutationFn: ({ id, deadline }) => setJobDeadline(id, deadline),
+    // FIX 3 — anchor to Vietnam time at the single send point (handles both
+    // InlineDeadline and the DeadlineModal "no deadline" tab).
+    mutationFn: ({ id, deadline }) => setJobDeadline(id, vnLocalToIso(deadline)),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['jobs'] });
       qc.invalidateQueries({ queryKey: ['deadlineRequests'] });
@@ -647,7 +644,9 @@ export default function LogDashboardTP() {
     },
   });
   const reviewMut = useMutation({
-    mutationFn: ({ rid, action, dl }) => reviewDeadlineRequest(rid, action, dl),
+    // FIX 3 — VN-anchor the approved override deadline (vnLocalToIso passes a
+    // raw ISO proposed_deadline through unchanged, converts a naive override).
+    mutationFn: ({ rid, action, dl }) => reviewDeadlineRequest(rid, action, vnLocalToIso(dl)),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['jobs'] });
       qc.invalidateQueries({ queryKey: ['deadlineRequests'] });
