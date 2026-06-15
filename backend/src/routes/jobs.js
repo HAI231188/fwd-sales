@@ -249,7 +249,10 @@ router.get('/stats', requireAuth, async (req, res) => {
       // Phase 4: BASE no longer JOINs job_truck. All DD stats derive from
       // get_truck_booking_status(j.id) so a single source of truth governs
       // staff stats + dashboard tabs + drilldowns.
-      const BASE = `FROM jobs j JOIN job_assignments ja ON ja.job_id = j.id WHERE ja.dieu_do_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL`;
+      // service_type IN ('truck','both') — defense-in-depth (2026-06-16): a
+      // tk-only job must never reach a DD even if a stale dieu_do_id lingers.
+      // DD only dispatches truck/both jobs; tk has no truck work.
+      const BASE = `FROM jobs j JOIN job_assignments ja ON ja.job_id = j.id WHERE ja.dieu_do_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL AND j.service_type IN ('truck','both')`;
       // Phase 5 Step 1: container-level booked / unbooked counts. The pair is
       // symmetric (EXISTS vs NOT EXISTS) and L5-locked to the drilldowns
       // 'dd_ke_hoach_da_dat' / 'dd_ke_hoach_chua_dat' in /filtered below.
@@ -1213,6 +1216,9 @@ router.get('/', requireAuth, async (req, res) => {
     if (role === 'dieu_do') {
       conditions.push(`ja.dieu_do_id = $${idx++}`);
       params.push(userId);
+      // Defense-in-depth (2026-06-16) — DD list is truck/both only; a tk-only job
+      // with a stale dieu_do_id can't surface here.
+      conditions.push(`j.service_type IN ('truck','both')`);
     } else if (CUS_ROLES.includes(role)) {
       conditions.push(`ja.cus_id = $${idx++}`);
       params.push(userId);
@@ -2088,6 +2094,65 @@ router.put('/:id', requireAuth, async (req, res) => {
          ON CONFLICT (job_id, task_type) WHERE task_type IS NOT NULL DO NOTHING`,
         [req.params.id, opsUserId]
       );
+    }
+
+    // ── REMOVE-direction cleanup (2026-06-16): service_type dropped 'truck' ──
+    // The ADD-direction back-fills above never undo the truck side. Without this,
+    // a both→tk (or truck→tk) edit leaves job_assignments.dieu_do_id + any
+    // truck_bookings orphaned and the job sticks on the Điều Độ dashboard (which
+    // selects jobs by dieu_do_id, no service_type filter). Mirror it in reverse.
+    // SCOPE: only the drop-truck direction (old ∈ {truck,both} → new = 'tk'). The
+    // symmetric both→'truck' case (which orphans the CUS/TK side — job_tk, cus_id)
+    // is a KNOWN GAP, intentionally NOT handled here — decide separately.
+    const oldSvc = cur[0].service_type;
+    if (['truck', 'both'].includes(oldSvc) && effectiveSvc === 'tk') {
+      // SENT-MAIL GUARD: a live booking already mailed to the carrier
+      // (truck_bookings.mail_group_id is set after a successful 'new' send, with
+      // the BBBG attached) must NOT be silently removed — the carrier was told to
+      // send a truck. Block the edit; the DD must HỦY the booking (which sends the
+      // proper cancel mail) first. We deliberately do NOT send the cancel mail
+      // inline — SMTP network I/O does not belong inside this job-edit transaction.
+      const { rows: mailed } = await client.query(
+        `SELECT booking_code FROM truck_bookings
+          WHERE job_id = $1 AND deleted_at IS NULL AND mail_group_id IS NOT NULL
+          ORDER BY id`,
+        [req.params.id]
+      );
+      if (mailed.length) {
+        await client.query('ROLLBACK');
+        const codes = mailed.map(b => b.booking_code).filter(Boolean).join(', ') || '(?)';
+        return res.status(409).json({
+          error: `Không thể đổi sang chỉ TK: job có booking đã gửi mail cho nhà xe (${codes}). ` +
+                 'Vui lòng HỦY booking (gửi mail hủy cho nhà xe) trước, rồi mới đổi loại dịch vụ.',
+          code: 'TRUCK_BOOKING_MAILED',
+        });
+      }
+      // No mailed booking — soft-delete every live booking, reusing the Option-B
+      // logic from DELETE /api/truck-bookings/:id (soft-delete the booking + HARD-
+      // delete its link rows so the containers free up — L20).
+      const { rows: liveBks } = await client.query(
+        `SELECT id FROM truck_bookings WHERE job_id = $1 AND deleted_at IS NULL ORDER BY id`,
+        [req.params.id]
+      );
+      for (const bk of liveBks) {
+        await client.query(
+          `UPDATE truck_bookings SET deleted_at = NOW(), updated_at = NOW() WHERE id = $1`, [bk.id]);
+        await client.query(
+          `DELETE FROM truck_booking_containers WHERE booking_id = $1`, [bk.id]);
+      }
+      // Clear the DD assignment so the job leaves the Điều Độ dashboard.
+      const ddRes = await client.query(
+        `UPDATE job_assignments SET dieu_do_id = NULL
+          WHERE job_id = $1 AND dieu_do_id IS NOT NULL`, [req.params.id]);
+      // Clear the legacy job_truck row if present (deprecated table).
+      const jtRes = await client.query(`DELETE FROM job_truck WHERE job_id = $1`, [req.params.id]);
+      if (liveBks.length || ddRes.rowCount || jtRes.rowCount) {
+        await recordHistory(
+          client, req.params.id, req.user.id, 'truck_side_cleared',
+          `${oldSvc} (bookings=${liveBks.length}, dd_cleared=${ddRes.rowCount}, job_truck=${jtRes.rowCount})`,
+          'tk — truck side removed on service_type change'
+        );
+      }
     }
 
     // 2026-05-24 DD-split: if DD just stamped a non-null dd_completed_at, try

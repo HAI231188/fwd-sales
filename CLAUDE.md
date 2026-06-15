@@ -1063,6 +1063,21 @@ Applies to: `seed_users.js`, `seed_ke_toan.js`. General rule: any seed/migration
 
 ---
 
+### L35 — Editing `service_type` must clean the side it drops (the DD dashboard is assignment-based)
+
+**Root cause:** `PUT /api/jobs/:id` (`routes/jobs.js`) only did **ADD-direction** back-fills when `service_type` changed — back-fill `job_tk` when it gains TK (`~:2040`), back-fill `job_ops_task` when it gains OPS work (`~:2066`) — with an explicit comment "do NOT delete tasks if job changes away (out of scope)". So editing a job **both→tk** updated only the column and left the **truck side orphaned**: `job_assignments.dieu_do_id` (and any `truck_bookings`) survived. Because the Điều Độ dashboard selects jobs by **`ja.dieu_do_id`** with **no `service_type` filter** (stats `BASE` + the pending list), the now-tk-only job kept showing as if it still had truck work. (Job LG26060097 / #48 was the lone production casualty — fixed one-off via `db/cleanup_job48_truck_remnant.js`.)
+
+**Fix (2026-06-16) — two layers:**
+1. **Clean on edit** (`PUT /:id`, REMOVE-direction block after the back-fills): when `old ∈ {truck,both} AND new = 'tk'` → soft-delete every live `truck_bookings` **reusing the Option-B logic** from `DELETE /api/truck-bookings/:id` (soft-delete booking + HARD-delete `truck_booking_containers`, L20), clear `job_assignments.dieu_do_id`, clear the legacy `job_truck` row, and `recordHistory('truck_side_cleared', …)` (no-op-guarded).
+   - **SENT-MAIL GUARD (critical):** if a live booking was already mailed to the carrier (`truck_bookings.mail_group_id IS NOT NULL` — set after a successful `'new'` send, BBBG attached), **BLOCK** the edit with `409 TRUCK_BOOKING_MAILED` telling the DD to HỦY the booking (which sends the proper cancel mail) first. We do **NOT** send the cancel mail inline — SMTP I/O must not run inside the job-edit transaction.
+2. **Defense-in-depth filter:** the DD stats `BASE` (`jobs.js:~252`) and the DD pending-list condition (`jobs.js:~1216`) now carry `AND j.service_type IN ('truck','both')`, so a tk-only job can't surface on a DD dashboard even if a `dieu_do_id` ever lingers. No-op for legitimate DD jobs (`dieu_do_id` is only ever set for truck/both at create).
+
+**KNOWN GAP (intentionally not fixed — decide separately):** the symmetric **both→'truck'** direction still orphans the **CUS/TK side** (`job_tk`, `job_assignments.cus_id`); the CUS dashboard is likewise `cus_id`-scoped, so a now-truck-only job would linger there. Mirror the L35 REMOVE-direction pattern (with an equivalent guard for any sent CUS-side artifacts) if/when that's prioritized.
+
+**Rule:** whenever a job dimension that drives a dept's dashboard scope can be *edited away* (service_type ↔ dept assignment), the edit handler must clean that dept's side — never rely on the dashboard query alone. Assignment-scoped dashboards (`dieu_do_id`/`cus_id`/`ops_id`) don't self-correct when the qualifying column changes.
+
+---
+
 ### Note — `admin` role + user-management panel (2026-06-11)
 
 `'admin'` = app-wide user administrator, above every department and distinct from `truong_phong_log`. Only admins reach `/api/admin/*` (router-gated `requireAuth + requireAdmin`; `requireAdmin` in `middleware/auth.js` mirrors `requireKeToan`). Endpoints (`routes/admin.js`): list / create / edit / `:id/role` / `:id/disable` / `:id/enable` / `:id/reset-password`. Create + reset-password return a one-time random temp password (bcrypt at rest; `password_hash` and gmail secrets are never returned). Self-lock + last-admin invariants live in `services/admin-guards.js` (`isValidRole` / `isSelf` / `wouldRemoveLastAdmin`). UI: `pages/AdminPage.jsx` (`/admin`, `ProtectedRoute roles={['admin']}`), the 🛡️ "Quản trị" Navbar pill (admin only, desktop + mobile), and the auto-assign toggle reusing `/api/jobs/settings` (gate widened to `admin`).
