@@ -1063,18 +1063,28 @@ Applies to: `seed_users.js`, `seed_ke_toan.js`. General rule: any seed/migration
 
 ---
 
-### L35 — Editing `service_type` must clean the side it drops (the DD dashboard is assignment-based)
+### L35 — `service_type`/`destination` edits reconcile every side via ONE helper (`services/job-reconcile.js`)
 
-**Root cause:** `PUT /api/jobs/:id` (`routes/jobs.js`) only did **ADD-direction** back-fills when `service_type` changed — back-fill `job_tk` when it gains TK (`~:2040`), back-fill `job_ops_task` when it gains OPS work (`~:2066`) — with an explicit comment "do NOT delete tasks if job changes away (out of scope)". So editing a job **both→tk** updated only the column and left the **truck side orphaned**: `job_assignments.dieu_do_id` (and any `truck_bookings`) survived. Because the Điều Độ dashboard selects jobs by **`ja.dieu_do_id`** with **no `service_type` filter** (stats `BASE` + the pending list), the now-tk-only job kept showing as if it still had truck work. (Job LG26060097 / #48 was the lone production casualty — fixed one-off via `db/cleanup_job48_truck_remnant.js`.)
+**Root cause:** `PUT /api/jobs/:id` originally only did **ADD-direction** back-fills (job_tk / job_ops_task) and never cleaned a *dropped* side. Because the Điều Độ / CUS / OPS dashboards select jobs by **assignment** (`ja.dieu_do_id` / `ja.cus_id` / `ja.ops_id`) with no/partial `service_type` filter, dropping a side left orphaned rows on the wrong dashboard, and **gaining** the truck side never assigned a DD (no `waiting_dd` pool existed) → invisible work. A full 6-transition audit found 3 🔴 / 2 ⚠️ holes; job LG26060097 / #48 was the lone production casualty (one-off fix `db/cleanup_job48_truck_remnant.js`).
 
-**Fix (2026-06-16) — two layers:**
-1. **Clean on edit** (`PUT /:id`, REMOVE-direction block after the back-fills): when `old ∈ {truck,both} AND new = 'tk'` → soft-delete every live `truck_bookings` **reusing the Option-B logic** from `DELETE /api/truck-bookings/:id` (soft-delete booking + HARD-delete `truck_booking_containers`, L20), clear `job_assignments.dieu_do_id`, clear the legacy `job_truck` row, and `recordHistory('truck_side_cleared', …)` (no-op-guarded).
-   - **SENT-MAIL GUARD (critical):** if a live booking was already mailed to the carrier (`truck_bookings.mail_group_id IS NOT NULL` — set after a successful `'new'` send, BBBG attached), **BLOCK** the edit with `409 TRUCK_BOOKING_MAILED` telling the DD to HỦY the booking (which sends the proper cancel mail) first. We do **NOT** send the cancel mail inline — SMTP I/O must not run inside the job-edit transaction.
-2. **Defense-in-depth filter:** the DD stats `BASE` (`jobs.js:~252`) and the DD pending-list condition (`jobs.js:~1216`) now carry `AND j.service_type IN ('truck','both')`, so a tk-only job can't surface on a DD dashboard even if a `dieu_do_id` ever lingers. No-op for legitimate DD jobs (`dieu_do_id` is only ever set for truck/both at create).
+**Fix (2026-06-16) — single source of truth: `reconcileJobSides(client, jobId, {oldSvc,newSvc,oldDest,newDest,cusSuggestion,actingUserId,customerName,jobCode})`** in **`backend/src/services/job-reconcile.js`**, called once by `PUT /:id` after the field UPDATE (it **replaced** the 3 old inline blocks — TK back-fill, OPS back-fill, both·truck→tk REMOVE; don't re-add per-direction patches). It derives the desired sides from the NEW state and reconciles each against the prior:
 
-**KNOWN GAP (intentionally not fixed — decide separately):** the symmetric **both→'truck'** direction still orphans the **CUS/TK side** (`job_tk`, `job_assignments.cus_id`); the CUS dashboard is likewise `cus_id`-scoped, so a now-truck-only job would linger there. Mirror the L35 REMOVE-direction pattern (with an equivalent guard for any sent CUS-side artifacts) if/when that's prioritized.
+- **TK side** — desired = `newSvc ∈ {tk,both}`. *Gain*: ensure `job_tk`; if `cusSuggestion` present (auto mode) assign `cus_id` (+ job_tk.cus_id, notify, history), else leave unassigned → `waiting_cus`. *Lose*: clear `cus_id` + delete the empty `job_tk`.
+- **TRUCK side** — desired = `newSvc ∈ {truck,both}`. *Gain*: **DD round-robin** (mirrors POST create `jobs.js:~1562`) → `dieu_do_id` + notify + history; if no active DD → surfaces in the new **`waiting_dd`** TP stat. *Lose*: **Option-B** per live booking (soft-delete + HARD-delete `truck_booking_containers`, L20) + clear `dieu_do_id` + legacy `job_truck`.
+- **OPS side** — destination-aware: `thong_quan` desired = HP & tk/both; `doi_lenh` desired = any HP job. *Gain*: ensure the row(s) (idempotent `ON CONFLICT DO NOTHING`). *Lose*: remove the now-unneeded task type.
 
-**Rule:** whenever a job dimension that drives a dept's dashboard scope can be *edited away* (service_type ↔ dept assignment), the edit handler must clean that dept's side — never rely on the dashboard query alone. Assignment-scoped dashboards (`dieu_do_id`/`cus_id`/`ops_id`) don't self-correct when the qualifying column changes.
+**The 3 guards (LOSE never silently destroys committed/sent/completed work):**
+1. **TRUCK sent-mail BLOCK** — truck-lose with a live booking whose `mail_group_id IS NOT NULL` (mailed to carrier, BBBG attached) → ROLLBACK + `409 TRUCK_BOOKING_MAILED` ("HỦY booking trước"). No cancel-mail inline (SMTP must not run in the txn).
+2. **TK-progressed BLOCK** — tk-lose with a `job_tk` that progressed (`tk_status≠'chua_truyen'` OR `tk_number`/`tk_datetime`/`tq_datetime`/`delivery_datetime`/`completed_at` set) → ROLLBACK + `409 TK_WORK_IN_PROGRESS`.
+3. **OPS-completed KEEP** — when removing an ops_task that is already `completed`/`cost_entered`, KEEP it + `recordHistory('ops_task_kept_completed', …)` instead of deleting.
+
+Guards run in a GUARD PHASE *before* any write; the helper returns `{blocked:true,status,code,error}` and the caller ROLLBACKs (the helper never touches `res`). The **CUS suggestion is computed BEFORE BEGIN** in `PUT /:id` (suggestCus is a network/LLM call — mirrors POST, keeps it out of the txn) and passed in.
+
+**Belt-and-suspenders kept:** DD stats `BASE` + pending list still filter `service_type IN ('truck','both')` (`jobs.js:~252`/`~1216`); new `waiting_dd` TP stat = `service_type IN ('truck','both') AND dieu_do_id IS NULL AND status='pending'`.
+
+**Post-go-live follow-up (documented, not done):** the DD round-robin SQL and the Option-B booking-delete are **replicated** in `job-reconcile.js` (reference comments to `jobs.js:~1562` and `DELETE /api/truck-bookings/:id`) because the constraint was "don't change POST create". Consolidate by extracting both into a shared service and having POST + the helper call them (an L30 dedup that *does* touch POST).
+
+**Rule:** whenever a job dimension that drives a dept's assignment-scoped dashboard can be *edited away* (service_type/destination ↔ TK/TRUCK/OPS side), reconcile that side in `reconcileJobSides` — gain → back-fill+assign, lose → clean+clear behind a destroy-guard. Never rely on the dashboard query alone; assignment-scoped dashboards don't self-correct.
 
 ---
 

@@ -8,6 +8,7 @@ const { recordHistory } = require('../services/job-history');
 const { CUS_ROLES, AUTO_CUS_ROLES, LOG_ROLES, PLAN_ROLES } = require('../constants/roles');
 const { canViewJob, canEditJob, canEditJobTk, canReassignOwnerOrStatus } = require('../services/job-access');
 const { fmtVnDeadline } = require('../utils/vnTime');
+const { reconcileJobSides } = require('../services/job-reconcile');
 
 // In-memory suggestion cache (60s TTL) — invalidated on manual assignment
 let suggestionCache = { data: null, ts: 0 };
@@ -192,7 +193,7 @@ router.get('/stats', requireAuth, async (req, res) => {
   const { role, id: userId } = req.user;
   try {
     if (role === 'truong_phong_log') {
-      const [total, waitingCus, waitingOps, cusConfirmPend, deadlineAdj, noDeadline, overdue, warnSoon, missingInfo, deleteReqs, cusStats, dieuDoStats, opsStats, tkPend, truckPend] = await Promise.all([
+      const [total, waitingCus, waitingOps, waitingDd, cusConfirmPend, deadlineAdj, noDeadline, overdue, warnSoon, missingInfo, deleteReqs, cusStats, dieuDoStats, opsStats, tkPend, truckPend] = await Promise.all([
         db.query(`SELECT COUNT(*) AS v FROM jobs WHERE status = 'pending' AND deleted_at IS NULL`),
         db.query(`
           SELECT COUNT(*) AS v FROM jobs j
@@ -207,6 +208,12 @@ router.get('/stats', requireAuth, async (req, res) => {
             AND j.destination = 'hai_phong'
             AND j.service_type IN ('tk','truck','both','ops_hp')
             AND (ja.ops_id IS NULL OR ja.id IS NULL)`),
+        db.query(`
+          SELECT COUNT(*) AS v FROM jobs j
+          LEFT JOIN job_assignments ja ON ja.job_id = j.id
+          WHERE j.status = 'pending' AND j.deleted_at IS NULL
+            AND j.service_type IN ('truck','both')
+            AND (ja.dieu_do_id IS NULL OR ja.id IS NULL)`),
         db.query(`
           SELECT COUNT(*) AS v FROM job_assignments ja
           JOIN jobs j ON j.id = ja.job_id
@@ -232,6 +239,7 @@ router.get('/stats', requireAuth, async (req, res) => {
         total_pending:         parseInt(total.rows[0].v),
         waiting_cus:           parseInt(waitingCus.rows[0].v),
         waiting_ops:           parseInt(waitingOps.rows[0].v),
+        waiting_dd:            parseInt(waitingDd.rows[0].v),
         cus_confirm_pending:   parseInt(cusConfirmPend.rows[0].v),
         deadline_adj_requests: parseInt(deadlineAdj.rows[0].v),
         no_deadline:           parseInt(noDeadline.rows[0].v),
@@ -1829,6 +1837,33 @@ router.put('/:id', requireAuth, async (req, res) => {
     return res.status(400).json({ error: "Loại lô phải là 'export' hoặc 'import'" });
   }
 
+  // Pre-compute the CUS suggestion BEFORE opening the transaction, only when this
+  // edit GAINS the TK side. suggestCus is a network/LLM call (POST runs it before
+  // BEGIN too); reconcileJobSides applies the result inside the txn. Manual mode
+  // or no candidate → null → the gained TK row stays unassigned (waiting_cus).
+  let putCusSuggestion = null;
+  {
+    const { rows: pre } = await db.query(
+      `SELECT service_type, destination, customer_name, pol, pod, other_services
+         FROM jobs WHERE id = $1 AND deleted_at IS NULL`, [req.params.id]);
+    const p = pre[0];
+    if (p) {
+      const nSvc = req.body.service_type ?? p.service_type;
+      const nDest = req.body.destination ?? p.destination;
+      const gainsTk = ['tk', 'both'].includes(nSvc) && !['tk', 'both'].includes(p.service_type);
+      if (gainsTk) {
+        const settRes = await db.query(`SELECT assignment_mode FROM log_settings WHERE id = 1`);
+        const mode = settRes.rows[0]?.assignment_mode || 'auto';
+        if (mode === 'auto') {
+          putCusSuggestion = await withTimeout(
+            suggestCus({ customer_name: p.customer_name, service_type: nSvc, pol: p.pol, pod: p.pod, other_services: p.other_services, destination: nDest }, db.pool).catch(() => null),
+            3000
+          );
+        }
+      }
+    }
+  }
+
   const client = await db.pool.connect();
   try {
     await client.query('BEGIN');
@@ -2043,116 +2078,25 @@ router.put('/:id', requireAuth, async (req, res) => {
       }
     }
 
-    // Fix A — back-fill job_tk when service_type changes to include TK.
-    // Root cause from audit: a job created with service_type='truck' has no
-    // job_tk row; if later edited to 'tk' or 'both', the CUS dashboard renders
-    // an editable tk_number cell but PATCH /:id/tk returns 404 because no row
-    // exists. Ensure the row exists here. Pattern matches the existence-then-
-    // INSERT used elsewhere in this file (jobs.js:1994-1999, 2120-2124) since
-    // job_tk has no UNIQUE(job_id) — can't use ON CONFLICT.
-    //
-    // POST inserts only (job_id) [+ optional cus_id from AI suggestion] —
-    // we mirror that minimal shape here.
-    const effectiveSvc = req.body.service_type ?? cur[0].service_type;
-    if (effectiveSvc === 'tk' || effectiveSvc === 'both') {
-      const { rows: tkEx } = await client.query(
-        `SELECT id FROM job_tk WHERE job_id = $1`,
-        [req.params.id]
-      );
-      if (!tkEx[0]) {
-        await client.query(
-          `INSERT INTO job_tk (job_id) VALUES ($1)`,
-          [req.params.id]
-        );
-        await recordHistory(client, req.params.id, req.user.id,
-          'job_tk_backfilled', null, 'auto on service_type change');
-      }
-    }
-
-    // Per-task model (2026-05-23): back-fill job_ops_task when destination/
-    // service_type changes such that the job newly needs OPS tasks (HP + tk/
-    // truck/both). Idempotent via partial UNIQUE on (job_id, task_type).
-    //   tk/both → ensure 'thong_quan' + 'doi_lenh'
-    //   truck   → ensure 'doi_lenh'
-    // Per spec: do NOT delete tasks if job changes away (out of scope).
-    const effectiveDest = req.body.destination ?? cur[0].destination;
-    if (effectiveDest === 'hai_phong' && ['tk','truck','both'].includes(effectiveSvc)) {
-      const { rows: jaRow } = await client.query(
-        `SELECT ops_id FROM job_assignments WHERE job_id = $1`,
-        [req.params.id]
-      );
-      const opsUserId = jaRow[0]?.ops_id || null;
-      if (effectiveSvc === 'tk' || effectiveSvc === 'both') {
-        await client.query(
-          `INSERT INTO job_ops_task (job_id, ops_id, task_type) VALUES ($1, $2, 'thong_quan')
-           ON CONFLICT (job_id, task_type) WHERE task_type IS NOT NULL DO NOTHING`,
-          [req.params.id, opsUserId]
-        );
-      }
-      await client.query(
-        `INSERT INTO job_ops_task (job_id, ops_id, task_type) VALUES ($1, $2, 'doi_lenh')
-         ON CONFLICT (job_id, task_type) WHERE task_type IS NOT NULL DO NOTHING`,
-        [req.params.id, opsUserId]
-      );
-    }
-
-    // ── REMOVE-direction cleanup (2026-06-16): service_type dropped 'truck' ──
-    // The ADD-direction back-fills above never undo the truck side. Without this,
-    // a both→tk (or truck→tk) edit leaves job_assignments.dieu_do_id + any
-    // truck_bookings orphaned and the job sticks on the Điều Độ dashboard (which
-    // selects jobs by dieu_do_id, no service_type filter). Mirror it in reverse.
-    // SCOPE: only the drop-truck direction (old ∈ {truck,both} → new = 'tk'). The
-    // symmetric both→'truck' case (which orphans the CUS/TK side — job_tk, cus_id)
-    // is a KNOWN GAP, intentionally NOT handled here — decide separately.
-    const oldSvc = cur[0].service_type;
-    if (['truck', 'both'].includes(oldSvc) && effectiveSvc === 'tk') {
-      // SENT-MAIL GUARD: a live booking already mailed to the carrier
-      // (truck_bookings.mail_group_id is set after a successful 'new' send, with
-      // the BBBG attached) must NOT be silently removed — the carrier was told to
-      // send a truck. Block the edit; the DD must HỦY the booking (which sends the
-      // proper cancel mail) first. We deliberately do NOT send the cancel mail
-      // inline — SMTP network I/O does not belong inside this job-edit transaction.
-      const { rows: mailed } = await client.query(
-        `SELECT booking_code FROM truck_bookings
-          WHERE job_id = $1 AND deleted_at IS NULL AND mail_group_id IS NOT NULL
-          ORDER BY id`,
-        [req.params.id]
-      );
-      if (mailed.length) {
-        await client.query('ROLLBACK');
-        const codes = mailed.map(b => b.booking_code).filter(Boolean).join(', ') || '(?)';
-        return res.status(409).json({
-          error: `Không thể đổi sang chỉ TK: job có booking đã gửi mail cho nhà xe (${codes}). ` +
-                 'Vui lòng HỦY booking (gửi mail hủy cho nhà xe) trước, rồi mới đổi loại dịch vụ.',
-          code: 'TRUCK_BOOKING_MAILED',
-        });
-      }
-      // No mailed booking — soft-delete every live booking, reusing the Option-B
-      // logic from DELETE /api/truck-bookings/:id (soft-delete the booking + HARD-
-      // delete its link rows so the containers free up — L20).
-      const { rows: liveBks } = await client.query(
-        `SELECT id FROM truck_bookings WHERE job_id = $1 AND deleted_at IS NULL ORDER BY id`,
-        [req.params.id]
-      );
-      for (const bk of liveBks) {
-        await client.query(
-          `UPDATE truck_bookings SET deleted_at = NOW(), updated_at = NOW() WHERE id = $1`, [bk.id]);
-        await client.query(
-          `DELETE FROM truck_booking_containers WHERE booking_id = $1`, [bk.id]);
-      }
-      // Clear the DD assignment so the job leaves the Điều Độ dashboard.
-      const ddRes = await client.query(
-        `UPDATE job_assignments SET dieu_do_id = NULL
-          WHERE job_id = $1 AND dieu_do_id IS NOT NULL`, [req.params.id]);
-      // Clear the legacy job_truck row if present (deprecated table).
-      const jtRes = await client.query(`DELETE FROM job_truck WHERE job_id = $1`, [req.params.id]);
-      if (liveBks.length || ddRes.rowCount || jtRes.rowCount) {
-        await recordHistory(
-          client, req.params.id, req.user.id, 'truck_side_cleared',
-          `${oldSvc} (bookings=${liveBks.length}, dd_cleared=${ddRes.rowCount}, job_truck=${jtRes.rowCount})`,
-          'tk — truck side removed on service_type change'
-        );
-      }
+    // ── Reconcile TK / TRUCK / OPS sides for the service_type/destination edit ──
+    // Single source of truth: services/job-reconcile.js (L35). GAIN → back-fill +
+    // assign; LOSE → clean + clear, each LOSE guarded so committed/sent/completed
+    // work is never silently destroyed (returns {blocked} → ROLLBACK + 409). The
+    // CUS suggestion was computed BEFORE BEGIN (LLM kept out of the transaction);
+    // the DD round-robin + Option-B booking delete run inside the helper.
+    const recon = await reconcileJobSides(client, req.params.id, {
+      oldSvc: cur[0].service_type,
+      newSvc: req.body.service_type ?? cur[0].service_type,
+      oldDest: cur[0].destination,
+      newDest: req.body.destination ?? cur[0].destination,
+      cusSuggestion: putCusSuggestion,
+      actingUserId: req.user.id,
+      customerName: cur[0].customer_name,
+      jobCode: cur[0].job_code,
+    });
+    if (recon.blocked) {
+      await client.query('ROLLBACK');
+      return res.status(recon.status).json({ error: recon.error, code: recon.code });
     }
 
     // 2026-05-24 DD-split: if DD just stamped a non-null dd_completed_at, try
