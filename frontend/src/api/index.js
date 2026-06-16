@@ -174,6 +174,8 @@ export const getAvailableContainers = (jobId) =>
   api.get(`/jobs/${jobId}/available-containers`);
 export const getPastDeliveryLocations = (jobId) =>
   api.get(`/jobs/${jobId}/past-delivery-locations`);
+export const getPastReceivers = (jobId) =>
+  api.get(`/jobs/${jobId}/past-receivers`);
 
 // Customer pipeline (Data khách hàng — TP + lead management page)
 export const getCustomerPipelines = (search = '') =>

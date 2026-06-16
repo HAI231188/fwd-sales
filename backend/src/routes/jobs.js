@@ -3833,4 +3833,53 @@ router.get('/:id/past-delivery-locations', requireAuth, async (req, res) => {
   }
 });
 
+// GET /api/jobs/:id/past-receivers
+// Distinct {receiver_name, receiver_phone, delivery_location} triples used in
+// prior bookings for the SAME customer (by name match). A customer can have
+// several receivers at different warehouses, so we return the FULL list (each
+// row carries its delivery_location so the UI can tell them apart) rather than
+// collapsing to one. Powers the receiver autocomplete in ReceiverInfoModal.
+// Same PLAN_ROLES guard as /past-delivery-locations (L10 broadcast).
+router.get('/:id/past-receivers', requireAuth, async (req, res) => {
+  if (!PLAN_ROLES.includes(req.user.role)) {
+    return res.status(403).json({ error: 'Không có quyền' });
+  }
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isFinite(id)) return res.status(400).json({ error: 'ID không hợp lệ' });
+  try {
+    const { rows: jr } = await db.query(
+      `SELECT customer_name FROM jobs WHERE id = $1 AND deleted_at IS NULL`, [id]
+    );
+    if (!jr[0]) return res.json([]);
+    const name = jr[0].customer_name;
+    const { rows } = await db.query(`
+      SELECT receiver_name, receiver_phone, delivery_location
+        FROM (
+          SELECT
+            COALESCE(NULLIF(TRIM(tb.receiver_name), ''), '')    AS receiver_name,
+            COALESCE(NULLIF(TRIM(tb.receiver_phone), ''), '')   AS receiver_phone,
+            COALESCE(NULLIF(TRIM(tb.delivery_location), ''), '') AS delivery_location,
+            MAX(tb.created_at) AS last_used
+          FROM truck_bookings tb
+          JOIN jobs j ON j.id = tb.job_id
+         WHERE LOWER(j.customer_name) = LOWER($1)
+           AND tb.deleted_at IS NULL
+           AND ( COALESCE(TRIM(tb.receiver_name), '') <> ''
+              OR COALESCE(TRIM(tb.receiver_phone), '') <> '' )
+         GROUP BY 1, 2, 3
+        ) u
+      ORDER BY last_used DESC
+      LIMIT 30
+    `, [name]);
+    res.json(rows.map(r => ({
+      receiver_name: r.receiver_name,
+      receiver_phone: r.receiver_phone,
+      delivery_location: r.delivery_location,
+    })));
+  } catch (err) {
+    console.error('GET /:id/past-receivers error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;

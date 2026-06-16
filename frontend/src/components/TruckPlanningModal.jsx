@@ -564,6 +564,7 @@ export default function TruckPlanningModal({ jobId, jobCode, onClose }) {
           booking id; pass through booking shape ReceiverInfoModal expects. */}
       <ReceiverInfoModal
         isOpen={receiverModalBookingId != null}
+        jobId={jobId}
         booking={(() => {
           if (receiverModalBookingId == null) return null;
           const r = rows.find(x => x.booking_id === receiverModalBookingId);
