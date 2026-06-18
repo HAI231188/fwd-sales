@@ -1088,6 +1088,17 @@ Guards run in a GUARD PHASE *before* any write; the helper returns `{blocked:tru
 
 ---
 
+### Note — OPS per-task + weekly-rotation: P0 foundation (2026-06-18, NOT yet wired)
+
+First slice of the planned "OPS work assigned PER-TASK with a weekly rotation between 2 OPS users" feature. **P0 is additive storage + a helper only — it changes ZERO existing behavior.** Task seeding / assignment / completion / dashboards all still work exactly as before; nothing reads the rotation yet.
+
+- **Schema** (`schema.sql`, after the `log_settings` INSERT): `log_settings.ops_rotation_a` + `ops_rotation_b` (INTEGER FK `users(id) ON DELETE SET NULL`) — the configured 2-OPS rotation pair. Idempotent `ADD COLUMN IF NOT EXISTS`; seeded ONCE from the two lowest-id active `role='ops'` users via `COALESCE` (never clobbers an admin-set value — L33). `log_settings` is the single-row config (`id=1`) already read for `assignment_mode` at `jobs.js:~1408`.
+- **Helper** (`backend/src/services/ops-rotation.js`, L30 single home): `getWeekRotation(date, db) → { thongQuanOpsId, doiLenhOpsId }`. ISO week (Mon–Sun) computed on the **VN-local** calendar day via `utils/vnTime.js` `vnParts` + a `Date.UTC` anchor (L3 — the Sun→Mon flip is VN-midnight, not UTC). Even ISO week → `{tq:a, dl:b}`; odd → swapped. The `doi_lenh` person also owns `viec_khac` + `ops_hp` (documented; no logic yet). **L32 fallback:** a NULL/disabled slot → lowest-id active OPS; one active OPS → both roles collapse to it; zero active → `{null,null}` + `console.warn`. Pure read, no writes. Also exports `vnIsoWeek` / `isoWeekNumber`.
+- **Decisions locked for later phases:** "việc khác" = one-per-job, gates completion (`task_type='viec_khac'`); rotation pair lives in `log_settings` (config, admin-editable later); week-flip keeps each task's stored owner (no recompute, no cron) — only new jobs/tasks follow the new week.
+- **Next:** P1 wires `getWeekRotation` into create-seeding + `reconcileJobSides` + reassign + TP-add-task, drops the tk-only `doi_lenh` task, and flips OPS reads from `job_assignments.ops_id` → per-task `job_ops_task.ops_id`. Until then, `grep getWeekRotation` returns only the helper itself.
+
+---
+
 ### Note — `admin` role + user-management panel (2026-06-11)
 
 `'admin'` = app-wide user administrator, above every department and distinct from `truong_phong_log`. Only admins reach `/api/admin/*` (router-gated `requireAuth + requireAdmin`; `requireAdmin` in `middleware/auth.js` mirrors `requireKeToan`). Endpoints (`routes/admin.js`): list / create / edit / `:id/role` / `:id/disable` / `:id/enable` / `:id/reset-password`. Create + reset-password return a one-time random temp password (bcrypt at rest; `password_hash` and gmail secrets are never returned). Self-lock + last-admin invariants live in `services/admin-guards.js` (`isValidRole` / `isSelf` / `wouldRemoveLastAdmin`). UI: `pages/AdminPage.jsx` (`/admin`, `ProtectedRoute roles={['admin']}`), the 🛡️ "Quản trị" Navbar pill (admin only, desktop + mobile), and the auto-assign toggle reusing `/api/jobs/settings` (gate widened to `admin`).

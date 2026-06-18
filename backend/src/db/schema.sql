@@ -426,6 +426,24 @@ CREATE TABLE IF NOT EXISTS log_settings (
 );
 INSERT INTO log_settings (id, assignment_mode) VALUES (1, 'auto') ON CONFLICT (id) DO NOTHING;
 
+-- OPS weekly-rotation pair (P0 foundation, 2026-06-18) — the two role='ops'
+-- users who alternate thong_quan / doi_lenh each ISO week (Mon–Sun). Read by
+-- services/ops-rotation.js getWeekRotation(); NOT yet wired into any write path.
+ALTER TABLE log_settings ADD COLUMN IF NOT EXISTS ops_rotation_a INTEGER REFERENCES users(id) ON DELETE SET NULL;
+ALTER TABLE log_settings ADD COLUMN IF NOT EXISTS ops_rotation_b INTEGER REFERENCES users(id) ON DELETE SET NULL;
+
+-- Seed ONCE from the two lowest-id active OPS users, only when a slot is unset.
+-- COALESCE preserves an already-configured value (never clobbers an admin pick —
+-- L33 seed-never-overwrites discipline) and makes the statement idempotent +
+-- safe to re-run on every deploy. A missing 2nd OPS leaves ops_rotation_b NULL,
+-- which getWeekRotation() handles via its L32 fallback.
+UPDATE log_settings
+   SET ops_rotation_a = COALESCE(ops_rotation_a,
+         (SELECT id FROM users WHERE role = 'ops' AND disabled_at IS NULL ORDER BY id OFFSET 0 LIMIT 1)),
+       ops_rotation_b = COALESCE(ops_rotation_b,
+         (SELECT id FROM users WHERE role = 'ops' AND disabled_at IS NULL ORDER BY id OFFSET 1 LIMIT 1))
+ WHERE id = 1;
+
 -- AI assignment audit log
 CREATE TABLE IF NOT EXISTS ai_assignment_logs (
   id               SERIAL PRIMARY KEY,
