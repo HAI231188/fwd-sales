@@ -22,6 +22,7 @@
 // (The helper never touches `res` and does no writes before a guard can fire.)
 
 const { recordHistory } = require('./job-history');
+const { getWeekRotation } = require('./ops-rotation');
 
 const TK_SET = ['tk', 'both'];
 const TRUCK_SET = ['truck', 'both'];
@@ -42,8 +43,8 @@ async function reconcileJobSides(client, jobId, opts) {
   const newHP = newDest === 'hai_phong';
   const tkDesired = hasTk(newSvc), tkWas = hasTk(oldSvc);
   const truckDesired = hasTruck(newSvc), truckWas = hasTruck(oldSvc);
-  const tqDesired = newHP && tkDesired;   // thong_quan: tk/both at Hải Phòng
-  const dlDesired = newHP;                // doi_lenh: any HP job (tk/truck/both)
+  const tqDesired = newHP && tkDesired;      // thong_quan: tk/both at Hải Phòng
+  const dlDesired = newHP && truckDesired;   // doi_lenh: truck/both at HP (P1 — tk-only no longer)
 
   const tkGain = tkDesired && !tkWas;
   const tkLose = !tkDesired && tkWas;
@@ -156,15 +157,23 @@ async function reconcileJobSides(client, jobId, opts) {
     }
   }
 
-  // OPS side (destination-aware). Uses the current ops_id; if none, the
-  // back-filled task is unassigned → waiting_ops (matches existing behavior).
+  // OPS side (destination-aware). P1: a GAINED task's owner comes from the
+  // ISO-week rotation (ops-rotation.js), NOT inherited from the job's existing
+  // ja.ops_id. Falls back to the existing ja.ops_id if rotation can't resolve a
+  // pair (no active OPS). We also refresh ja.ops_id = the PRIMARY task owner
+  // (truck/both → doi_lenh person; tk-only → thong_quan person) for back-compat,
+  // since every current read path keys off ja.ops_id until the P2 read-flip.
   const { rows: jaRow } = await client.query(`SELECT ops_id FROM job_assignments WHERE job_id = $1`, [jobId]);
-  const opsUserId = jaRow[0]?.ops_id || null;
-  const ensureOpsTask = async (taskType) => {
+  const existingOps = jaRow[0]?.ops_id || null;
+  let rot = null;
+  if (tqDesired || dlDesired) rot = await getWeekRotation(new Date(), client);
+  const tqOwner = (rot && rot.thongQuanOpsId) || existingOps || null;
+  const dlOwner = (rot && rot.doiLenhOpsId)   || existingOps || null;
+  const ensureOpsTask = async (taskType, owner) => {
     await client.query(
-      `INSERT INTO job_ops_task (job_id, ops_id, task_type) VALUES ($1, $2, $3)
+      `INSERT INTO job_ops_task (job_id, ops_id, task_type, assigned_at, assigned_by) VALUES ($1, $2, $3, NOW(), $4)
        ON CONFLICT (job_id, task_type) WHERE task_type IS NOT NULL DO NOTHING`,
-      [jobId, opsUserId, taskType]);
+      [jobId, owner, taskType, actingUserId]);
   };
   // Remove a now-unneeded task type, but NEVER delete one with committed work
   // (completed OR cost entered) — keep it + record a warning instead.
@@ -183,8 +192,15 @@ async function reconcileJobSides(client, jobId, opts) {
       }
     }
   };
-  if (tqDesired) await ensureOpsTask('thong_quan'); else await removeOpsTask('thong_quan');
-  if (dlDesired) await ensureOpsTask('doi_lenh');  else await removeOpsTask('doi_lenh');
+  if (tqDesired) await ensureOpsTask('thong_quan', tqOwner); else await removeOpsTask('thong_quan');
+  if (dlDesired) await ensureOpsTask('doi_lenh', dlOwner);   else await removeOpsTask('doi_lenh');
+
+  // Back-compat ja.ops_id = primary task owner (only when rotation resolved a
+  // current owner). truck/both → doi_lenh person; tk-only → thong_quan person.
+  const primaryOpsOwner = dlDesired ? dlOwner : (tqDesired ? tqOwner : null);
+  if ((tqDesired || dlDesired) && rot && primaryOpsOwner) {
+    await client.query(`UPDATE job_assignments SET ops_id = $1 WHERE job_id = $2`, [primaryOpsOwner, jobId]);
+  }
 
   return { blocked: false };
 }

@@ -9,6 +9,7 @@ const { CUS_ROLES, AUTO_CUS_ROLES, LOG_ROLES, PLAN_ROLES } = require('../constan
 const { canViewJob, canEditJob, canEditJobTk, canReassignOwnerOrStatus } = require('../services/job-access');
 const { fmtVnDeadline } = require('../utils/vnTime');
 const { reconcileJobSides } = require('../services/job-reconcile');
+const { getWeekRotation } = require('../services/ops-rotation');
 
 // In-memory suggestion cache (60s TTL) — invalidated on manual assignment
 let suggestionCache = { data: null, ts: 0 };
@@ -1599,22 +1600,42 @@ router.post('/', requireAuth, async (req, res) => {
       }
     }
 
-    // OPS assignment for Hải Phòng truck jobs
-    if (needsOps && mode === 'auto' && opsSuggestion) {
+    // OPS assignment (P1 — ISO-week rotation). In auto mode each OPS task's
+    // owner comes from the weekly rotation (services/ops-rotation.js), NOT the AI
+    // suggestion: thong_quan → thongQuanOpsId, doi_lenh / ops_hp → doiLenhOpsId.
+    // suggestOps remains the FALLBACK when rotation can't resolve a pair (no
+    // active OPS) so creation never breaks. tqOwner / dlOwner are consumed both
+    // here (ja.ops_id back-compat) and by the task-seeding block below.
+    let rotation = null;
+    if (needsOps && mode === 'auto') {
+      rotation = await getWeekRotation(new Date(), client);
+    }
+    const tqOwner = (rotation && rotation.thongQuanOpsId) || opsSuggestion?.user_id || null;
+    const dlOwner = (rotation && rotation.doiLenhOpsId)   || opsSuggestion?.user_id || null;
+    // Back-compat (P1 invariant): keep job_assignments.ops_id populated so every
+    // current read path (dashboard list / stats / tick-auth) still works until
+    // the P2 read-flip. ja.ops_id = the PRIMARY task owner, forward-consistent
+    // with P2: tk-only → thong_quan person; truck/both → doi_lenh person;
+    // ops_hp → doi_lenh person. (The non-primary owner's task row carries the
+    // correct per-task ops_id already; it just isn't read until P2.)
+    const hasTruckSide = service_type === 'truck' || service_type === 'both';
+    const primaryOpsOwner = isOpsHp ? dlOwner : (hasTruckSide ? dlOwner : tqOwner);
+    if (needsOps && mode === 'auto' && primaryOpsOwner) {
       const { rows: jaEx } = await client.query(`SELECT id FROM job_assignments WHERE job_id = $1`, [job.id]);
       if (jaEx[0]) {
-        await client.query(`UPDATE job_assignments SET ops_id = $1 WHERE job_id = $2`, [opsSuggestion.user_id, job.id]);
+        await client.query(`UPDATE job_assignments SET ops_id = $1 WHERE job_id = $2`, [primaryOpsOwner, job.id]);
       } else {
         await client.query(`
           INSERT INTO job_assignments (job_id, ops_id, assigned_by, assignment_mode)
           VALUES ($1, $2, $3, 'auto')
-        `, [job.id, opsSuggestion.user_id, req.user.id]);
+        `, [job.id, primaryOpsOwner, req.user.id]);
       }
+      const { rows: pou } = await client.query(`SELECT name FROM users WHERE id = $1`, [primaryOpsOwner]);
       await client.query(`
         INSERT INTO notifications (user_id, type, title, message, job_id)
         VALUES ($1, 'ai_job_assigned', 'AI phân job mới', $2, $3)
-      `, [opsSuggestion.user_id, `Bạn được phân job ${job.job_code || `#${job.id}`} - ${customer_name}`, job.id]);
-      await recordHistory(client, job.id, req.user.id, 'ops_assigned', null, opsSuggestion.user_name || String(opsSuggestion.user_id));
+      `, [primaryOpsOwner, `Bạn được phân job ${job.job_code || `#${job.id}`} - ${customer_name}`, job.id]);
+      await recordHistory(client, job.id, req.user.id, 'ops_assigned', null, pou[0]?.name || String(primaryOpsOwner));
     }
 
     // Điều Độ assignment: set dieu_do_id on the job_assignments row
@@ -1635,35 +1656,39 @@ router.post('/', requireAuth, async (req, res) => {
       await recordHistory(client, job.id, req.user.id, 'dieu_do_assigned', null, String(ddUserId));
     }
 
-    // Auto-generate job_ops_task rows for Hải Phòng jobs (per-task model 2026-05-23).
-    //   tk    → 'thong_quan' + 'doi_lenh' (OPS does TQ paperwork pickup AND đổi lệnh hộ khách)
+    // Auto-generate job_ops_task rows for Hải Phòng jobs (per-task model).
+    //   tk    → 'thong_quan' only        (P1 2026-06-22: tk-only no longer gets doi_lenh)
     //   truck → 'doi_lenh'
     //   both  → 'thong_quan' + 'doi_lenh'
-    // Rule: has TK (tk/both) → needs thong_quan; ANY HP job → needs doi_lenh.
+    //   ops_hp→ single 'ops_hp' task
+    // Rule (P1): has TK (tk/both) → thong_quan; has TRUCK (truck/both) → doi_lenh.
+    // Each task's ops_id is the ISO-week rotation owner (tqOwner / dlOwner above);
+    // ops_hp follows the doi_lenh person. assigned_at/by record the stamp.
     // Idempotent via partial UNIQUE (job_id, task_type) WHERE task_type IS NOT NULL.
     if (isOpsHp) {
-      // ops_hp (Step 1) — seed ONE free-text OPS task. This is the single unit
-      // OPS ticks (done + cost) to complete the job. NO thong_quan/doi_lenh.
-      const opsUserId = opsSuggestion?.user_id || null;
       await client.query(
-        `INSERT INTO job_ops_task (job_id, ops_id, task_type, content) VALUES ($1, $2, 'ops_hp', $3)
+        `INSERT INTO job_ops_task (job_id, ops_id, task_type, content, assigned_at, assigned_by)
+         VALUES ($1, $2, 'ops_hp', $3, NOW(), $4)
          ON CONFLICT (job_id, task_type) WHERE task_type IS NOT NULL DO NOTHING`,
-        [job.id, opsUserId, ops_hp_note || null]
+        [job.id, dlOwner, ops_hp_note || null, req.user.id]
       );
     } else if (destination === 'hai_phong' && ['tk','truck','both'].includes(service_type)) {
-      const opsUserId = opsSuggestion?.user_id || null;
       if (service_type === 'tk' || service_type === 'both') {
         await client.query(
-          `INSERT INTO job_ops_task (job_id, ops_id, task_type) VALUES ($1, $2, 'thong_quan')
+          `INSERT INTO job_ops_task (job_id, ops_id, task_type, assigned_at, assigned_by)
+           VALUES ($1, $2, 'thong_quan', NOW(), $3)
            ON CONFLICT (job_id, task_type) WHERE task_type IS NOT NULL DO NOTHING`,
-          [job.id, opsUserId]
+          [job.id, tqOwner, req.user.id]
         );
       }
-      await client.query(
-        `INSERT INTO job_ops_task (job_id, ops_id, task_type) VALUES ($1, $2, 'doi_lenh')
-         ON CONFLICT (job_id, task_type) WHERE task_type IS NOT NULL DO NOTHING`,
-        [job.id, opsUserId]
-      );
+      if (service_type === 'truck' || service_type === 'both') {
+        await client.query(
+          `INSERT INTO job_ops_task (job_id, ops_id, task_type, assigned_at, assigned_by)
+           VALUES ($1, $2, 'doi_lenh', NOW(), $3)
+           ON CONFLICT (job_id, task_type) WHERE task_type IS NOT NULL DO NOTHING`,
+          [job.id, dlOwner, req.user.id]
+        );
+      }
     }
 
     await recordHistory(client, job.id, req.user.id, 'job_created', null, customer_name);
@@ -2509,23 +2534,28 @@ router.patch('/:id/reassign-ops', requireAuth, async (req, res) => {
       `, [req.params.id, newOpsId, req.user.id]);
     }
 
-    // Wipe and recreate ops tasks per the per-task model (2026-05-23).
-    //   tk/both → 'thong_quan' + 'doi_lenh'
-    //   truck   → 'doi_lenh' only
-    // Per owner: reassign-ops RESETS all tasks for the new OPS — wipe + recreate
-    // (completed=FALSE, cost_entered_at=NULL by column defaults).
+    // Wipe and recreate ops tasks per the per-task model.
+    //   tk    → 'thong_quan' only   (P1 2026-06-22: tk-only no longer gets doi_lenh)
+    //   truck → 'doi_lenh' only
+    //   both  → 'thong_quan' + 'doi_lenh'
+    // Per owner: reassign-ops RESETS all tasks to the new OPS — wipe + recreate
+    // (completed=FALSE, cost_entered_at=NULL by column defaults). This is an
+    // explicit manual single-owner assignment (NOT the rotation) — newOpsId owns
+    // every recreated task; assigned_at/by record the manual stamp.
     await client.query(`DELETE FROM job_ops_task WHERE job_id = $1`, [req.params.id]);
     if (j.destination === 'hai_phong' && ['tk', 'truck', 'both'].includes(j.service_type)) {
       if (j.service_type === 'tk' || j.service_type === 'both') {
         await client.query(
-          `INSERT INTO job_ops_task (job_id, ops_id, task_type) VALUES ($1, $2, 'thong_quan')`,
-          [req.params.id, newOpsId]
+          `INSERT INTO job_ops_task (job_id, ops_id, task_type, assigned_at, assigned_by) VALUES ($1, $2, 'thong_quan', NOW(), $3)`,
+          [req.params.id, newOpsId, req.user.id]
         );
       }
-      await client.query(
-        `INSERT INTO job_ops_task (job_id, ops_id, task_type) VALUES ($1, $2, 'doi_lenh')`,
-        [req.params.id, newOpsId]
-      );
+      if (j.service_type === 'truck' || j.service_type === 'both') {
+        await client.query(
+          `INSERT INTO job_ops_task (job_id, ops_id, task_type, assigned_at, assigned_by) VALUES ($1, $2, 'doi_lenh', NOW(), $3)`,
+          [req.params.id, newOpsId, req.user.id]
+        );
+      }
     }
 
     await recordHistory(client, req.params.id, req.user.id, 'ops_reassigned', oldName, newName);
@@ -3171,8 +3201,12 @@ router.post('/:id/delete-request', requireAuth, async (req, res) => {
 // flag and a cost tick (like doi_lenh), so it appears in OPS_TASK_TYPES (cost
 // endpoints) AND OPS_DONE_TASK_TYPES (done endpoints). thong_quan stays
 // cost-only (no done flag — tk_status owns its "cleared" event).
-const OPS_TASK_TYPES = ['thong_quan', 'doi_lenh', 'ops_hp'];
-const OPS_DONE_TASK_TYPES = ['doi_lenh', 'ops_hp'];
+// 'viec_khac' (P1 2026-06-22) — TP-added free-text OPS task. Two-tick (done +
+// cost) like doi_lenh, so it's in BOTH lists. The CREATION UI (TP "+ việc khác")
+// arrives in P3; P1 only makes the tick + completion gate RECOGNIZE the type so
+// it's ready. No viec_khac rows exist until P3 → inert for now.
+const OPS_TASK_TYPES = ['thong_quan', 'doi_lenh', 'ops_hp', 'viec_khac'];
+const OPS_DONE_TASK_TYPES = ['doi_lenh', 'ops_hp', 'viec_khac'];
 const TK_TERMINAL_STATUSES = ['thong_quan', 'giai_phong', 'bao_quan'];
 
 async function loadOpsTaskContext(client, jobId, taskType) {

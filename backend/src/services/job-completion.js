@@ -62,7 +62,17 @@ async function checkOpsTasksDone(client, jobId) {
       (SELECT completed       FROM job_ops_task
          WHERE job_id = $1 AND task_type = 'ops_hp')     AS oh_completed,
       (SELECT cost_entered_at FROM job_ops_task
-         WHERE job_id = $1 AND task_type = 'ops_hp')     AS oh_cost_entered_at
+         WHERE job_id = $1 AND task_type = 'ops_hp')     AS oh_cost_entered_at,
+      -- viec_khac (P1 2026-06-22) — TP-added free-text task. Two-tick like
+      -- doi_lenh (done + cost). EXISTS-tolerant: vk_task_id is null for every
+      -- job without one (i.e. all jobs until P3 ships the creation UI), so this
+      -- gate is satisfied by default and changes nothing for current jobs.
+      (SELECT id              FROM job_ops_task
+         WHERE job_id = $1 AND task_type = 'viec_khac')  AS vk_task_id,
+      (SELECT completed       FROM job_ops_task
+         WHERE job_id = $1 AND task_type = 'viec_khac')  AS vk_completed,
+      (SELECT cost_entered_at FROM job_ops_task
+         WHERE job_id = $1 AND task_type = 'viec_khac')  AS vk_cost_entered_at
   `, [jobId]);
   const tqRequired = r.tq_task_id !== null;
   const tqDone     = !tqRequired || !!r.tq_cost_entered_at;
@@ -72,6 +82,10 @@ async function checkOpsTasksDone(client, jobId) {
   // so normal tk/truck/both jobs are completely unaffected by this gate.
   const ohRequired = r.oh_task_id !== null;
   const ohDone     = !ohRequired || (!!r.oh_completed && !!r.oh_cost_entered_at);
+  // viec_khac (P1) — same two-tick shape as doi_lenh; vk_task_id null ⇒ not
+  // required ⇒ done, so jobs without a viec_khac task are unaffected.
+  const vkRequired = r.vk_task_id !== null;
+  const vkDone     = !vkRequired || (!!r.vk_completed && !!r.vk_cost_entered_at);
   const missing = [];
   if (!tqDone) missing.push('OPS chưa nhập cost thông quan');
   if (!dlDone) {
@@ -82,7 +96,11 @@ async function checkOpsTasksDone(client, jobId) {
     if (!r.oh_completed)       missing.push('OPS chưa hoàn thành việc');
     if (!r.oh_cost_entered_at) missing.push('OPS chưa nhập cost');
   }
-  return { ready: tqDone && dlDone && ohDone, missing };
+  if (!vkDone) {
+    if (!r.vk_completed)       missing.push('OPS chưa hoàn thành việc khác');
+    if (!r.vk_cost_entered_at) missing.push('OPS chưa nhập cost việc khác');
+  }
+  return { ready: tqDone && dlDone && ohDone && vkDone, missing };
 }
 
 async function checkAndCompleteJob(client, jobId, changedBy, recordHistory) {

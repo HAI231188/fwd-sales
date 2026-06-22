@@ -1179,6 +1179,13 @@ CREATE INDEX IF NOT EXISTS idx_job_tk_cost_pending
 ALTER TABLE job_ops_task ADD COLUMN IF NOT EXISTS cost_entered_at TIMESTAMP WITH TIME ZONE;
 ALTER TABLE job_ops_task ADD COLUMN IF NOT EXISTS cost_entered_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
 
+-- P1 (2026-06-22) — per-task owner audit. Set by create-seeding +
+-- reconcileJobSides from the ISO-week rotation (services/ops-rotation.js):
+-- assigned_at = when the task owner was stamped, assigned_by = the acting user.
+-- Idempotent ALTERs; the per-task owner itself is job_ops_task.ops_id (existing).
+ALTER TABLE job_ops_task ADD COLUMN IF NOT EXISTS assigned_at TIMESTAMP WITH TIME ZONE;
+ALTER TABLE job_ops_task ADD COLUMN IF NOT EXISTS assigned_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
+
 -- Migrate composite 'thong_quan_doi_lenh' rows into separate 'thong_quan' +
 -- 'doi_lenh'. Idempotent — NOT EXISTS guards skip already-split jobs; safe
 -- to re-run. Must run BEFORE the UNIQUE index is created so legacy composite

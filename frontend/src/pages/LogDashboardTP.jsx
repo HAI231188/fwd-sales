@@ -84,9 +84,12 @@ function tpStatusLines(j) {
         lines.push('OPS: Chưa thông quan');
       } else if (!tq?.cost_entered_at) {
         lines.push('OPS: Đã thông quan — chưa nhập cost TQ');
-      } else if (!dl?.completed) {
+      } else if (dl && !dl.completed) {
+        // P1: only when a doi_lenh task actually exists. tk-only HP jobs no
+        // longer get a doi_lenh task, so after TQ cost is in they fall through
+        // to "Hoàn thành" instead of the phantom "Chưa đổi lệnh".
         lines.push('OPS: Chưa đổi lệnh');
-      } else if (!dl?.cost_entered_at) {
+      } else if (dl && !dl.cost_entered_at) {
         lines.push('OPS: Đã đổi lệnh — chưa nhập cost ĐL');
       }
     } else if (svc === 'truck') {
