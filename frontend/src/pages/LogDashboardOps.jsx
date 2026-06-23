@@ -11,6 +11,7 @@ import {
   markOpsTaskDone, unmarkOpsTaskDone, tickOpsTaskCost, untickOpsTaskCost,
 } from '../api';
 import { fmtDate, fmtDateTime as fmtDt } from '../utils/dateFmt';
+import { useAuth } from '../App';
 
 // Per-task model helpers (2026-05-23). j.ops_tasks is the JSON array of task
 // rows returned by GET /api/jobs (see backend ops_tasks projection).
@@ -20,24 +21,33 @@ function getOpsTask(j, taskType) {
   const tasks = Array.isArray(j.ops_tasks) ? j.ops_tasks : [];
   return tasks.find(t => t.task_type === taskType) || null;
 }
-function hasTqTask(j) { return !!getOpsTask(j, 'thong_quan'); }
-function hasDlTask(j) { return !!getOpsTask(j, 'doi_lenh'); }
-function isTqDone(j) {
-  const t = getOpsTask(j, 'thong_quan');
+// P2 read-flip: ownership-aware lookup. Returns the task of `taskType` ONLY if
+// the current OPS user owns it (jot.ops_id === uid). Every visibility / done /
+// recency / button predicate below scopes through this, so each OPS sees & ticks
+// ONLY their own task. (Status pills keep using getOpsTask — they render in a row
+// that's already the user's, so the task of that type is theirs.)
+function getMyTask(j, taskType, uid) {
+  const t = getOpsTask(j, taskType);
+  return t && t.ops_id === uid ? t : null;
+}
+function hasTqTask(j, uid) { return !!getMyTask(j, 'thong_quan', uid); }
+function hasDlTask(j, uid) { return !!getMyTask(j, 'doi_lenh', uid); }
+function isTqDone(j, uid) {
+  const t = getMyTask(j, 'thong_quan', uid);
   return !!t && !!t.cost_entered_at;
 }
-function isDlDone(j) {
-  const t = getOpsTask(j, 'doi_lenh');
+function isDlDone(j, uid) {
+  const t = getMyTask(j, 'doi_lenh', uid);
   return !!t && t.completed === true && !!t.cost_entered_at;
 }
 // ops_hp (Step 2) — OPS-only job's single free-text task. Done = completed AND cost.
-function hasOpsHpTask(j) { return !!getOpsTask(j, 'ops_hp'); }
-function isOpsHpDone(j) {
-  const t = getOpsTask(j, 'ops_hp');
+function hasOpsHpTask(j, uid) { return !!getMyTask(j, 'ops_hp', uid); }
+function isOpsHpDone(j, uid) {
+  const t = getMyTask(j, 'ops_hp', uid);
   return !!t && t.completed === true && !!t.cost_entered_at;
 }
-function ohDoneAt(j) {
-  const t = getOpsTask(j, 'ops_hp');
+function ohDoneAt(j, uid) {
+  const t = getMyTask(j, 'ops_hp', uid);
   return (t?.completed && t?.cost_entered_at) ? t.cost_entered_at : null;
 }
 function opsStatusOpsHp(j) {
@@ -93,10 +103,14 @@ function opsKhu2Done(j) {
 }
 // For Hoàn thành tab filter: OPS finished their portion across whichever
 // task rows the job has. No task rows ⇒ not required ⇒ trivially done.
-function opsAllRequiredDone(j) {
-  const tqOk = !hasTqTask(j) || opsKhu1Done(j);
-  const dlOk = !hasDlTask(j) || opsKhu2Done(j);
-  const ohOk = !hasOpsHpTask(j) || isOpsHpDone(j);
+// P2: "my portion done" — gated by MY task ownership. Tasks I don't own are
+// treated as not-required-for-me (short-circuit true), so on a both job where I
+// own only thong_quan, this is true once MY thong_quan is done. opsKhu1Done/
+// opsKhu2Done read the raw task, which IS mine whenever the has*(uid) gate passes.
+function opsAllRequiredDone(j, uid) {
+  const tqOk = !hasTqTask(j, uid) || opsKhu1Done(j);
+  const dlOk = !hasDlTask(j, uid) || opsKhu2Done(j);
+  const ohOk = !hasOpsHpTask(j, uid) || isOpsHpDone(j, uid);
   return tqOk && dlOk && ohOk;
 }
 function OpsStatusPill({ info }) {
@@ -108,14 +122,14 @@ function OpsStatusPill({ info }) {
     </span>
   );
 }
-function tqDoneAt(j) { return getOpsTask(j, 'thong_quan')?.cost_entered_at || null; }
-function dlDoneAt(j) {
-  const t = getOpsTask(j, 'doi_lenh');
+function tqDoneAt(j, uid) { return getMyTask(j, 'thong_quan', uid)?.cost_entered_at || null; }
+function dlDoneAt(j, uid) {
+  const t = getMyTask(j, 'doi_lenh', uid);
   return (t?.completed && t?.cost_entered_at) ? t.cost_entered_at : null;
 }
-// Latest "OPS done" timestamp = max of available task finish times.
-function latestOpsDoneAt(j) {
-  const stamps = [tqDoneAt(j), dlDoneAt(j), ohDoneAt(j)].filter(Boolean).map(s => new Date(s).getTime());
+// Latest "OPS done" timestamp = max of MY task finish times (P2: uid-scoped).
+function latestOpsDoneAt(j, uid) {
+  const stamps = [tqDoneAt(j, uid), dlDoneAt(j, uid), ohDoneAt(j, uid)].filter(Boolean).map(s => new Date(s).getTime());
   if (!stamps.length) return null;
   return new Date(Math.max(...stamps));
 }
@@ -327,6 +341,8 @@ const HT_COLS = [
 
 export default function LogDashboardOps() {
   const qc = useQueryClient();
+  const { user } = useAuth();   // P2: current OPS user — scopes per-task ownership
+  const uid = user?.id;
   const [tab, setTab] = useState('tq_doi_lenh');
   const [detailJobId, setDetailJobId] = useState(null);
   const [jobListFilter, setJobListFilter] = useState(null);
@@ -401,40 +417,43 @@ export default function LogDashboardOps() {
   //   dlJobs: HP + ANY service_type + doi_lenh  task pending (done OR cost not ticked)
   //   todayJobs: tomorrow's planned doi_lenh deliveries
   //   doneJobs: jobs where ALL required OPS tasks just finished within 3 days
+  // P2 read-flip: the backend now returns jobs where I own ANY task, so each khu
+  // is scoped to MY task ownership (hasXTask(j, uid)) — the thong_quan owner and
+  // the doi_lenh owner of the same both job each see only their own khu/row.
   const tqJobs = pendingJobs.filter(j =>
     j.destination === 'hai_phong' &&
     (j.service_type === 'tk' || j.service_type === 'both') &&
-    hasTqTask(j) && !isTqDone(j)
+    hasTqTask(j, uid) && !isTqDone(j, uid)
   );
   const dlJobs = pendingJobs.filter(j =>
     j.destination === 'hai_phong' &&
-    hasDlTask(j) && !isDlDone(j)
+    hasDlTask(j, uid) && !isDlDone(j, uid)
   );
   // ops_hp (Step 2) — OPS-only jobs still in progress (task not done+costed).
   // Done ops_hp jobs leave this tab → surface in "Xong việc (3 ngày)" + "Hoàn thành",
   // exactly like the tq/dl tabs.
   const opsHpJobs = pendingJobs.filter(j =>
-    j.service_type === 'ops_hp' && hasOpsHpTask(j) && !isOpsHpDone(j)
+    j.service_type === 'ops_hp' && hasOpsHpTask(j, uid) && !isOpsHpDone(j, uid)
   );
   const todayJobs = pendingJobs.filter(j =>
     j.destination === 'hai_phong' &&
     (j.service_type === 'truck' || j.service_type === 'both') &&
+    hasDlTask(j, uid) &&            // P2: only MY doi_lenh deliveries
     j.planned_datetime &&
     localDate(new Date(j.planned_datetime)) === tomorrow
   );
   const doneJobs = pendingJobs.filter(j => {
-    // For each task type the job needs, the task must be done AND its finish
-    // timestamp must be within the last 3 days. If the job needs both tasks,
-    // require both finished; recency uses the most recent finish.
-    const needsTq = hasTqTask(j);
-    const needsDl = hasDlTask(j);
-    const needsOh = hasOpsHpTask(j);
+    // For each task type I OWN, the task must be done AND its finish timestamp
+    // within the last 3 days. Recency uses the most recent of MY finishes.
+    const needsTq = hasTqTask(j, uid);
+    const needsDl = hasDlTask(j, uid);
+    const needsOh = hasOpsHpTask(j, uid);
     if (!needsTq && !needsDl && !needsOh) return false;
-    const tqOk = !needsTq || isTqDone(j);
-    const dlOk = !needsDl || isDlDone(j);
-    const ohOk = !needsOh || isOpsHpDone(j);
+    const tqOk = !needsTq || isTqDone(j, uid);
+    const dlOk = !needsDl || isDlDone(j, uid);
+    const ohOk = !needsOh || isOpsHpDone(j, uid);
     if (!tqOk || !dlOk || !ohOk) return false;
-    const finishes = [tqDoneAt(j), dlDoneAt(j), ohDoneAt(j)].filter(Boolean).map(s => new Date(s));
+    const finishes = [tqDoneAt(j, uid), dlDoneAt(j, uid), ohDoneAt(j, uid)].filter(Boolean).map(s => new Date(s));
     if (!finishes.length) return false;
     const latest = new Date(Math.max(...finishes.map(d => d.getTime())));
     return latest >= threeDaysAgo;
@@ -484,7 +503,7 @@ export default function LogDashboardOps() {
   }
 
   function tqCostBtn(j) {
-    const t = getOpsTask(j, 'thong_quan');
+    const t = getMyTask(j, 'thong_quan', uid);
     if (!t) return null;
     const ticked = !!t.cost_entered_at;
     const ok = tkPreconditionOk(j);
@@ -499,7 +518,7 @@ export default function LogDashboardOps() {
     );
   }
   function dlDoneBtn(j) {
-    const t = getOpsTask(j, 'doi_lenh');
+    const t = getMyTask(j, 'doi_lenh', uid);
     if (!t) return null;
     const ticked = t.completed === true;
     const ok = tkPreconditionOk(j);
@@ -514,7 +533,7 @@ export default function LogDashboardOps() {
     );
   }
   function dlCostBtn(j) {
-    const t = getOpsTask(j, 'doi_lenh');
+    const t = getMyTask(j, 'doi_lenh', uid);
     if (!t) return null;
     const ticked = !!t.cost_entered_at;
     const ok = tkPreconditionOk(j);
@@ -530,7 +549,7 @@ export default function LogDashboardOps() {
   }
   // ops_hp tick buttons — no tk_status precondition (ops_hp has no TK row).
   function ohDoneBtn(j) {
-    const t = getOpsTask(j, 'ops_hp');
+    const t = getMyTask(j, 'ops_hp', uid);
     if (!t) return null;
     const ticked = t.completed === true;
     return (
@@ -543,7 +562,7 @@ export default function LogDashboardOps() {
     );
   }
   function ohCostBtn(j) {
-    const t = getOpsTask(j, 'ops_hp');
+    const t = getMyTask(j, 'ops_hp', uid);
     if (!t) return null;
     const ticked = !!t.cost_entered_at;
     return (
@@ -937,7 +956,7 @@ export default function LogDashboardOps() {
                     body={
                       <>
                         <div style={{ fontSize: 12, marginBottom: 6, color: 'var(--primary)', fontWeight: 600 }}>
-                          ✓ Xong: {fmtDt(latestOpsDoneAt(j))}
+                          ✓ Xong: {fmtDt(latestOpsDoneAt(j, uid))}
                         </div>
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 12px', marginBottom: 6, fontSize: 12 }}>
                           <div><span style={{ color: 'var(--text-2)' }}>Mã SI:</span> {j.si_number || '—'}</div>
@@ -965,7 +984,7 @@ export default function LogDashboardOps() {
                 tableStyle={{ fontSize: 13 }}
                 renderRow={j => (
                   <tr key={j.id} style={{ cursor: 'pointer' }} onDoubleClick={() => setDetailJobId(j.id)}>
-                    <TD style={{ whiteSpace: 'nowrap', fontSize: 12, color: 'var(--primary)' }}>{fmtDt(latestOpsDoneAt(j))}</TD>
+                    <TD style={{ whiteSpace: 'nowrap', fontSize: 12, color: 'var(--primary)' }}>{fmtDt(latestOpsDoneAt(j, uid))}</TD>
                     <TD style={{ fontWeight: 600, color: 'var(--info)', whiteSpace: 'nowrap' }}>
                       {j.returned_to === 'log' && (
                         <span style={{ marginRight: 4, cursor: 'help' }}
@@ -997,7 +1016,7 @@ export default function LogDashboardOps() {
                    Khu ĐL xong   = opsKhu2Done (đổi lệnh + cost ĐL).
                    Jobs without OPS task rows (non-OPS-assigned) are excluded by the
                    hasTqTask/hasDlTask gates inside opsAllRequiredDone. */
-                data={completedJobs.filter(j => j.destination === 'hai_phong' && (hasTqTask(j) || hasDlTask(j) || hasOpsHpTask(j)) && opsAllRequiredDone(j))}
+                data={completedJobs.filter(j => j.destination === 'hai_phong' && (hasTqTask(j, uid) || hasDlTask(j, uid) || hasOpsHpTask(j, uid)) && opsAllRequiredDone(j, uid))}
                 renderMobileCard={(j) => (
                   <OpsCard key={j.id} job={j} onOpen={() => setDetailJobId(j.id)} codeColor="var(--primary)"
                     body={

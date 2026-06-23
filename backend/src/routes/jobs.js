@@ -169,18 +169,19 @@ function queryDieuDoStaffStats(scope) {
 function queryOpsStaffStats(scope) {
   const where = scope.userId ? `u.id = $1` : `u.role = 'ops'`;
   const params = scope.userId ? [scope.userId] : [];
+  // P2 read-flip: workload is per-task — join via job_ops_task.ops_id (a user can
+  // own ≥1 task per job, e.g. a collapsed single-OPS pool), so every count is
+  // COUNT(DISTINCT j.id) to dedupe the job. The per-row jot is the user's OWN
+  // task, so tq/dl filters check jot.task_type directly (no correlated EXISTS).
   return db.query(`
     SELECT u.id, u.name, u.role, u.code, u.avatar_color,
-      COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL) AS managing,
-      -- Per-task pending counts (2026-05-23): pending = task row exists and is not done.
-      --   tq pending = thong_quan row exists with cost_entered_at IS NULL
-      --   dl pending = doi_lenh   row exists with completed=FALSE OR cost_entered_at IS NULL
-      COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND j.service_type IN ('tk','both') AND j.destination = 'hai_phong' AND EXISTS (SELECT 1 FROM job_ops_task jot WHERE jot.job_id = j.id AND jot.task_type = 'thong_quan' AND jot.cost_entered_at IS NULL)) AS tq_doi_lenh,
-      COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND j.service_type IN ('truck','both') AND j.destination = 'hai_phong' AND EXISTS (SELECT 1 FROM job_ops_task jot WHERE jot.job_id = j.id AND jot.task_type = 'doi_lenh' AND (jot.completed = FALSE OR jot.cost_entered_at IS NULL))) AS doi_lenh,
-      COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '4 hours' AND (jt.tk_status IS NULL OR jt.tk_status IN ('chua_truyen','dang_lam'))) AS near_deadline
+      COUNT(DISTINCT j.id) FILTER (WHERE j.status = 'pending') AS managing,
+      COUNT(DISTINCT j.id) FILTER (WHERE j.status = 'pending' AND jot.task_type = 'thong_quan' AND jot.cost_entered_at IS NULL) AS tq_doi_lenh,
+      COUNT(DISTINCT j.id) FILTER (WHERE j.status = 'pending' AND jot.task_type = 'doi_lenh' AND (jot.completed = FALSE OR jot.cost_entered_at IS NULL)) AS doi_lenh,
+      COUNT(DISTINCT j.id) FILTER (WHERE j.status = 'pending' AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '4 hours' AND (jt.tk_status IS NULL OR jt.tk_status IN ('chua_truyen','dang_lam'))) AS near_deadline
     FROM users u
-    LEFT JOIN job_assignments ja ON ja.ops_id = u.id
-    LEFT JOIN jobs j ON j.id = ja.job_id
+    LEFT JOIN job_ops_task jot ON jot.ops_id = u.id
+    LEFT JOIN jobs j ON j.id = jot.job_id AND j.deleted_at IS NULL
     LEFT JOIN job_tk jt ON jt.job_id = j.id
     WHERE (${where}) AND u.disabled_at IS NULL
     GROUP BY u.id, u.name, u.role, u.code, u.avatar_color
@@ -359,12 +360,15 @@ router.get('/stats', requireAuth, async (req, res) => {
         cus_stats:     cusStats.rows,
       });
     } else if (role === 'ops') {
+      // P2 read-flip — all 5 counts scope by per-task ownership (job_ops_task.ops_id),
+      // not the job-level ja.ops_id. total/sap_han/qua_han = jobs where I own ANY
+      // task; cho_tq_doi_lenh / cho_doi_lenh = jobs where I own the specific pending task.
       const [total, choTqDoiLenh, choDoiLenh, sapHan, quaHan, opsStats] = await Promise.all([
-        db.query(`SELECT COUNT(*) AS v FROM job_assignments ja JOIN jobs j ON j.id = ja.job_id WHERE ja.ops_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL`, [userId]),
-        db.query(`SELECT COUNT(*) AS v FROM job_assignments ja JOIN jobs j ON j.id = ja.job_id WHERE ja.ops_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL AND j.destination = 'hai_phong' AND j.service_type IN ('tk','both') AND EXISTS (SELECT 1 FROM job_ops_task jot WHERE jot.job_id = j.id AND jot.task_type = 'thong_quan' AND jot.cost_entered_at IS NULL)`, [userId]),
-        db.query(`SELECT COUNT(*) AS v FROM job_assignments ja JOIN jobs j ON j.id = ja.job_id WHERE ja.ops_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL AND j.destination = 'hai_phong' AND j.service_type IN ('truck','both') AND EXISTS (SELECT 1 FROM job_ops_task jot WHERE jot.job_id = j.id AND jot.task_type = 'doi_lenh' AND (jot.completed = FALSE OR jot.cost_entered_at IS NULL))`, [userId]),
-        db.query(`SELECT COUNT(*) AS v FROM job_assignments ja JOIN jobs j ON j.id = ja.job_id WHERE ja.ops_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '24 hours'`, [userId]),
-        db.query(`SELECT COUNT(*) AS v FROM job_assignments ja JOIN jobs j ON j.id = ja.job_id WHERE ja.ops_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL AND j.deadline < NOW()`, [userId]),
+        db.query(`SELECT COUNT(*) AS v FROM jobs j WHERE j.status = 'pending' AND j.deleted_at IS NULL AND EXISTS (SELECT 1 FROM job_ops_task jot WHERE jot.job_id = j.id AND jot.ops_id = $1)`, [userId]),
+        db.query(`SELECT COUNT(*) AS v FROM jobs j WHERE j.status = 'pending' AND j.deleted_at IS NULL AND EXISTS (SELECT 1 FROM job_ops_task jot WHERE jot.job_id = j.id AND jot.task_type = 'thong_quan' AND jot.ops_id = $1 AND jot.cost_entered_at IS NULL)`, [userId]),
+        db.query(`SELECT COUNT(*) AS v FROM jobs j WHERE j.status = 'pending' AND j.deleted_at IS NULL AND EXISTS (SELECT 1 FROM job_ops_task jot WHERE jot.job_id = j.id AND jot.task_type = 'doi_lenh' AND jot.ops_id = $1 AND (jot.completed = FALSE OR jot.cost_entered_at IS NULL))`, [userId]),
+        db.query(`SELECT COUNT(*) AS v FROM jobs j WHERE j.status = 'pending' AND j.deleted_at IS NULL AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '24 hours' AND EXISTS (SELECT 1 FROM job_ops_task jot WHERE jot.job_id = j.id AND jot.ops_id = $1)`, [userId]),
+        db.query(`SELECT COUNT(*) AS v FROM jobs j WHERE j.status = 'pending' AND j.deleted_at IS NULL AND j.deadline < NOW() AND EXISTS (SELECT 1 FROM job_ops_task jot WHERE jot.job_id = j.id AND jot.ops_id = $1)`, [userId]),
         queryOpsStaffStats({ userId }),
       ]);
       res.json({
@@ -900,26 +904,34 @@ router.get('/filtered', requireAuth, async (req, res) => {
       case 'staff_dd_pending':
         staffField = 'dieu_do_id';
         break;
+      // P2 read-flip: OPS staff drilldowns scope by per-task ownership
+      // (job_ops_task.ops_id = staffId), NOT ja.ops_id. Each ops case builds its
+      // own baseWhere + pushes staffId, and sets staffField = null so the generic
+      // `ja.${staffField}` baseWhere below is skipped. (cus/dd keep staffField.)
       case 'staff_ops_managing':
-        staffField = 'ops_id';
+        baseWhere = `AND EXISTS (SELECT 1 FROM job_ops_task jo WHERE jo.job_id = j.id AND jo.ops_id = $${idx++})`;
+        params.push(staffId); staffField = null;
         break;
       case 'staff_ops_tq_doi_lenh':
-        staffField = 'ops_id';
-        extraWhere = `AND j.service_type IN ('tk','both') AND j.destination = 'hai_phong' AND EXISTS (SELECT 1 FROM job_ops_task jot WHERE jot.job_id = j.id AND jot.task_type = 'thong_quan' AND jot.cost_entered_at IS NULL)`;
+        baseWhere = `AND EXISTS (SELECT 1 FROM job_ops_task jo WHERE jo.job_id = j.id AND jo.task_type = 'thong_quan' AND jo.ops_id = $${idx++} AND jo.cost_entered_at IS NULL)`;
+        params.push(staffId); staffField = null;
         break;
       case 'staff_ops_doi_lenh':
-        staffField = 'ops_id';
-        extraWhere = `AND j.service_type IN ('truck','both') AND j.destination = 'hai_phong' AND EXISTS (SELECT 1 FROM job_ops_task jot WHERE jot.job_id = j.id AND jot.task_type = 'doi_lenh' AND (jot.completed = FALSE OR jot.cost_entered_at IS NULL))`;
+        baseWhere = `AND EXISTS (SELECT 1 FROM job_ops_task jo WHERE jo.job_id = j.id AND jo.task_type = 'doi_lenh' AND jo.ops_id = $${idx++} AND (jo.completed = FALSE OR jo.cost_entered_at IS NULL))`;
+        params.push(staffId); staffField = null;
         break;
       case 'staff_ops_near_deadline':
-        staffField = 'ops_id';
+        baseWhere = `AND EXISTS (SELECT 1 FROM job_ops_task jo WHERE jo.job_id = j.id AND jo.ops_id = $${idx++})`;
+        params.push(staffId); staffField = null;
         extraWhere = `AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '4 hours' AND (jt.tk_status IS NULL OR jt.tk_status IN ('chua_truyen','dang_lam'))`;
         break;
       default:
         return res.status(400).json({ error: 'Unknown staff filter' });
     }
-    baseWhere = `AND ja.${staffField} = $${idx++}`;
-    params.push(staffId);
+    if (staffField) {
+      baseWhere = `AND ja.${staffField} = $${idx++}`;
+      params.push(staffId);
+    }
 
     try {
       const { rows } = await db.query(`
@@ -970,7 +982,10 @@ router.get('/filtered', requireAuth, async (req, res) => {
     baseWhere = `AND ja.dieu_do_id = $${idx++}`;
     params.push(userId);
   } else if (role === 'ops') {
-    baseWhere = `AND ja.ops_id = $${idx++}`;
+    // P2 read-flip: an OPS's own drilldowns scope by per-task ownership
+    // (own ≥1 task). Typed cases (ops_waiting_tq_doilenh / _doilenh) further
+    // require ownership of the SPECIFIC pending task in their extraWhere below.
+    baseWhere = `AND EXISTS (SELECT 1 FROM job_ops_task jo WHERE jo.job_id = j.id AND jo.ops_id = $${idx++})`;
     params.push(userId);
   } else {
     return res.status(403).json({ error: 'Không có quyền' });
@@ -1105,10 +1120,13 @@ router.get('/filtered', requireAuth, async (req, res) => {
     case 'dd_sap_han':       extraWhere = `AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '48 hours'`; break;
     // OPS filters — must match the corresponding stat-card WHERE clauses exactly (CLAUDE.md L5)
     case 'ops_waiting_tq_doilenh':
-      extraWhere = `AND j.destination = 'hai_phong' AND j.service_type IN ('tk','both') AND EXISTS (SELECT 1 FROM job_ops_task jot WHERE jot.job_id = j.id AND jot.task_type = 'thong_quan' AND jot.cost_entered_at IS NULL)`;
+      // P2: match the flipped header count — I must OWN the pending thong_quan task.
+      extraWhere = `AND j.destination = 'hai_phong' AND j.service_type IN ('tk','both') AND EXISTS (SELECT 1 FROM job_ops_task jot WHERE jot.job_id = j.id AND jot.task_type = 'thong_quan' AND jot.ops_id = $${idx++} AND jot.cost_entered_at IS NULL)`;
+      params.push(userId);
       break;
     case 'ops_waiting_doilenh':
-      extraWhere = `AND j.destination = 'hai_phong' AND j.service_type IN ('truck','both') AND EXISTS (SELECT 1 FROM job_ops_task jot WHERE jot.job_id = j.id AND jot.task_type = 'doi_lenh' AND (jot.completed = FALSE OR jot.cost_entered_at IS NULL))`;
+      extraWhere = `AND j.destination = 'hai_phong' AND j.service_type IN ('truck','both') AND EXISTS (SELECT 1 FROM job_ops_task jot WHERE jot.job_id = j.id AND jot.task_type = 'doi_lenh' AND jot.ops_id = $${idx++} AND (jot.completed = FALSE OR jot.cost_entered_at IS NULL))`;
+      params.push(userId);
       break;
     case 'ops_near_deadline': extraWhere = `AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '24 hours'`; break;
     case 'ops_overdue':       extraWhere = `AND j.deadline < NOW()`; break;
@@ -1232,7 +1250,9 @@ router.get('/', requireAuth, async (req, res) => {
       conditions.push(`ja.cus_id = $${idx++}`);
       params.push(userId);
     } else if (role === 'ops') {
-      conditions.push(`ja.ops_id = $${idx++}`);
+      // P2 read-flip: an OPS sees a job iff they own at least one of its tasks
+      // (per-task job_ops_task.ops_id), NOT the job-level ja.ops_id.
+      conditions.push(`EXISTS (SELECT 1 FROM job_ops_task jot WHERE jot.job_id = j.id AND jot.ops_id = $${idx++})`);
       params.push(userId);
     }
     // role === 'sales' already handled by the unified guard above.
@@ -1286,9 +1306,14 @@ router.get('/', requireAuth, async (req, res) => {
             'port', jot.port, 'deadline', jot.deadline,
             'completed', jot.completed, 'completed_at', jot.completed_at, 'notes', jot.notes,
             -- Per-task model (2026-05-23): cost tick state per task row.
-            'cost_entered_at', jot.cost_entered_at, 'cost_entered_by', jot.cost_entered_by
+            'cost_entered_at', jot.cost_entered_at, 'cost_entered_by', jot.cost_entered_by,
+            -- P2 (2026-06-22): per-task owner — the OPS dashboard filters/ticks by
+            -- jot.ops_id === current user; TP can show per-task owners.
+            'ops_id', jot.ops_id, 'ops_name', uo.name
           ) ORDER BY jot.id)
-          FROM job_ops_task jot WHERE jot.job_id = j.id
+          FROM job_ops_task jot
+          LEFT JOIN users uo ON uo.id = jot.ops_id
+          WHERE jot.job_id = j.id
         ), '[]'::json) AS ops_tasks,
         -- Phase 2: truck-booking summary. Status comes from the plpgsql function
         -- so dashboards stay aligned on a single source of truth (L20). The
@@ -1688,6 +1713,22 @@ router.post('/', requireAuth, async (req, res) => {
            ON CONFLICT (job_id, task_type) WHERE task_type IS NOT NULL DO NOTHING`,
           [job.id, dlOwner, req.user.id]
         );
+      }
+    }
+
+    // P2 companion (D): notify EACH distinct OPS task owner of their task. The
+    // primary owner (= ja.ops_id) was already notified above; this catches the
+    // OTHER owner on a both job whose thong_quan and doi_lenh belong to different
+    // people, so the thong_quan owner learns of their task (not just by browsing).
+    if (needsOps && mode === 'auto') {
+      const { rows: taskOwners } = await client.query(
+        `SELECT DISTINCT ops_id FROM job_ops_task WHERE job_id = $1 AND ops_id IS NOT NULL`, [job.id]);
+      for (const t of taskOwners) {
+        if (t.ops_id === primaryOpsOwner) continue; // primary already notified above
+        await client.query(
+          `INSERT INTO notifications (user_id, type, title, message, job_id)
+           VALUES ($1, 'ai_job_assigned', 'AI phân job mới', $2, $3)`,
+          [t.ops_id, `Bạn được phân job ${job.job_code || `#${job.id}`} - ${customer_name}`, job.id]);
       }
     }
 
@@ -2228,6 +2269,13 @@ router.post('/:id/assign', requireAuth, async (req, res) => {
     }
     if (ops_id) {
       const { rows: ou } = await client.query(`SELECT name FROM users WHERE id = $1`, [ops_id]);
+      // P2 companion (E.2): a job-level OPS assign sets EVERY task's owner too, so
+      // per-task reads (dashboard / stats / tick-auth) reflect this manual
+      // assignment. assigned_at stamped → the legacy backfill won't re-touch these.
+      await client.query(
+        `UPDATE job_ops_task SET ops_id = $1, assigned_at = NOW(), assigned_by = $2 WHERE job_id = $3`,
+        [ops_id, req.user.id, req.params.id]
+      );
       await recordHistory(client, req.params.id, req.user.id, 'ops_assigned', null, ou[0]?.name);
       await client.query(
         `INSERT INTO notifications (user_id, type, title, message, job_id)
@@ -2366,6 +2414,13 @@ router.post('/:id/manual-assign', requireAuth, async (req, res) => {
     }
 
     if (ops_id) {
+      // P2 companion (E.2): job-level OPS assign sets EVERY task's owner too, so
+      // per-task reads reflect this manual assignment (assigned_at stamped → the
+      // legacy backfill won't re-touch these rows).
+      await client.query(
+        `UPDATE job_ops_task SET ops_id = $1, assigned_at = NOW(), assigned_by = $2 WHERE job_id = $3`,
+        [ops_id, req.user.id, req.params.id]
+      );
       await client.query(`
         INSERT INTO notifications (user_id, type, title, message, job_id)
         VALUES ($1, 'manual_job_assigned', 'TP phân job mới', $2, $3)
@@ -3212,7 +3267,7 @@ const TK_TERMINAL_STATUSES = ['thong_quan', 'giai_phong', 'bao_quan'];
 async function loadOpsTaskContext(client, jobId, taskType) {
   const { rows } = await client.query(
     `SELECT j.id, j.service_type, jt.tk_status, ja.ops_id,
-            jot.id AS task_id, jot.completed, jot.cost_entered_at
+            jot.id AS task_id, jot.ops_id AS task_ops_id, jot.completed, jot.cost_entered_at
        FROM jobs j
        LEFT JOIN job_tk jt           ON jt.job_id = j.id
        LEFT JOIN job_assignments ja  ON ja.job_id = j.id
@@ -3223,10 +3278,13 @@ async function loadOpsTaskContext(client, jobId, taskType) {
   return rows[0] || null;
 }
 
+// P2 read-flip: authorization is now PER-TASK. isOpsAuthorized keeps only the
+// role gate (so a missing task still yields 404, not 403); each tick endpoint
+// adds the ownership guard (ctx.task_ops_id === req.user.id) AFTER its task-exists
+// check, so an OPS can tick ONLY the task they own (not the whole job).
 function isOpsAuthorized(user, ctx) {
   if (!ctx) return { ok: false, code: 404, error: 'Không tìm thấy job' };
   if (user.role !== 'ops') return { ok: false, code: 403, error: 'Không có quyền' };
-  if (ctx.ops_id !== user.id) return { ok: false, code: 403, error: 'Không có quyền' };
   return { ok: true };
 }
 
@@ -3253,6 +3311,8 @@ router.patch('/:id/ops-task/:taskType/done', requireAuth, async (req, res) => {
     const auth = isOpsAuthorized(req.user, ctx);
     if (!auth.ok) { await client.query('ROLLBACK'); return res.status(auth.code).json({ error: auth.error }); }
     if (!ctx.task_id) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Task không tồn tại cho job này' }); }
+    // P2: per-task ownership — only the task's own OPS may tick it.
+    if (ctx.task_ops_id !== req.user.id) { await client.query('ROLLBACK'); return res.status(403).json({ error: 'Không có quyền' }); }
     const pre = checkTkPrecondition(ctx);
     if (!pre.ok) { await client.query('ROLLBACK'); return res.status(pre.code).json({ error: pre.error }); }
     if (ctx.completed) { await client.query('ROLLBACK'); return res.status(400).json({ error: 'Task đã được đánh dấu xong' }); }
@@ -3285,6 +3345,8 @@ router.delete('/:id/ops-task/:taskType/done', requireAuth, async (req, res) => {
     const auth = isOpsAuthorized(req.user, ctx);
     if (!auth.ok) { await client.query('ROLLBACK'); return res.status(auth.code).json({ error: auth.error }); }
     if (!ctx.task_id) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Task không tồn tại cho job này' }); }
+    // P2: per-task ownership — only the task's own OPS may tick it.
+    if (ctx.task_ops_id !== req.user.id) { await client.query('ROLLBACK'); return res.status(403).json({ error: 'Không có quyền' }); }
     if (!ctx.completed) { await client.query('ROLLBACK'); return res.status(400).json({ error: 'Task chưa được đánh dấu xong' }); }
     await client.query(
       `UPDATE job_ops_task SET completed = FALSE, completed_at = NULL WHERE id = $1`,
@@ -3317,6 +3379,8 @@ router.patch('/:id/ops-task/:taskType/cost', requireAuth, async (req, res) => {
     const auth = isOpsAuthorized(req.user, ctx);
     if (!auth.ok) { await client.query('ROLLBACK'); return res.status(auth.code).json({ error: auth.error }); }
     if (!ctx.task_id) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Task không tồn tại cho job này' }); }
+    // P2: per-task ownership — only the task's own OPS may tick it.
+    if (ctx.task_ops_id !== req.user.id) { await client.query('ROLLBACK'); return res.status(403).json({ error: 'Không có quyền' }); }
     const pre = checkTkPrecondition(ctx);
     if (!pre.ok) { await client.query('ROLLBACK'); return res.status(pre.code).json({ error: pre.error }); }
     if (ctx.cost_entered_at) { await client.query('ROLLBACK'); return res.status(400).json({ error: 'Cost đã được nhập' }); }
@@ -3349,6 +3413,8 @@ router.delete('/:id/ops-task/:taskType/cost', requireAuth, async (req, res) => {
     const auth = isOpsAuthorized(req.user, ctx);
     if (!auth.ok) { await client.query('ROLLBACK'); return res.status(auth.code).json({ error: auth.error }); }
     if (!ctx.task_id) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Task không tồn tại cho job này' }); }
+    // P2: per-task ownership — only the task's own OPS may tick it.
+    if (ctx.task_ops_id !== req.user.id) { await client.query('ROLLBACK'); return res.status(403).json({ error: 'Không có quyền' }); }
     if (!ctx.cost_entered_at) { await client.query('ROLLBACK'); return res.status(400).json({ error: 'Cost chưa được nhập' }); }
     await client.query(
       `UPDATE job_ops_task SET cost_entered_at = NULL, cost_entered_by = NULL WHERE id = $1`,

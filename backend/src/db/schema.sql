@@ -1186,6 +1186,22 @@ ALTER TABLE job_ops_task ADD COLUMN IF NOT EXISTS cost_entered_by INTEGER REFERE
 ALTER TABLE job_ops_task ADD COLUMN IF NOT EXISTS assigned_at TIMESTAMP WITH TIME ZONE;
 ALTER TABLE job_ops_task ADD COLUMN IF NOT EXISTS assigned_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
 
+-- P2 (2026-06-22) — read-flip migration backfill. The OPS read paths flip from
+-- job_assignments.ops_id → per-task job_ops_task.ops_id. Legacy tasks created
+-- BEFORE P1 (assigned_at IS NULL) may have ops_id NULL or stale vs the job-level
+-- owner (e.g. a job whose OPS was set via /:id/assign, which never touched tasks).
+-- Align those legacy rows to ja.ops_id so every currently-visible job stays
+-- visible to its owner after the flip. Idempotent + self-healing on each deploy;
+-- touches ONLY pre-P1 rows (assigned_at IS NULL) so P1 per-task owners are never
+-- overwritten. Runs in migrate.js BEFORE the server binds → no exposure window.
+UPDATE job_ops_task jot
+   SET ops_id = ja.ops_id
+  FROM job_assignments ja
+ WHERE ja.job_id = jot.job_id
+   AND jot.assigned_at IS NULL
+   AND ja.ops_id IS NOT NULL
+   AND jot.ops_id IS DISTINCT FROM ja.ops_id;
+
 -- Migrate composite 'thong_quan_doi_lenh' rows into separate 'thong_quan' +
 -- 'doi_lenh'. Idempotent — NOT EXISTS guards skip already-split jobs; safe
 -- to re-run. Must run BEFORE the UNIQUE index is created so legacy composite

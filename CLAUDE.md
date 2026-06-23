@@ -1088,9 +1088,9 @@ Guards run in a GUARD PHASE *before* any write; the helper returns `{blocked:tru
 
 ---
 
-### Note — OPS per-task + weekly-rotation (P0 foundation 2026-06-18, P1 wired 2026-06-22)
+### Note — OPS per-task + weekly-rotation (P0 2026-06-18, P1 2026-06-22, P2 read-flip 2026-06-23)
 
-The planned "OPS work assigned PER-TASK with a weekly rotation between 2 OPS users" feature. **P0** added storage + a helper (unwired). **P1** wired the rotation into task CREATION, dropped the tk-only `doi_lenh` task, and made `viec_khac` gate-ready. **P2 (the read-flip) is still PENDING** — until it ships, all reads still key off `job_assignments.ops_id`.
+The planned "OPS work assigned PER-TASK with a weekly rotation between 2 OPS users" feature. **P0** added storage + a helper (unwired). **P1** wired the rotation into task CREATION, dropped the tk-only `doi_lenh` task, made `viec_khac` gate-ready. **P2** flipped every OPS read from `job_assignments.ops_id` → per-task `job_ops_task.ops_id`, so the `thong_quan` owner and the `doi_lenh` owner of the same `both` job each see & tick ONLY their own task. **P3 (TP per-task UI + reassign rework + retire `suggestOps` + drop `ja.ops_id`) is still PENDING.**
 
 **P0 — foundation (additive, zero behavior change):**
 - **Schema** (`schema.sql`, after the `log_settings` INSERT): `log_settings.ops_rotation_a` + `ops_rotation_b` (INTEGER FK `users(id) ON DELETE SET NULL`) — the configured 2-OPS rotation pair. Idempotent `ADD COLUMN IF NOT EXISTS`; seeded ONCE from the two lowest-id active `role='ops'` users via `COALESCE` (never clobbers an admin-set value — L33). `log_settings` is the single-row config (`id=1`) already read for `assignment_mode` at `jobs.js:~1408`. Prod seeded: `ops_rotation_a=7` (ops1), `ops_rotation_b=8` (ops2).
@@ -1106,7 +1106,13 @@ The planned "OPS work assigned PER-TASK with a weekly rotation between 2 OPS use
 
 **Decisions locked:** "việc khác" = one-per-job, gates completion (`task_type='viec_khac'`); rotation pair lives in `log_settings` (config, admin-editable later); week-flip keeps each task's stored owner (no recompute, no cron).
 
-- **Next — P2 (the read-flip, NOT done):** flip every OPS read from `job_assignments.ops_id` → per-task `job_ops_task.ops_id` (dashboard list filter `jobs.js:1233`, header stats `360-366`, `queryOpsStaffStats`, drilldowns `903-914`, tick-auth `loadOpsTaskContext`/`isOpsAuthorized`), add `jot.ops_id` to the GET `/` `ops_tasks` projection. Then **P3:** TP per-task columns + "+ đổi lệnh"/"+ việc khác" creation UI, reassign-ops per-task rework, retire `suggestOps`, deprecate `ja.ops_id`.
+**P2 — the read-flip (2026-06-23) — OPS visibility/ticks are now PER-TASK:**
+- **Migration backfill** (`schema.sql`, idempotent, runs in `migrate.js` before bind): legacy tasks (`assigned_at IS NULL`) inherit `ja.ops_id` (`UPDATE … WHERE jot.assigned_at IS NULL AND jot.ops_id IS DISTINCT FROM ja.ops_id`), so every currently-visible job stays visible after the flip. Touches only pre-P1 rows → P1 per-task owners never overwritten. Self-healing each deploy.
+- **Flipped reads (all key off `job_ops_task.ops_id` now):** dashboard list filter (`role==='ops'` → `EXISTS(jot WHERE ops_id=me)`); the 5 OPS header counts; `queryOpsStaffStats` (joins `job_ops_task`, `COUNT(DISTINCT j.id)` to dedupe a collapsed single-OPS pool); both drilldown handlers (staff `staff_ops_*` + role-based `ops_waiting_*`, owner-scoped for L5 parity); tick-auth (`loadOpsTaskContext` selects `task_ops_id`; `isOpsAuthorized` role-only; each of the 4 tick endpoints adds `ctx.task_ops_id !== req.user.id → 403` after the task-exists check — tk-precondition still runs after). GET `/` `ops_tasks` projection gained `ops_id` + `ops_name`.
+- **Frontend** (`LogDashboardOps.jsx`): `useAuth()` → `uid`; `getMyTask(j,type,uid)` (task only if `ops_id===uid`); all khu filters / done-predicates / recency / Hoàn-thành filter thread `uid`; tick buttons render only for the owned task. Status pills stay raw (rendered in an already-owned row).
+- **Write companions:** create-time notification now fans out to EACH distinct task owner (not just the primary); `POST /:id/assign` + `/:id/manual-assign` set every `job_ops_task.ops_id` for the job (job-level manual assign = all tasks → that owner, `assigned_at` stamped so the backfill skips them).
+- **Stats semantics:** a shared `both` job counts in BOTH owners' `total_managing` (each has work) — per-user, never globally summed. `ja.ops_id` stays populated as a deprecated cosmetic pointer (TP "OPS" column, JobDetailModal, projection `ops_name`, `waiting_ops` "no OPS", the `/overview` cross-role staff-distribution count) — none affect OPS visibility/ticks; full drop is P3.
+- **Next — P3 (NOT done):** TP per-task columns + "+ đổi lệnh"/"+ việc khác" creation UI; reassign-ops per-task rework; retire `suggestOps`/`assignOps`; drop the deprecated `ja.ops_id` reads (incl. the `/overview` staff-distribution ops branch).
 
 ---
 
