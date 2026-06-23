@@ -2536,110 +2536,13 @@ router.patch('/:id/reassign-cus', requireAuth, async (req, res) => {
   }
 });
 
-// PATCH /api/jobs/:id/reassign-ops  (truong_phong_log only)
-// Reassign OPS for a pending job whose OPS work is not yet done.
-// Wipes job_ops_task and recreates a fresh task per service_type/destination rule.
-router.patch('/:id/reassign-ops', requireAuth, async (req, res) => {
-  if (req.user.role !== 'truong_phong_log') return res.status(403).json({ error: 'Không có quyền' });
-  const newOpsId = parseInt(req.body?.new_ops_id, 10);
-  if (!newOpsId) return res.status(400).json({ error: 'Thiếu new_ops_id' });
-
-  const client = await db.pool.connect();
-  try {
-    await client.query('BEGIN');
-
-    const { rows: jrows } = await client.query(`
-      SELECT j.id, j.job_code, j.status, j.deleted_at, j.service_type, j.destination,
-             ja.ops_id AS old_ops_id
-      FROM jobs j
-      LEFT JOIN job_assignments ja ON ja.job_id = j.id
-      WHERE j.id = $1
-    `, [req.params.id]);
-    const j = jrows[0];
-    if (!j || j.deleted_at) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Không tìm thấy job' }); }
-    if (j.status !== 'pending') { await client.query('ROLLBACK'); return res.status(400).json({ error: 'Job không ở trạng thái pending, không thể đổi OPS' }); }
-    // Per-task model (2026-05-23): reassign-ops always wipes and recreates tasks
-    // for the new OPS, regardless of prior progress (owner spec: RESET all tasks).
-    // Legacy ja.ops_done guard removed — ops_done is no longer authoritative.
-
-    const { rows: nu } = await client.query(`SELECT id, name, role, disabled_at FROM users WHERE id = $1`, [newOpsId]);
-    if (!nu[0] || nu[0].role !== 'ops') { await client.query('ROLLBACK'); return res.status(400).json({ error: 'Người dùng không phải OPS' }); }
-    if (nu[0].disabled_at) { await client.query('ROLLBACK'); return res.status(400).json({ error: 'OPS đã bị khóa — không thể phân job' }); }
-
-    const { rows: ou } = await client.query(`SELECT name FROM users WHERE id = $1`, [j.old_ops_id]);
-    const oldName = ou[0]?.name || '(chưa có)';
-    const newName = nu[0].name;
-    const jc = j.job_code || `#${j.id}`;
-
-    const { rows: jaEx } = await client.query(`SELECT id FROM job_assignments WHERE job_id = $1`, [req.params.id]);
-    if (jaEx[0]) {
-      await client.query(`
-        UPDATE job_assignments
-           SET ops_id = $1,
-               ops_done = FALSE,
-               ops_done_at = NULL,
-               assigned_by = $2,
-               assigned_at = NOW()
-         WHERE job_id = $3
-      `, [newOpsId, req.user.id, req.params.id]);
-    } else {
-      await client.query(`
-        INSERT INTO job_assignments (job_id, ops_id, assigned_by, assignment_mode, ops_done)
-        VALUES ($1, $2, $3, 'manual', FALSE)
-      `, [req.params.id, newOpsId, req.user.id]);
-    }
-
-    // Wipe and recreate ops tasks per the per-task model.
-    //   tk    → 'thong_quan' only   (P1 2026-06-22: tk-only no longer gets doi_lenh)
-    //   truck → 'doi_lenh' only
-    //   both  → 'thong_quan' + 'doi_lenh'
-    // Per owner: reassign-ops RESETS all tasks to the new OPS — wipe + recreate
-    // (completed=FALSE, cost_entered_at=NULL by column defaults). This is an
-    // explicit manual single-owner assignment (NOT the rotation) — newOpsId owns
-    // every recreated task; assigned_at/by record the manual stamp.
-    await client.query(`DELETE FROM job_ops_task WHERE job_id = $1`, [req.params.id]);
-    if (j.destination === 'hai_phong' && ['tk', 'truck', 'both'].includes(j.service_type)) {
-      if (j.service_type === 'tk' || j.service_type === 'both') {
-        await client.query(
-          `INSERT INTO job_ops_task (job_id, ops_id, task_type, assigned_at, assigned_by) VALUES ($1, $2, 'thong_quan', NOW(), $3)`,
-          [req.params.id, newOpsId, req.user.id]
-        );
-      }
-      if (j.service_type === 'truck' || j.service_type === 'both') {
-        await client.query(
-          `INSERT INTO job_ops_task (job_id, ops_id, task_type, assigned_at, assigned_by) VALUES ($1, $2, 'doi_lenh', NOW(), $3)`,
-          [req.params.id, newOpsId, req.user.id]
-        );
-      }
-    }
-
-    await recordHistory(client, req.params.id, req.user.id, 'ops_reassigned', oldName, newName);
-
-    // Notify new OPS
-    await client.query(
-      `INSERT INTO notifications (user_id, type, title, message, job_id)
-       VALUES ($1, 'manual_job_assigned', 'TP phân job mới', $2, $3)`,
-      [newOpsId, `Trưởng phòng phân bạn job ${jc}`, req.params.id]
-    );
-    // Notify old OPS (if any)
-    if (j.old_ops_id && j.old_ops_id !== newOpsId) {
-      await client.query(
-        `INSERT INTO notifications (user_id, type, title, message, job_id)
-         VALUES ($1, 'job_reassigned', 'Job đã chuyển', $2, $3)`,
-        [j.old_ops_id, `Job ${jc} đã được chuyển sang OPS khác`, req.params.id]
-      );
-    }
-
-    await client.query('COMMIT');
-    suggestionCache = { data: null, ts: 0 };
-    res.json({ ok: true });
-  } catch (err) {
-    await client.query('ROLLBACK');
-    res.status(500).json({ error: err.message });
-  } finally {
-    client.release();
-  }
-});
+// PATCH /api/jobs/:id/reassign-ops — RETIRED in P3 (2026-06-23). Its whole-job
+// "wipe & recreate all tasks under one owner" model is wrong under per-task
+// ownership (it would destroy the other task's owner + progress). TP OPS
+// reassignment now goes through the PER-TASK endpoint
+// PATCH /:id/ops-task/:taskType/assign (see the OPS-task section below). The
+// frontend ReassignModal OPS path + reassignOps API client were removed in the
+// same change; nothing else called this route.
 
 // POST /api/jobs/:id/refresh-suggestion  (truong_phong_log only)
 router.post('/:id/refresh-suggestion', requireAuth, async (req, res) => {
@@ -3143,30 +3046,110 @@ router.patch('/:id/truck/complete', requireAuth, async (req, res) => {
   }
 });
 
-// POST /api/jobs/:id/ops-task
+// Resync the cosmetic ja.ops_id "primary owner" pointer after a per-task OPS
+// change (P3). Primary = doi_lenh owner, else thong_quan, else ops_hp. ja.ops_id
+// is deprecated (display-only — TP "OPS"/JobDetailModal); all OPS reads use the
+// per-task job_ops_task.ops_id since P2. Keeping it in sync avoids a stale name.
+async function resyncJaOpsPrimary(client, jobId) {
+  await client.query(`
+    UPDATE job_assignments SET ops_id = COALESCE(
+      (SELECT ops_id FROM job_ops_task WHERE job_id = $1 AND task_type = 'doi_lenh'),
+      (SELECT ops_id FROM job_ops_task WHERE job_id = $1 AND task_type = 'thong_quan'),
+      (SELECT ops_id FROM job_ops_task WHERE job_id = $1 AND task_type = 'ops_hp')
+    ) WHERE job_id = $1`, [jobId]);
+}
+
+// POST /api/jobs/:id/ops-task  (truong_phong_log) — P3 "+ đổi lệnh".
+// Adds a doi_lenh task to a tk-only HP job that didn't get one at creation,
+// auto-assigned to THIS WEEK's doi_lenh person via getWeekRotation (TP does NOT
+// pick — rotation is the single source, L30). ON CONFLICT (job_id, task_type) →
+// 400 if the job already has a doi_lenh task. (The old free-text / TP-picked-
+// ops_id behavior is removed — no UI used it; createOpsTask had zero callers.)
 router.post('/:id/ops-task', requireAuth, async (req, res) => {
   if (req.user.role !== 'truong_phong_log') return res.status(403).json({ error: 'Không có quyền' });
-  const { ops_id, content, port, deadline } = req.body;
+  if (req.body?.task_type !== 'doi_lenh') {
+    return res.status(400).json({ error: 'Chỉ hỗ trợ thêm việc đổi lệnh' });
+  }
   const client = await db.pool.connect();
   try {
     await client.query('BEGIN');
-    const { rows } = await client.query(`
-      INSERT INTO job_ops_task (job_id, ops_id, content, port, deadline)
-      VALUES ($1, $2, $3, $4, $5) RETURNING *
-    `, [req.params.id, ops_id || null, content, port || null, deadline || null]);
+    const { rows: jr } = await client.query(
+      `SELECT id, job_code, customer_name, destination, status FROM jobs WHERE id = $1 AND deleted_at IS NULL`,
+      [req.params.id]);
+    const job = jr[0];
+    if (!job) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Không tìm thấy job' }); }
+    if (job.destination !== 'hai_phong') { await client.query('ROLLBACK'); return res.status(400).json({ error: 'Chỉ áp dụng cho job Hải Phòng' }); }
+    if (job.status !== 'pending') { await client.query('ROLLBACK'); return res.status(400).json({ error: 'Job đã hoàn thành, không thể thêm việc' }); }
 
-    if (ops_id) {
-      const { rows: ja } = await client.query(`SELECT id FROM job_assignments WHERE job_id = $1`, [req.params.id]);
-      if (ja[0]) {
-        await client.query(`UPDATE job_assignments SET ops_id = $1 WHERE job_id = $2`, [ops_id, req.params.id]);
-      } else {
-        await client.query(`INSERT INTO job_assignments (job_id, ops_id, assigned_by) VALUES ($1,$2,$3)`, [req.params.id, ops_id, req.user.id]);
-      }
-      const { rows: ou } = await client.query(`SELECT name FROM users WHERE id = $1`, [ops_id]);
-      await recordHistory(client, req.params.id, req.user.id, 'ops_task_created', null, ou[0]?.name);
+    const rot = await getWeekRotation(new Date(), client);
+    const owner = rot.doiLenhOpsId || null;
+    const ins = await client.query(
+      `INSERT INTO job_ops_task (job_id, ops_id, task_type, assigned_at, assigned_by)
+       VALUES ($1, $2, 'doi_lenh', NOW(), $3)
+       ON CONFLICT (job_id, task_type) WHERE task_type IS NOT NULL DO NOTHING
+       RETURNING id`,
+      [req.params.id, owner, req.user.id]);
+    if (!ins.rows[0]) { await client.query('ROLLBACK'); return res.status(400).json({ error: 'Job đã có việc đổi lệnh' }); }
+
+    // Resync the cosmetic ja.ops_id primary pointer (doi_lenh is now primary).
+    const { rows: jaEx } = await client.query(`SELECT id FROM job_assignments WHERE job_id = $1`, [req.params.id]);
+    if (!jaEx[0]) await client.query(`INSERT INTO job_assignments (job_id) VALUES ($1)`, [req.params.id]);
+    await resyncJaOpsPrimary(client, req.params.id);
+
+    const { rows: ou } = owner ? await client.query(`SELECT name FROM users WHERE id = $1`, [owner]) : { rows: [] };
+    await recordHistory(client, req.params.id, req.user.id, 'doi_lenh_task_added', null, ou[0]?.name || (owner ? String(owner) : 'chưa phân'));
+    if (owner) {
+      await client.query(
+        `INSERT INTO notifications (user_id, type, title, message, job_id)
+         VALUES ($1, 'manual_job_assigned', 'TP thêm việc đổi lệnh', $2, $3)`,
+        [owner, `Bạn được phân đổi lệnh job ${job.job_code || `#${req.params.id}`} - ${job.customer_name}`, req.params.id]);
     }
     await client.query('COMMIT');
-    res.status(201).json(rows[0]);
+    res.status(201).json({ ok: true });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// PATCH /api/jobs/:id/ops-task/:taskType/assign  (truong_phong_log) — P3 per-task
+// OPS reassign. Sets ONE task's owner (thong_quan / doi_lenh / ops_hp); does NOT
+// touch the job's other tasks. The rotation auto-assigns at creation; this is the
+// manual per-task override (someone off/swapped). L32: validateAssignee rejects a
+// disabled / non-ops target.
+const OPS_ASSIGNABLE_TASK_TYPES = ['thong_quan', 'doi_lenh', 'ops_hp'];
+router.patch('/:id/ops-task/:taskType/assign', requireAuth, async (req, res) => {
+  if (req.user.role !== 'truong_phong_log') return res.status(403).json({ error: 'Không có quyền' });
+  const { id, taskType } = req.params;
+  if (!OPS_ASSIGNABLE_TASK_TYPES.includes(taskType)) {
+    return res.status(400).json({ error: 'Loại task không hợp lệ' });
+  }
+  const newOpsId = parseInt(req.body?.ops_id, 10);
+  if (!newOpsId) return res.status(400).json({ error: 'Thiếu ops_id' });
+  const client = await db.pool.connect();
+  try {
+    await client.query('BEGIN');
+    const v = await validateAssignee(client, newOpsId, ['ops'], 'OPS');
+    if (!v.ok) { await client.query('ROLLBACK'); return res.status(400).json({ error: v.error }); }
+    const { rows: t } = await client.query(
+      `SELECT id FROM job_ops_task WHERE job_id = $1 AND task_type = $2`, [id, taskType]);
+    if (!t[0]) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Task không tồn tại cho job này' }); }
+    await client.query(
+      `UPDATE job_ops_task SET ops_id = $1, assigned_at = NOW(), assigned_by = $2 WHERE id = $3`,
+      [newOpsId, req.user.id, t[0].id]);
+    // Keep the cosmetic ja.ops_id primary pointer in sync with the per-task owners.
+    await resyncJaOpsPrimary(client, id);
+    const { rows: nu } = await client.query(`SELECT name FROM users WHERE id = $1`, [newOpsId]);
+    await recordHistory(client, id, req.user.id, `${taskType}_reassigned`, null, nu[0]?.name || String(newOpsId));
+    const { rows: meta } = await client.query(`SELECT job_code, customer_name FROM jobs WHERE id = $1`, [id]);
+    await client.query(
+      `INSERT INTO notifications (user_id, type, title, message, job_id)
+       VALUES ($1, 'manual_job_assigned', 'TP phân việc OPS', $2, $3)`,
+      [newOpsId, `Bạn được phân việc OPS job ${meta[0]?.job_code || `#${id}`} - ${meta[0]?.customer_name || ''}`, id]);
+    await client.query('COMMIT');
+    res.json({ ok: true });
   } catch (err) {
     await client.query('ROLLBACK');
     res.status(500).json({ error: err.message });

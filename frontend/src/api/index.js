@@ -107,7 +107,9 @@ export const getDeadlineRequests = () => api.get('/jobs/deadline-requests');
 export const updateJobTk = (jobId, data) => api.patch(`/jobs/${jobId}/tk`, data);
 // Phase 4: updateJobTruck removed — use createTruckBooking / updateTruckBooking instead.
 export const completeJobTruck = (jobId) => api.patch(`/jobs/${jobId}/truck/complete`, {});
-export const createOpsTask = (jobId, data) => api.post(`/jobs/${jobId}/ops-task`, data);
+// P3 (2026-06-23): "+ đổi lệnh" — add a doi_lenh task to a tk-only HP job,
+// auto-assigned to this week's ĐL person by the backend rotation (no picker).
+export const addDoiLenhTask = (jobId) => api.post(`/jobs/${jobId}/ops-task`, { task_type: 'doi_lenh' });
 export const completeOpsTask = (tid, notes) => api.patch(`/jobs/ops-task/${tid}/complete`, { notes });
 export const completeJob = (id) => api.patch(`/jobs/${id}/complete`, {});
 export const getLogStaff = () => api.get('/jobs/users/log-staff');
@@ -123,7 +125,8 @@ export const getFilteredJobs = (type, staffId) =>
   api.get('/jobs/filtered', { params: staffId ? { type, staff_id: staffId } : { type } });
 export const manualAssignJob = (id, data) => api.post(`/jobs/${id}/manual-assign`, data);
 export const reassignCus = (id, newCusId) => api.patch(`/jobs/${id}/reassign-cus`, { new_cus_id: newCusId });
-export const reassignOps = (id, newOpsId) => api.patch(`/jobs/${id}/reassign-ops`, { new_ops_id: newOpsId });
+// reassignOps removed in P3 — job-level OPS reassign retired. Per-task override:
+export const assignOpsTask = (id, taskType, opsId) => api.patch(`/jobs/${id}/ops-task/${taskType}/assign`, { ops_id: opsId });
 export const refreshJobSuggestion = (id, type) => api.post(`/jobs/${id}/refresh-suggestion`, { type });
 // OPS per-task ticks (2026-05-23, replaces markOpsDone). taskType ∈
 // {'thong_quan','doi_lenh'}. /done is only valid for 'doi_lenh' (đổi lệnh xong);

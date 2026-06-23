@@ -302,16 +302,9 @@ Respond ONLY with valid JSON, no text outside the JSON object:
   }
 }
 
-// assignOps = suggestOps + log to ai_assignment_logs
-async function assignOps(jobData, pool) {
-  const result = await suggestOps(jobData, pool);
-  if (!result) return null;
-  try {
-    await logAssignment(pool, { jobId: jobData.id, assignedUserId: result.user_id, role: 'ops', reason: result.reason, cost: result.cost, fallback: result.fallback });
-  } catch (e) {
-    console.error('assignOps log failed:', e.message);
-  }
-  return result;
-}
-
-module.exports = { assignCus, assignOps, suggestCus, suggestOps };
+// assignOps removed in P3 (2026-06-23) — dead since the rotation took over OPS
+// auto-assignment (P1). suggestOps + getOpsContext are KEPT: still the
+// null-rotation fallback in POST /api/jobs create-seeding (jobs.js ~1451) + the
+// waiting_ops suggestions endpoint. (assignCus is likewise now unused but left
+// in place; it can be retired with the CUS-rotation work.)
+module.exports = { assignCus, suggestCus, suggestOps };

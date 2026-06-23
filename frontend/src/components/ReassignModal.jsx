@@ -2,12 +2,14 @@ import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
-import { getLogStaff, reassignCus, reassignOps } from '../api';
+import { getLogStaff, reassignCus, assignOpsTask } from '../api';
 import { useModalZIndex } from '../hooks/useModalZIndex';
 
-// type: 'cus' | 'ops'
-// job: { id, job_code, cus_id, ops_id, cus_name, ops_name }
-export default function ReassignModal({ type, job, onClose }) {
+// type: 'cus' (job-level CUS reassign) | 'ops' (P3: PER-TASK OPS reassign).
+// For 'ops', pass taskType ('thong_quan'|'doi_lenh'|'ops_hp') + taskLabel; the
+// current owner is read from job.ops_tasks[taskType] and only THAT task is moved.
+// job: { id, job_code, cus_id, cus_name, ops_name, ops_tasks }
+export default function ReassignModal({ type, taskType, taskLabel, job, onClose }) {
   const qc = useQueryClient();
   const zIndex = useModalZIndex();
   const [selected, setSelected] = useState('');
@@ -19,9 +21,12 @@ export default function ReassignModal({ type, job, onClose }) {
   });
 
   const isCus = type === 'cus';
-  const roleLabel = isCus ? 'CUS' : 'OPS';
-  const currentId = isCus ? job?.cus_id : job?.ops_id;
-  const currentName = (isCus ? job?.cus_name : job?.ops_name) || '(chưa có)';
+  // P3: per-task OPS — current owner comes from the specific task row.
+  const task = (!isCus && taskType && Array.isArray(job?.ops_tasks))
+    ? job.ops_tasks.find(t => t.task_type === taskType) : null;
+  const roleLabel = isCus ? 'CUS' : (taskLabel ? `OPS — ${taskLabel}` : 'OPS');
+  const currentId = isCus ? job?.cus_id : (task ? task.ops_id : job?.ops_id);
+  const currentName = (isCus ? job?.cus_name : (task ? task.ops_name : job?.ops_name)) || '(chưa có)';
   const candidates = staff
     .filter(s => isCus ? ['cus', 'cus1', 'cus2', 'cus3'].includes(s.role) : s.role === 'ops')
     .filter(s => s.id !== currentId);
@@ -30,7 +35,7 @@ export default function ReassignModal({ type, job, onClose }) {
 
   const mut = useMutation({
     mutationFn: ({ jobId, newId }) =>
-      isCus ? reassignCus(jobId, newId) : reassignOps(jobId, newId),
+      isCus ? reassignCus(jobId, newId) : assignOpsTask(jobId, taskType, newId),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['jobs'] });
       qc.invalidateQueries({ queryKey: ['jobStats'] });

@@ -1276,7 +1276,13 @@ export default function JobDetailModal({
                     {job.ops_tasks.map(t => (
                       <div key={t.id} style={{ padding: '8px 10px', borderBottom: '1px solid var(--border)', fontSize: 13 }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                          <span style={{ fontWeight: 500 }}>{t.ops_name || '—'}</span>
+                          <span style={{ fontWeight: 500 }}>
+                            {/* P3: per-task type label so each row shows what work + who owns it. */}
+                            <span style={{ color: 'var(--info)', fontSize: 11, marginRight: 6 }}>
+                              {({ thong_quan: 'Thông quan', doi_lenh: 'Đổi lệnh', ops_hp: 'Việc khác', viec_khac: 'Việc khác' })[t.task_type] || ''}
+                            </span>
+                            {t.ops_name || '—'}
+                          </span>
                           <span style={{ color: t.completed ? 'var(--primary)' : 'var(--warning)', fontSize: 11 }}>
                             {t.completed ? '✓ Hoàn thành' : 'Chờ xử lý'}
                           </span>

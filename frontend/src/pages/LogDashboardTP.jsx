@@ -16,8 +16,9 @@ import { useModalZIndex } from '../hooks/useModalZIndex';
 import {
   getJobStats, getJobs, getDeadlineRequests, getLogStaff,
   assignJob, setJobDeadline, reviewDeadlineRequest, createJob,
-  deleteJob, reviewDeleteRequest, getJobSettings,
+  deleteJob, reviewDeleteRequest, getJobSettings, addDoiLenhTask,
 } from '../api';
+import toast from 'react-hot-toast';
 // 2026-05-25: ddPillInfo shared with DD dashboard — used by tpStatusLines
 // to render the DD-line of TP's 3-dept Trạng thái pill.
 import { ddPillInfo } from '../utils/truckBookingStatus';
@@ -123,6 +124,54 @@ function TpStatusCell({ job }) {
   );
 }
 
+// P3 (2026-06-23): per-task OPS cell helpers. j.ops_tasks[] carries ops_id +
+// ops_name + task_type + completed + cost_entered_at (P2 projection).
+function opsTaskOf(j, taskType) {
+  const tasks = Array.isArray(j.ops_tasks) ? j.ops_tasks : [];
+  return tasks.find(t => t.task_type === taskType) || null;
+}
+function opsTaskShortStatus(task, taskType, j) {
+  if (taskType === 'thong_quan') {
+    if (task.cost_entered_at) return { label: 'xong', color: '#16a34a' };
+    return TP_TK_TERMINAL.includes(j.tk_status)
+      ? { label: 'chưa cost', color: '#b45309' }
+      : { label: 'chưa làm', color: '#d97706' };
+  }
+  // doi_lenh + ops_hp: two-tick (done + cost).
+  if (!task.completed) return { label: 'chưa làm', color: '#d97706' };
+  if (!task.cost_entered_at) return { label: 'chưa cost', color: '#b45309' };
+  return { label: 'xong', color: '#16a34a' };
+}
+// One OPS task cell: assignee + short status, click to reassign THAT task (P3 #2).
+// Empty doi_lenh on a tk-only HP job → "+ đổi lệnh" (P3 #3 — rotation picks the
+// person, not TP). Only HP jobs render content. Reused by desktop + mobile (L26).
+function OpsTaskCell({ j, taskType, taskLabel, onReassign, onAddDoiLenh, adding }) {
+  const dash = <span style={{ color: 'var(--text-3)', fontSize: 12 }}>—</span>;
+  if (j.destination !== 'hai_phong') return dash;
+  const task = opsTaskOf(j, taskType);
+  if (task) {
+    const st = opsTaskShortStatus(task, taskType, j);
+    return (
+      <span style={{ cursor: 'pointer', display: 'inline-flex', flexDirection: 'column', lineHeight: 1.2 }}
+        title={`Đổi người làm ${taskLabel}`}
+        onClick={(e) => { e.stopPropagation(); onReassign({ type: 'ops', taskType, taskLabel, job: j }); }}>
+        <span style={{ fontSize: 12, color: 'var(--info)', textDecoration: 'underline dotted' }}>{task.ops_name || '(chưa có)'}</span>
+        <span style={{ fontSize: 10, color: st.color, fontWeight: 600 }}>{st.label}</span>
+      </span>
+    );
+  }
+  if (taskType === 'doi_lenh' && j.service_type === 'tk') {
+    return (
+      <button className="btn btn-ghost btn-sm" style={{ fontSize: 11, padding: '2px 6px', whiteSpace: 'nowrap' }}
+        disabled={adding}
+        onClick={(e) => { e.stopPropagation(); onAddDoiLenh(j.id); }}>
+        {adding ? '...' : '+ đổi lệnh'}
+      </button>
+    );
+  }
+  return dash;
+}
+
 const SVC_LABEL = { tk: 'TK', truck: 'Xe', both: 'TK+Xe', ops_hp: 'OPS HP' };
 const TK_STATUS_LABEL = {
   chua_truyen: 'Chưa truyền', dang_lam: 'Đang làm',
@@ -184,7 +233,10 @@ const ALL_COLS = [
   { key: 'service',      label: 'DV' },
   { key: 'etd_eta',      label: 'ETD-ETA' },
   { key: 'cus',          label: 'CUS' },
-  { key: 'ops',          label: 'OPS' },
+  // P3 (2026-06-23): per-task OPS — 3 cells (thong_quan / doi_lenh / ops_hp).
+  { key: 'ops_tq',       label: 'OPS Thông quan' },
+  { key: 'ops_dl',       label: 'OPS Đổi lệnh' },
+  { key: 'ops_vk',       label: 'OPS Việc khác' },
   { key: 'notes',        label: 'Ghi chú' },
 ];
 const FILTER_CONFIG = {
@@ -200,7 +252,7 @@ const FILTER_CONFIG = {
     { value: 'bao_quan', label: 'Bảo quan' },
   ]},
   cus: { filterType: 'text', accessor: j => j.cus_name || '' },
-  ops: { filterType: 'text', accessor: j => j.ops_name || '' },
+  // P3: the 3 OPS task columns are status cells (no text filter).
 };
 
 const LS_COL_KEY = 'tp_grid_columns';
@@ -636,6 +688,16 @@ export default function LogDashboardTP() {
     mutationFn: ({ id, data }) => assignJob(id, data),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['jobs'] }); setAssigningJob(null); },
   });
+  // P3 #3: "+ đổi lệnh" — backend rotation assigns this week's ĐL person.
+  const addDoiLenhMut = useMutation({
+    mutationFn: (jobId) => addDoiLenhTask(jobId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['jobs'] });
+      qc.invalidateQueries({ queryKey: ['jobStats'] });
+      toast.success('Đã thêm việc đổi lệnh (phân theo lịch tuần)');
+    },
+    onError: (err) => toast.error(err?.response?.data?.error || 'Không thể thêm việc đổi lệnh'),
+  });
   const setDlMut = useMutation({
     // FIX 3 — anchor to Vietnam time at the single send point (handles both
     // InlineDeadline and the DeadlineModal "no deadline" tab).
@@ -821,18 +883,6 @@ export default function LogDashboardTP() {
                     const isTk = j.service_type === 'tk' || j.service_type === 'both';
                     const waitingAssign = (j.service_type === 'tk' || j.service_type === 'both') && !j.cus_id;
                     const cusEligible = tab === 'pending' && !j.tk_completed_at;
-                    // Per-task model (2026-05-23): OPS reassign allowed while any
-                    // required task is still pending. Empty ops_tasks ⇒ allowed
-                    // (nothing committed yet).
-                    const opsEligible = tab === 'pending' && (() => {
-                      const tasks = Array.isArray(j.ops_tasks) ? j.ops_tasks : [];
-                      if (!tasks.length) return true;
-                      return tasks.some(t => {
-                        if (t.task_type === 'thong_quan') return !t.cost_entered_at;
-                        if (t.task_type === 'doi_lenh')   return !(t.completed && t.cost_entered_at);
-                        return false;
-                      });
-                    })();
                     return (
                       <TPCard key={j.id} job={j} onOpen={() => setDetailJobId(j.id)}
                         codeColor={tab === 'completed' ? 'var(--primary)' : 'var(--info)'}
@@ -912,18 +962,20 @@ export default function LogDashboardTP() {
                                             onClick={() => setReassignTarget({ type: 'cus', job: j })}>{j.cus_name}</span>
                                         : <span style={{ color: 'var(--text-3)' }}>{j.cus_name}</span>)}
                                 </div>
-                                <div>
-                                  <span style={{ color: 'var(--text-2)' }}>OPS:</span>{' '}
-                                  {!j.ops_name
-                                    ? (opsEligible
-                                        ? <span style={{ color: 'var(--text-3)', cursor: 'pointer', borderBottom: '1px dotted var(--text-3)' }}
-                                            onClick={() => setReassignTarget({ type: 'ops', job: j })}>—</span>
-                                        : <span style={{ color: 'var(--text-3)' }}>—</span>)
-                                    : (opsEligible
-                                        ? <span style={{ color: 'var(--info)', cursor: 'pointer', borderBottom: '1px dotted var(--info)' }}
-                                            onClick={() => setReassignTarget({ type: 'ops', job: j })}>{j.ops_name}</span>
-                                        : <span style={{ color: 'var(--text-3)' }}>{j.ops_name}</span>)}
-                                </div>
+                                {/* P3: 3 per-task OPS cells (mirror of the desktop columns, L26). */}
+                                {j.destination === 'hai_phong' ? (
+                                  <>
+                                    <div><span style={{ color: 'var(--text-2)' }}>TQ:</span>{' '}
+                                      <OpsTaskCell j={j} taskType="thong_quan" taskLabel="Thông quan" onReassign={setReassignTarget} /></div>
+                                    <div><span style={{ color: 'var(--text-2)' }}>ĐL:</span>{' '}
+                                      <OpsTaskCell j={j} taskType="doi_lenh" taskLabel="Đổi lệnh" onReassign={setReassignTarget}
+                                        onAddDoiLenh={(id) => addDoiLenhMut.mutate(id)} adding={addDoiLenhMut.isPending} /></div>
+                                    <div><span style={{ color: 'var(--text-2)' }}>VK:</span>{' '}
+                                      <OpsTaskCell j={j} taskType="ops_hp" taskLabel="Việc khác" onReassign={setReassignTarget} /></div>
+                                  </>
+                                ) : (
+                                  <div><span style={{ color: 'var(--text-2)' }}>OPS:</span>{' '}<span style={{ color: 'var(--text-3)' }}>—</span></div>
+                                )}
                               </div>
                             </div>
 
@@ -1083,47 +1135,26 @@ export default function LogDashboardTP() {
                             )}
                           </td>;
                         }
-                        case 'ops': {
-                          // Per-task model (2026-05-23): OPS reassign allowed while any
-                    // required task is still pending. Empty ops_tasks ⇒ allowed
-                    // (nothing committed yet).
-                    const opsEligible = tab === 'pending' && (() => {
-                      const tasks = Array.isArray(j.ops_tasks) ? j.ops_tasks : [];
-                      if (!tasks.length) return true;
-                      return tasks.some(t => {
-                        if (t.task_type === 'thong_quan') return !t.cost_entered_at;
-                        if (t.task_type === 'doi_lenh')   return !(t.completed && t.cost_entered_at);
-                        return false;
-                      });
-                    })();
-                          if (!j.ops_name) {
-                            return <td key={key} style={cs}>
-                              {opsEligible ? (
-                                <span
-                                  title="Phân OPS"
-                                  style={{ color: 'var(--text-3)', fontSize: 12, cursor: 'pointer', textDecoration: 'underline dotted' }}
-                                  onClick={() => setReassignTarget({ type: 'ops', job: j })}
-                                >—</span>
-                              ) : (
-                                <span style={{ color: 'var(--text-3)', fontSize: 12 }}>—</span>
-                              )}
-                            </td>;
-                          }
+                        // P3: 3 per-task OPS cells (thong_quan / doi_lenh / ops_hp).
+                        // Click a filled cell → reassign that task; empty doi_lenh on a
+                        // tk-only HP job → "+ đổi lệnh" (rotation picks the person).
+                        case 'ops_tq':
                           return <td key={key} style={cs}>
-                            {opsEligible ? (
-                              <span
-                                title="Đổi OPS"
-                                style={{ fontSize: 12, cursor: 'pointer', textDecoration: 'underline dotted', color: 'var(--info)' }}
-                                onClick={() => setReassignTarget({ type: 'ops', job: j })}
-                              >{j.ops_name}</span>
-                            ) : (
-                              <span
-                                title="OPS đã xong việc, không thể đổi"
-                                style={{ fontSize: 12, color: 'var(--text-3)' }}
-                              >{j.ops_name}</span>
-                            )}
+                            <OpsTaskCell j={j} taskType="thong_quan" taskLabel="Thông quan"
+                              onReassign={setReassignTarget} />
                           </td>;
-                        }
+                        case 'ops_dl':
+                          return <td key={key} style={cs}>
+                            <OpsTaskCell j={j} taskType="doi_lenh" taskLabel="Đổi lệnh"
+                              onReassign={setReassignTarget}
+                              onAddDoiLenh={(id) => addDoiLenhMut.mutate(id)}
+                              adding={addDoiLenhMut.isPending} />
+                          </td>;
+                        case 'ops_vk':
+                          return <td key={key} style={cs}>
+                            <OpsTaskCell j={j} taskType="ops_hp" taskLabel="Việc khác"
+                              onReassign={setReassignTarget} />
+                          </td>;
                         case 'notes':       return <td key={key} style={{ ...cs, fontSize: 12, color: 'var(--text-2)', maxWidth: 140 }}>{j.tk_notes || '—'}</td>;
                         default: return null;
                       }
@@ -1199,6 +1230,8 @@ export default function LogDashboardTP() {
       {reassignTarget && (
         <ReassignModal
           type={reassignTarget.type}
+          taskType={reassignTarget.taskType}
+          taskLabel={reassignTarget.taskLabel}
           job={reassignTarget.job}
           onClose={() => setReassignTarget(null)}
         />
