@@ -1644,7 +1644,12 @@ router.post('/', requireAuth, async (req, res) => {
     // ops_hp → doi_lenh person. (The non-primary owner's task row carries the
     // correct per-task ops_id already; it just isn't read until P2.)
     const hasTruckSide = service_type === 'truck' || service_type === 'both';
-    const primaryOpsOwner = isOpsHp ? dlOwner : (hasTruckSide ? dlOwner : tqOwner);
+    // LCL (2026-06-24): an LCL both/truck job gets NO doi_lenh task, so the primary
+    // (= pre-seed notification target + ja.ops_id) is the thong_quan owner, not the
+    // task-less dl person. FCL keeps dlOwner. (resyncJaOpsPrimary re-confirms after
+    // seeding; this keeps the up-front notification correct too.)
+    const willHaveDoiLenh = hasTruckSide && cargo_type !== 'lcl';
+    const primaryOpsOwner = isOpsHp ? dlOwner : (willHaveDoiLenh ? dlOwner : tqOwner);
     if (needsOps && mode === 'auto' && primaryOpsOwner) {
       const { rows: jaEx } = await client.query(`SELECT id FROM job_assignments WHERE job_id = $1`, [job.id]);
       if (jaEx[0]) {
@@ -1706,7 +1711,11 @@ router.post('/', requireAuth, async (req, res) => {
           [job.id, tqOwner, req.user.id]
         );
       }
-      if (service_type === 'truck' || service_type === 'both') {
+      // LCL (2026-06-24): an LCL shipment does NOT auto-get a doi_lenh task, even
+      // when truck/both. TP adds it later via "+ đổi lệnh" (the manual escape
+      // hatch). FCL truck/both keeps the auto doi_lenh. (thong_quan above is
+      // unchanged — tk/both regardless of cargo_type.)
+      if ((service_type === 'truck' || service_type === 'both') && cargo_type !== 'lcl') {
         await client.query(
           `INSERT INTO job_ops_task (job_id, ops_id, task_type, assigned_at, assigned_by)
            VALUES ($1, $2, 'doi_lenh', NOW(), $3)
@@ -1730,6 +1739,16 @@ router.post('/', requireAuth, async (req, res) => {
            VALUES ($1, 'ai_job_assigned', 'AI phân job mới', $2, $3)`,
           [t.ops_id, `Bạn được phân job ${job.job_code || `#${job.id}`} - ${customer_name}`, job.id]);
       }
+    }
+
+    // LCL/edge (2026-06-24): recompute the cosmetic ja.ops_id "primary" from the
+    // tasks actually seeded. An LCL both has thong_quan but no doi_lenh, so the
+    // primary should be the thong_quan owner (not the dl person, who owns no task
+    // here). COALESCE(doi_lenh → thong_quan → ops_hp); FCL paths (doi_lenh exists)
+    // resolve to the same dlOwner as before → unchanged. (Display-only; P2 reads
+    // are per-task.)
+    if (needsOps && mode === 'auto') {
+      await resyncJaOpsPrimary(client, job.id);
     }
 
     await recordHistory(client, job.id, req.user.id, 'job_created', null, customer_name);

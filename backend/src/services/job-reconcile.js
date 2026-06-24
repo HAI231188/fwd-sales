@@ -40,11 +40,17 @@ async function reconcileJobSides(client, jobId, opts) {
     return { blocked: false };
   }
 
+  // LCL (2026-06-24): LCL shipments don't auto-get a doi_lenh task. cargo_type
+  // doesn't change on a service_type/destination edit, so read it fresh here
+  // (avoids threading a new opt through PUT /:id). Mirrors create-seeding.
+  const { rows: cr } = await client.query(`SELECT cargo_type FROM jobs WHERE id = $1`, [jobId]);
+  const isLcl = (cr[0]?.cargo_type || 'fcl') === 'lcl';
+
   const newHP = newDest === 'hai_phong';
   const tkDesired = hasTk(newSvc), tkWas = hasTk(oldSvc);
   const truckDesired = hasTruck(newSvc), truckWas = hasTruck(oldSvc);
-  const tqDesired = newHP && tkDesired;      // thong_quan: tk/both at Hải Phòng
-  const dlDesired = newHP && truckDesired;   // doi_lenh: truck/both at HP (P1 — tk-only no longer)
+  const tqDesired = newHP && tkDesired;             // thong_quan: tk/both at Hải Phòng
+  const dlDesired = newHP && truckDesired && !isLcl; // doi_lenh: truck/both at HP, FCL only (LCL → manual "+ đổi lệnh")
 
   const tkGain = tkDesired && !tkWas;
   const tkLose = !tkDesired && tkWas;

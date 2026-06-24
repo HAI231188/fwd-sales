@@ -160,7 +160,12 @@ function OpsTaskCell({ j, taskType, taskLabel, onReassign, onAddDoiLenh, adding 
       </span>
     );
   }
-  if (taskType === 'doi_lenh' && j.service_type === 'tk') {
+  // "+ đổi lệnh" shows on an empty doi_lenh cell when this HP job is eligible to
+  // gain a doi_lenh manually: tk-only (never auto-got one) OR LCL truck/both
+  // (LCL no longer auto-gets one — 2026-06-24). This cell is already HP-guarded
+  // above, and we only reach here when no doi_lenh task exists. Shared by desktop
+  // + mobile (one component → L26 parity).
+  if (taskType === 'doi_lenh' && (j.service_type === 'tk' || j.cargo_type === 'lcl')) {
     return (
       <button className="btn btn-ghost btn-sm" style={{ fontSize: 11, padding: '2px 6px', whiteSpace: 'nowrap' }}
         disabled={adding}
