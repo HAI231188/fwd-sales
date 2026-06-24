@@ -267,10 +267,21 @@ router.post('/delete-requests/:id/reject', requireAuth, async (req, res) => {
 // GET /api/pipeline — return current user's pipeline (with auto-transitions applied)
 router.get('/', requireAuth, async (req, res) => {
   const { startDate, endDate } = req.query;
-  const dateFilter = [
-    startDate ? `AND cp.last_activity_date >= '${startDate.replace(/'/g, '')}'` : '',
-    endDate   ? `AND cp.last_activity_date <= '${endDate.replace(/'/g, '')}'`   : '',
-  ].join(' ');
+  // Date window on last_activity_date. 'booked' is a terminal "won" stage that
+  // must NOT be time-boxed: a customer booked via a job has last_activity_date
+  // NULL (the L14 upsert at jobs.js:~1539 sets stage='booked' but not
+  // last_activity_date), and older bookings go stale — so the month window used
+  // to hide ~47/48 booked customers from the rep's "Đã booking" list. Fix: when
+  // a date range is present, exempt booked from it via an OR. The OR is nested
+  // INSIDE the WHERE — the `cp.sales_id = $1` owner filter stays OUTSIDE it (a
+  // top-level AND) so it gates EVERY row, booked or not; a rep can never see
+  // another rep's booked customer. Date strings keep the existing single-quote
+  // strip (backend/CLAUDE.md date-sanitization exception).
+  const dateConds = [
+    startDate ? `cp.last_activity_date >= '${startDate.replace(/'/g, '')}'` : '',
+    endDate   ? `cp.last_activity_date <= '${endDate.replace(/'/g, '')}'`   : '',
+  ].filter(Boolean).join(' AND ');
+  const dateFilter = dateConds ? `AND (cp.stage = 'booked' OR (${dateConds}))` : '';
 
   const client = await db.pool.connect();
   try {

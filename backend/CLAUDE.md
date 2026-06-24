@@ -80,6 +80,15 @@ Two transitions it applies:
 
 Every stage change also inserts a row into `pipeline_history`.
 
+### `booked` is exempt from the date window (2026-06-24 fix)
+`GET /api/pipeline` filters customers by `cp.last_activity_date` within the frontend's date range (`PipelineView` defaults to `'month'`). **`booked` is a terminal "won" stage and must NOT be time-boxed:** a customer booked via a job has `last_activity_date = NULL` (the L14 upsert at `jobs.js:~1539` sets `stage='booked'` + `updated_at` but **not** `last_activity_date`), and older bookings go stale — which silently hid ~47/48 booked customers from the rep's "Đã booking" list while the no-date-filter customer-data view still showed them. Fix: the WHERE is
+```
+WHERE cp.sales_id = $1 AND cp.deleted_at IS NULL AND ( cp.stage = 'booked' OR (<date conds>) )
+```
+**The `cp.sales_id = $1` owner filter stays OUTSIDE the OR (top-level AND) so it gates EVERY row** — booked or not. A booked row owned by sales B fails `cp.sales_id = $1(=A)` regardless of the OR, so a rep never sees another rep's booked customers. The booked-OR is omitted entirely when no date range is sent (WHERE unchanged). NEVER write `((sales_id=$1 AND date) OR stage='booked')` — that leaks other reps' booked customers.
+
+**PENDING — Fix 2 (data-correctness, not yet done):** set `last_activity_date = NOW()` in the L14 booked upsert (`jobs.js:~1539`) so job-booked customers get a real activity date, and backfill the 28 existing `stage='booked' AND last_activity_date IS NULL` rows. Fix 1 (above) already makes booked visible regardless; Fix 2 also un-hides those rows from any *non-booked* date logic and from stat queries that read `last_activity_date`.
+
 ---
 
 ## Customer code generation
