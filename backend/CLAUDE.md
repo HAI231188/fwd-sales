@@ -92,6 +92,15 @@ WHERE cp.sales_id = $1 AND cp.deleted_at IS NULL AND ( cp.stage = 'booked' OR (<
 
 **PENDING — Fix 2 (data-correctness, not yet done):** set `last_activity_date = NOW()` in the L14 booked upsert (`jobs.js:~1539`) so job-booked customers get a real activity date, and backfill the 28 existing `stage='booked' AND last_activity_date IS NULL` rows. Fix 1 (above) already makes booked visible regardless; Fix 2 also un-hides those rows from any *non-booked* date logic and from stat queries that read `last_activity_date`.
 
+### Customer-name whitespace: trim-on-write + cleanup (2026-06-25)
+The customer name is a `LOWER()`-match key across THREE tables — `customers.company_name`, `customer_pipeline.company_name`, `jobs.customer_name` (joined via `LOWER(j.customer_name)=LOWER(cp.company_name)` in ~13 sites: detail-modal `resolved_*`, `job_count`, the L14 `ON CONFLICT (sales_id, LOWER(company_name))`, etc.). Legacy writes stored leading/trailing whitespace (e.g. `"THẠCH HIỂN "`), which split the same customer across the match key.
+
+**Trim-on-write (the safety net) — every backend path now `.trim()`s the name before storing/matching:** `jobs.js` POST `/` (single `customerName` const → jobs INSERT + L14 transfer-match + upsert + conflict key + notifications), `reports.js` `/quick-customer`, `customers.js` PUT `/:id` (+ its pipeline sync). `customer-pipeline.js` PATCH already trimmed. Frontend belt: `CreateJobModal`, `CustomerDetailModal`, `AddCustomerModal` trim on submit.
+
+**One-off cleanup (idempotent, migrate path in `schema.sql`, runs BEFORE `backfill_pipeline.js`):** order matters — (1) trim the SOURCE `customers`; (2) **soft-delete** whitespace pipeline rows that have a trimmed-equal CLEAN sibling under the same `sales_id` (these are backfill artifacts — trimming them would collide on the partial unique index `(sales_id, LOWER(company_name)) WHERE deleted_at IS NULL`); (3) trim remaining lone whitespace pipeline rows; (4) trim `jobs`.
+
+**The trap that cost a redeploy — `backfill_pipeline.js` re-propagates from `customers`.** `start.js` runs the schema migrate THEN `backfill_pipeline.js`, which derives `customer_pipeline` rows from `customers.company_name`. The FIRST cleanup deploy trimmed `customer_pipeline`+`jobs` but NOT `customers`, so the backfill's `LOWER(" X") ≠ LOWER("X")` "missing" check failed to match the cleaned row and re-INSERTed 17 whitespace duplicates. Fix: trim the `customers` source AND make `backfill_pipeline.js` **TRIM-aware** (`LOWER(TRIM(...))` in every group/match/insert in `STAGE_CTES` + Steps 0/1/2; Step 2 also gained `cp.deleted_at IS NULL`). **Rule:** when cleaning a denormalized/derived column, clean the SOURCE table and audit every job that re-derives it (`backfill_pipeline.js` here) in the same change — trimming only the derived copy lets the re-derivation undo the cleanup (or spawn dupes). Verified live: 0 whitespace in all three tables, 17 artifacts soft-deleted, backfill logs `Inserted 0`, «THẠCH HIỂN» `job_count=2` + MST intact, a hypothetical re-run trims/soft-deletes 0.
+
 ---
 
 ## Customer code generation
