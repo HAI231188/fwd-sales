@@ -493,6 +493,7 @@ function InfoEditForm({ pipeline, latest, pipelineId, customerId, customerCode, 
   const mutation = useMutation({
     mutationFn: () => updateCustomer(customerId, {
       ...form,
+      company_name: (form.company_name || '').trim(),
       interaction_type: latest?.interaction_type || 'contacted',
     }),
     onSuccess: () => {

@@ -326,6 +326,7 @@ export default function CreateJobModal({ onClose, onCreated }) {
     try {
       await onCreated({
         ...form,
+        customer_name: (form.customer_name || '').trim(),
         customer_id: selectedCustomer?.customer_id || null,
         sales_id: form.sales_id || null,
         tons: form.tons ? Number(form.tons) : null,

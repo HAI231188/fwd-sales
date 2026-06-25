@@ -278,7 +278,12 @@ router.post('/quick-customer', requireAuth, async (req, res) => {
     quotes = [],
   } = req.body;
 
-  if (!company_name) return res.status(400).json({ error: 'Tên công ty là bắt buộc' });
+  // Trim once; this trimmed value is the LOWER()-match key against customer_pipeline
+  // and is stored into customers.company_name + customer_pipeline.company_name
+  // (whitespace-in-name cleanup, 2026-06-25).
+  const companyName = (company_name || '').trim();
+
+  if (!companyName) return res.status(400).json({ error: 'Tên công ty là bắt buộc' });
 
   const client = await db.pool.connect();
   try {
@@ -287,7 +292,7 @@ router.post('/quick-customer', requireAuth, async (req, res) => {
     // Check if new company for this salesperson (affects new_customers count)
     const { rows: existPipe } = await client.query(
       `SELECT id, stage FROM customer_pipeline WHERE sales_id = $1 AND LOWER(company_name) = LOWER($2) AND deleted_at IS NULL`,
-      [req.user.id, company_name]
+      [req.user.id, companyName]
     );
     const isNewCompany = existPipe.length === 0;
 
@@ -329,7 +334,7 @@ router.post('/quick-customer', requireAuth, async (req, res) => {
       RETURNING *
     `, [
       report.id, req.user.id,
-      company_name, contact_person || null, phone || null,
+      companyName, contact_person || null, phone || null,
       source || null, industry || null, interaction_type || 'contacted',
       needs || null, notes || null, next_action || null, follow_up_date || null,
       potential_level || null, decision_maker || false,
@@ -349,7 +354,7 @@ router.post('/quick-customer', requireAuth, async (req, res) => {
           (customer_id, sales_id, company_name, contact_person, phone, industry, source, stage, last_activity_date)
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
         RETURNING id
-      `, [customer.id, req.user.id, company_name, contact_person || null, phone || null,
+      `, [customer.id, req.user.id, companyName, contact_person || null, phone || null,
           industry || null, source || null, initStage, today]);
       pipelineId = pRows[0].id;
       await client.query(

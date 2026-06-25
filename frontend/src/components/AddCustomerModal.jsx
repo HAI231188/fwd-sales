@@ -149,6 +149,7 @@ export default function AddCustomerModal({ onClose }) {
   const mutation = useMutation({
     mutationFn: () => quickAddCustomer({
       ...form,
+      company_name: (form.company_name || '').trim(),
       quotes: form.interaction_type === 'quoted' ? serializeQuotes(quotes) : [],
     }),
     onSuccess: (data) => {

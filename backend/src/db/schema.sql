@@ -625,6 +625,26 @@ ALTER TABLE customer_pipeline ADD COLUMN IF NOT EXISTS tax_code          VARCHAR
 ALTER TABLE customer_pipeline DROP COLUMN IF EXISTS short_name;
 
 -- ============================================================
+-- One-off whitespace cleanup for customer names (2026-06-25).
+-- Some write paths historically stored leading/trailing whitespace in the
+-- customer name (e.g. "THẠCH HIỂN "). The name is a LOWER()-match key between
+-- jobs.customer_name and customer_pipeline.company_name, so BOTH tables must be
+-- trimmed TOGETHER — trimming one side alone breaks the match (loses MST /
+-- address / job_count for that customer). Trim-on-write was added to every
+-- backend write path in the same change; this cleanup runs BEFORE the server
+-- binds so a freshly-trimmed new job ON CONFLICT-matches the cleaned existing
+-- pipeline row (no duplicate spawned).
+--
+-- Idempotent: `<> TRIM(...)` makes the second run a no-op (0 rows).
+-- Verified collision-free against the partial unique index
+-- `(sales_id, LOWER(company_name)) WHERE deleted_at IS NULL` — a dry-run on prod
+-- (2026-06-25) found 23 pipeline rows + 6 jobs rows to trim, 0 of which would
+-- collide with a different active row under the same sales_id after trimming.
+-- ============================================================
+UPDATE customer_pipeline SET company_name = TRIM(company_name) WHERE company_name <> TRIM(company_name);
+UPDATE jobs            SET customer_name = TRIM(customer_name) WHERE customer_name <> TRIM(customer_name);
+
+-- ============================================================
 -- Email CC list on transport_companies (L16) — stored as JSON-stringified array.
 -- Reason: TEXT keeps the schema simple and lets us preserve order client-side.
 -- A native TEXT[] would also work but JSON is closer to the wire format already

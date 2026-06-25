@@ -203,6 +203,11 @@ router.put('/:id', requireAuth, async (req, res) => {
     address, tax_code,
   } = req.body;
 
+  // Trim once; this trimmed value is written to customers.company_name AND synced
+  // to customer_pipeline.company_name (the LOWER()-match key)
+  // (whitespace-in-name cleanup, 2026-06-25).
+  const companyName = (company_name || '').trim();
+
   const client = await db.pool.connect();
   try {
     await client.query('BEGIN');
@@ -210,7 +215,7 @@ router.put('/:id', requireAuth, async (req, res) => {
     // Sales can only edit their own customers; lead can edit any
     const ownerClause = req.user.role === 'sales' ? 'AND user_id = $19' : '';
     const queryParams = [
-      company_name, contact_person, phone, source, industry,
+      companyName, contact_person, phone, source, industry,
       interaction_type || 'contacted', needs, notes, next_action, follow_up_date || null,
       potential_level || null, decision_maker || false, preferred_contact || null,
       estimated_value || null, competitor || null,
@@ -248,7 +253,7 @@ router.put('/:id', requireAuth, async (req, res) => {
           updated_at     = NOW()
         WHERE id = $6
       `, [
-        company_name, contact_person || null, phone || null,
+        companyName, contact_person || null, phone || null,
         industry || null, source || null, rows[0].pipeline_id,
       ]);
     }

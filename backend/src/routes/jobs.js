@@ -1412,7 +1412,14 @@ router.post('/', requireAuth, async (req, res) => {
     ops_hp_note,
   } = req.body;
 
-  if (!customer_name || !service_type) {
+  // Trim leading/trailing whitespace from the customer name ONCE, then use this
+  // single trimmed value everywhere the name is stored or used as a LOWER() match
+  // key (jobs INSERT, L14 transfer match + pipeline upsert + conflict key) and in
+  // notification text. Keeps jobs.customer_name and customer_pipeline.company_name
+  // name-matched (whitespace-in-name cleanup, 2026-06-25).
+  const customerName = (customer_name || '').trim();
+
+  if (!customerName || !service_type) {
     return res.status(400).json({ error: 'Tên khách hàng và loại dịch vụ là bắt buộc' });
   }
   const importExport = import_export || 'export';
@@ -1445,10 +1452,10 @@ router.post('/', requireAuth, async (req, res) => {
 
     if (mode === 'auto') {
       await Promise.all([
-        isTk ? suggestCus({ customer_name, service_type, pol, pod, other_services, destination }, db.pool)
+        isTk ? suggestCus({ customer_name: customerName, service_type, pol, pod, other_services, destination }, db.pool)
                  .then(r => { cusSuggestion = r; }).catch(e => console.error('suggestCus:', e.message))
              : Promise.resolve(),
-        needsOps ? suggestOps({ customer_name, service_type, destination }, db.pool)
+        needsOps ? suggestOps({ customer_name: customerName, service_type, destination }, db.pool)
                      .then(r => { opsSuggestion = r; }).catch(e => console.error('suggestOps:', e.message))
                  : Promise.resolve(),
       ]);
@@ -1470,7 +1477,7 @@ router.post('/', requireAuth, async (req, res) => {
       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34)
       RETURNING *
     `, [
-      job_code || null, customer_id || null, customer_name,
+      job_code || null, customer_id || null, customerName,
       customer_address || null, customer_tax_code || null,
       sales_id || null, pol || null, pod || null,
       cont_number || null, cont_type || null, seal_number || null,
@@ -1509,8 +1516,8 @@ router.post('/', requireAuth, async (req, res) => {
     // the same customer are wiped — including child `customers` interaction rows (manual
     // DELETE since the FK is SET NULL not CASCADE). pipeline_history + pipeline_delete_requests
     // cascade automatically.
-    let pipelineTransfer = { transferredFromSales: [], wasNewlyInserted: false, customerName: customer_name };
-    if (sales_id && customer_name) {
+    let pipelineTransfer = { transferredFromSales: [], wasNewlyInserted: false, customerName };
+    if (sales_id && customerName) {
       const { rows: others } = await client.query(
         `SELECT cp.id, cp.sales_id, u.name AS sales_name
            FROM customer_pipeline cp
@@ -1519,7 +1526,7 @@ router.post('/', requireAuth, async (req, res) => {
             AND cp.deleted_at IS NULL
             AND ( LOWER(cp.company_name) = LOWER($2)
                   OR ($3::int IS NOT NULL AND cp.customer_id = $3::int) )`,
-        [sales_id, customer_name, customer_id || null]
+        [sales_id, customerName, customer_id || null]
       );
       for (const r of others) {
         await client.query(`DELETE FROM customers WHERE pipeline_id = $1`, [r.id]);
@@ -1541,7 +1548,7 @@ router.post('/', requireAuth, async (req, res) => {
            DO UPDATE SET stage = 'booked', updated_at = NOW()
          RETURNING id, (xmax = 0) AS was_inserted`,
         [
-          sales_id, customer_name, customer_id || null,
+          sales_id, customerName, customer_id || null,
           (company_full_name || '').toString().trim(),
           (invoice_address   || '').toString().trim(),
           (invoice_tax_code  || '').toString().trim(),
@@ -1617,7 +1624,7 @@ router.post('/', requireAuth, async (req, res) => {
         await client.query(`
           INSERT INTO notifications (user_id, type, title, message, job_id)
           VALUES ($1, 'ai_job_assigned', 'AI phân job mới', $2, $3)
-        `, [cusSuggestion.user_id, `Bạn được phân job ${job.job_code || `#${job.id}`} - ${customer_name}`, job.id]);
+        `, [cusSuggestion.user_id, `Bạn được phân job ${job.job_code || `#${job.id}`} - ${customerName}`, job.id]);
         await recordHistory(client, job.id, req.user.id, 'cus_assigned', null, cusSuggestion.user_name || String(cusSuggestion.user_id));
       } else {
         // Manual mode or AI failed — leave unassigned, appears in "Chờ phân CUS"
@@ -1664,7 +1671,7 @@ router.post('/', requireAuth, async (req, res) => {
       await client.query(`
         INSERT INTO notifications (user_id, type, title, message, job_id)
         VALUES ($1, 'ai_job_assigned', 'AI phân job mới', $2, $3)
-      `, [primaryOpsOwner, `Bạn được phân job ${job.job_code || `#${job.id}`} - ${customer_name}`, job.id]);
+      `, [primaryOpsOwner, `Bạn được phân job ${job.job_code || `#${job.id}`} - ${customerName}`, job.id]);
       await recordHistory(client, job.id, req.user.id, 'ops_assigned', null, pou[0]?.name || String(primaryOpsOwner));
     }
 
@@ -1682,7 +1689,7 @@ router.post('/', requireAuth, async (req, res) => {
       await client.query(`
         INSERT INTO notifications (user_id, type, title, message, job_id)
         VALUES ($1, 'ai_job_assigned', 'AI phân job mới', $2, $3)
-      `, [ddUserId, `Bạn được phân job ${job.job_code || `#${job.id}`} - ${customer_name}`, job.id]);
+      `, [ddUserId, `Bạn được phân job ${job.job_code || `#${job.id}`} - ${customerName}`, job.id]);
       await recordHistory(client, job.id, req.user.id, 'dieu_do_assigned', null, String(ddUserId));
     }
 
@@ -1737,7 +1744,7 @@ router.post('/', requireAuth, async (req, res) => {
         await client.query(
           `INSERT INTO notifications (user_id, type, title, message, job_id)
            VALUES ($1, 'ai_job_assigned', 'AI phân job mới', $2, $3)`,
-          [t.ops_id, `Bạn được phân job ${job.job_code || `#${job.id}`} - ${customer_name}`, job.id]);
+          [t.ops_id, `Bạn được phân job ${job.job_code || `#${job.id}`} - ${customerName}`, job.id]);
       }
     }
 
@@ -1751,7 +1758,7 @@ router.post('/', requireAuth, async (req, res) => {
       await resyncJaOpsPrimary(client, job.id);
     }
 
-    await recordHistory(client, job.id, req.user.id, 'job_created', null, customer_name);
+    await recordHistory(client, job.id, req.user.id, 'job_created', null, customerName);
 
     // Trigger G: notify all TP when a sales user creates a job
     if (req.user.role === 'sales') {
@@ -1762,13 +1769,13 @@ router.post('/', requireAuth, async (req, res) => {
         await client.query(
           `INSERT INTO notifications (user_id, type, title, message, job_id)
            VALUES ($1, 'new_job_created', 'Job mới được tạo', $2, $3)`,
-          [tp.id, `${salesName} vừa tạo job ${job.job_code || `#${job.id}`} - ${customer_name}`, job.id]
+          [tp.id, `${salesName} vừa tạo job ${job.job_code || `#${job.id}`} - ${customerName}`, job.id]
         );
       }
     }
 
     // Pipeline transfer notifications + history (L14).
-    if (sales_id && customer_name) {
+    if (sales_id && customerName) {
       const actor = (await client.query(`SELECT name FROM users WHERE id = $1`, [req.user.id])).rows[0]?.name || 'Người dùng';
       const newSales = (await client.query(`SELECT name FROM users WHERE id = $1`, [sales_id])).rows[0]?.name || 'Sales';
       if (pipelineTransfer.transferredFromSales.length > 0) {
@@ -1776,13 +1783,13 @@ router.post('/', requireAuth, async (req, res) => {
           await client.query(
             `INSERT INTO notifications (user_id, type, title, message, job_id)
              VALUES ($1, 'pipeline_transferred_out', 'Khách bị chuyển khỏi pipeline', $2, $3)`,
-            [old.sales_id, `Khách ${customer_name} đã được chuyển khỏi pipeline của bạn bởi ${actor}`, job.id]
+            [old.sales_id, `Khách ${customerName} đã được chuyển khỏi pipeline của bạn bởi ${actor}`, job.id]
           );
         }
         await client.query(
           `INSERT INTO notifications (user_id, type, title, message, job_id)
            VALUES ($1, 'pipeline_transferred_in', 'Khách được chuyển vào pipeline', $2, $3)`,
-          [sales_id, `Khách ${customer_name} đã được thêm vào pipeline của bạn (stage Đã booking)`, job.id]
+          [sales_id, `Khách ${customerName} đã được thêm vào pipeline của bạn (stage Đã booking)`, job.id]
         );
         const oldNames = pipelineTransfer.transferredFromSales.map(o => o.sales_name).filter(Boolean).join(', ') || '(unknown)';
         await recordHistory(client, job.id, req.user.id, 'pipeline_transferred', oldNames, newSales);
@@ -1790,7 +1797,7 @@ router.post('/', requireAuth, async (req, res) => {
         await client.query(
           `INSERT INTO notifications (user_id, type, title, message, job_id)
            VALUES ($1, 'pipeline_added', 'Khách mới vào pipeline', $2, $3)`,
-          [sales_id, `Khách ${customer_name} đã được thêm vào pipeline của bạn (stage Đã booking)`, job.id]
+          [sales_id, `Khách ${customerName} đã được thêm vào pipeline của bạn (stage Đã booking)`, job.id]
         );
       }
     }
