@@ -1277,8 +1277,15 @@ export default function CustomerDetailModal({ pipelineId, onClose }) {
                     <InfoRow label="Điện thoại" value={pipeline.phone} />
                     <InfoRow label="Ngành hàng" value={pipeline.industry} />
                     <InfoRow label="Nguồn" value={SOURCE_LABEL[pipeline.source] || pipeline.source} />
-                    <InfoRow label="Mã số thuế" value={latest?.tax_code} />
-                    <InfoRow label="Địa chỉ" value={latest?.address} />
+                    {/* Resolved company info (2026-06-25): the interaction value
+                        wins (a sales rep's manual entry is most current), else the
+                        backend resolved chain (latest name-matched job → pipeline
+                        invoice snapshot). Fixes the blank MST/Địa chỉ for a
+                        job-created customer that has no interaction row. Tên đầy đủ
+                        is pipeline-only and auto-hides when empty (InfoRow). */}
+                    <InfoRow label="Tên đầy đủ" value={pipeline.resolved_full_name} />
+                    <InfoRow label="Mã số thuế" value={latest?.tax_code || pipeline.resolved_tax_code} />
+                    <InfoRow label="Địa chỉ" value={latest?.address || pipeline.resolved_address} />
 
                     {pipeline.last_activity_date && (
                       <div style={{ marginBottom: 10 }}>

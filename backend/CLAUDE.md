@@ -80,6 +80,9 @@ Two transitions it applies:
 
 Every stage change also inserts a row into `pipeline_history`.
 
+### Detail modal shows resolved company info (2026-06-25)
+`GET /api/pipeline/:id/detail` returns three resolved fields on the pipeline row so a **job-created customer** (zero sales interactions) still shows MST + address in `CustomerDetailModal`: `resolved_tax_code`, `resolved_address`, `resolved_full_name`. They mirror the customer-search COALESCE chain (`jobs.js:502-511`) — the latest name-matched JOB's `customer_tax_code`/`customer_address` (`customer_id OR LOWER(name)`, `deleted_at IS NULL`, non-empty, `ORDER BY created_at DESC LIMIT 1`) preferred over the pipeline invoice snapshot (`NULLIF(cp.tax_code/invoice_address,'')`); `resolved_full_name = NULLIF(cp.company_full_name,'')` (pipeline-only — jobs has no legal-name column). **Full priority chain = interaction → job → pipeline-invoice:** the modal applies `latest?.tax_code || pipeline.resolved_tax_code` (interaction wins, since a sales rep's manual entry is most current); the backend `resolved_*` covers the job→pipeline layers (it can't include the interaction layer — the detail query `GROUP BY cp.id` joins many `customers` rows, so `c.*` is ambiguous there). Display-only; no writes/backfill. `InfoRow` auto-hides empty values, so "Tên đầy đủ" hides when blank.
+
 ### `booked` is exempt from the date window (2026-06-24 fix)
 `GET /api/pipeline` filters customers by `cp.last_activity_date` within the frontend's date range (`PipelineView` defaults to `'month'`). **`booked` is a terminal "won" stage and must NOT be time-boxed:** a customer booked via a job has `last_activity_date = NULL` (the L14 upsert at `jobs.js:~1539` sets `stage='booked'` + `updated_at` but **not** `last_activity_date`), and older bookings go stale — which silently hid ~47/48 booked customers from the rep's "Đã booking" list while the no-date-filter customer-data view still showed them. Fix: the WHERE is
 ```

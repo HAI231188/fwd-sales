@@ -443,7 +443,31 @@ router.get('/:id/detail', requireAuth, async (req, res) => {
       SELECT cp.*,
         COUNT(DISTINCT c.id)::int                                     AS total_interactions,
         COUNT(DISTINCT q.id) FILTER (WHERE q.status = 'booked')::int  AS booked_count,
-        COUNT(DISTINCT q.id)::int                                      AS quote_count
+        COUNT(DISTINCT q.id)::int                                      AS quote_count,
+        -- Resolved company info (2026-06-25) so a job-created customer (no sales
+        -- interaction) still shows MST + address. Mirrors the customer-search
+        -- COALESCE chain (jobs.js:502-511): the latest name-matched JOB's data
+        -- (customer_id OR LOWER(name); soft-deleted excluded; ORDER BY created_at
+        -- DESC) is preferred over the pipeline invoice snapshot. The non-empty
+        -- guard skips a job row whose field is an empty string so it can't shadow a real
+        -- value (e.g. hve job #80 address=''). The INTERACTION layer is applied in
+        -- the frontend (latest?.tax_code wins). Legal name is pipeline-only (jobs
+        -- has no legal-name column).
+        COALESCE(
+          NULLIF((SELECT j.customer_tax_code FROM jobs j
+             WHERE (j.customer_id = cp.customer_id OR LOWER(j.customer_name) = LOWER(cp.company_name))
+               AND j.customer_tax_code IS NOT NULL AND j.customer_tax_code <> '' AND j.deleted_at IS NULL
+             ORDER BY j.created_at DESC LIMIT 1), ''),
+          NULLIF(cp.tax_code, '')
+        ) AS resolved_tax_code,
+        COALESCE(
+          NULLIF((SELECT j.customer_address FROM jobs j
+             WHERE (j.customer_id = cp.customer_id OR LOWER(j.customer_name) = LOWER(cp.company_name))
+               AND j.customer_address IS NOT NULL AND j.customer_address <> '' AND j.deleted_at IS NULL
+             ORDER BY j.created_at DESC LIMIT 1), ''),
+          NULLIF(cp.invoice_address, '')
+        ) AS resolved_address,
+        NULLIF(cp.company_full_name, '') AS resolved_full_name
       FROM customer_pipeline cp
       LEFT JOIN customers c ON c.pipeline_id = cp.id
       LEFT JOIN quotes q    ON q.customer_id = c.id
