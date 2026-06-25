@@ -628,21 +628,46 @@ ALTER TABLE customer_pipeline DROP COLUMN IF EXISTS short_name;
 -- One-off whitespace cleanup for customer names (2026-06-25).
 -- Some write paths historically stored leading/trailing whitespace in the
 -- customer name (e.g. "THẠCH HIỂN "). The name is a LOWER()-match key between
--- jobs.customer_name and customer_pipeline.company_name, so BOTH tables must be
--- trimmed TOGETHER — trimming one side alone breaks the match (loses MST /
--- address / job_count for that customer). Trim-on-write was added to every
--- backend write path in the same change; this cleanup runs BEFORE the server
--- binds so a freshly-trimmed new job ON CONFLICT-matches the cleaned existing
--- pipeline row (no duplicate spawned).
+-- customers.company_name, customer_pipeline.company_name and jobs.customer_name,
+-- so ALL must be cleaned TOGETHER — trimming one side alone breaks the match
+-- (loses MST / address / job_count for that customer). Trim-on-write was added
+-- to every backend write path in the same change.
 --
--- Idempotent: `<> TRIM(...)` makes the second run a no-op (0 rows).
--- Verified collision-free against the partial unique index
--- `(sales_id, LOWER(company_name)) WHERE deleted_at IS NULL` — a dry-run on prod
--- (2026-06-25) found 23 pipeline rows + 6 jobs rows to trim, 0 of which would
--- collide with a different active row under the same sales_id after trimming.
+-- ORDER MATTERS — these statements run in migrate, BEFORE backfill_pipeline.js:
+--   1. Trim the SOURCE (customers). backfill_pipeline.js runs AFTER this file and
+--      derives customer_pipeline rows from customers.company_name; if the source
+--      still had whitespace, the backfill would re-INSERT a whitespace duplicate
+--      next to the cleaned pipeline row (this exact regression happened on the
+--      first deploy of this block — 17 dupes were spawned and are healed below).
+--      backfill_pipeline.js is ALSO made TRIM-aware in the same change (belt).
+--   2. Soft-delete whitespace pipeline rows that have a trimmed-equal CLEAN
+--      sibling under the same sales_id — these are backfill artifacts (verified:
+--      no customers.pipeline_id points at them). MUST run before step 3, while the
+--      whitespace still distinguishes the dupe from its clean sibling. Soft-delete
+--      (not trim) because trimming would collide with the clean sibling on the
+--      partial unique index `(sales_id, LOWER(company_name)) WHERE deleted_at IS NULL`.
+--   3. Trim any REMAINING (now lone) whitespace pipeline rows — collision-free.
+--   4. Trim jobs.customer_name.
+--
+-- Idempotent: `<> TRIM(...)` makes every statement a no-op on re-run (0 rows);
+-- step 2's EXISTS finds nothing once the dupes are tombstoned and the source is clean.
 -- ============================================================
-UPDATE customer_pipeline SET company_name = TRIM(company_name) WHERE company_name <> TRIM(company_name);
-UPDATE jobs            SET customer_name = TRIM(customer_name) WHERE customer_name <> TRIM(customer_name);
+UPDATE customers SET company_name = TRIM(company_name) WHERE company_name <> TRIM(company_name);
+
+UPDATE customer_pipeline a
+   SET deleted_at = NOW(), updated_at = NOW()
+ WHERE a.deleted_at IS NULL
+   AND a.company_name <> TRIM(a.company_name)
+   AND EXISTS (
+     SELECT 1 FROM customer_pipeline b
+      WHERE b.id <> a.id AND b.deleted_at IS NULL AND b.sales_id = a.sales_id
+        AND b.company_name = TRIM(b.company_name)
+        AND LOWER(b.company_name) = LOWER(TRIM(a.company_name)));
+
+UPDATE customer_pipeline SET company_name = TRIM(company_name)
+ WHERE company_name <> TRIM(company_name) AND deleted_at IS NULL;
+
+UPDATE jobs SET customer_name = TRIM(customer_name) WHERE customer_name <> TRIM(customer_name);
 
 -- ============================================================
 -- Email CC list on transport_companies (L16) — stored as JSON-stringified array.

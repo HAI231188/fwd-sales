@@ -18,11 +18,16 @@ const db = require('./index');
 // Shared CTEs used in both UPDATE (step 0) and INSERT (step 1)
 const STAGE_CTES = `
   -- Most recent customer row per salesperson+company (interaction_type + display info)
+  -- NOTE: company_name is TRIM()'d everywhere it is grouped, matched, or selected.
+  -- customers.company_name may carry leading/trailing whitespace from legacy writes;
+  -- without TRIM here the backfill would (a) fail to match a cleaned pipeline row by
+  -- LOWER() and (b) re-INSERT a whitespace duplicate. Trimming makes the backfill
+  -- whitespace-tolerant and idempotent against the cleaned pipeline (2026-06-25).
   latest_customer AS (
-    SELECT DISTINCT ON (c.user_id, LOWER(c.company_name))
+    SELECT DISTINCT ON (c.user_id, LOWER(TRIM(c.company_name)))
       c.id,
-      c.user_id          AS sales_id,
-      c.company_name,
+      c.user_id              AS sales_id,
+      TRIM(c.company_name)   AS company_name,
       c.contact_person,
       c.phone,
       c.industry,
@@ -30,23 +35,23 @@ const STAGE_CTES = `
       c.interaction_type
     FROM customers c
     JOIN reports r ON r.id = c.report_id AND r.deleted_at IS NULL
-    ORDER BY c.user_id, LOWER(c.company_name), r.report_date DESC, c.created_at DESC
+    ORDER BY c.user_id, LOWER(TRIM(c.company_name)), r.report_date DESC, c.created_at DESC
   ),
   -- Last report date per salesperson+company
   last_activity AS (
-    SELECT c.user_id AS sales_id, LOWER(c.company_name) AS co_key,
+    SELECT c.user_id AS sales_id, LOWER(TRIM(c.company_name)) AS co_key,
            MAX(r.report_date) AS last_date
     FROM customers c
     JOIN reports r ON r.id = c.report_id AND r.deleted_at IS NULL
-    GROUP BY c.user_id, LOWER(c.company_name)
+    GROUP BY c.user_id, LOWER(TRIM(c.company_name))
   ),
   -- Whether any quote for this company+salesperson is booked
   booking AS (
-    SELECT c.user_id AS sales_id, LOWER(c.company_name) AS co_key,
+    SELECT c.user_id AS sales_id, LOWER(TRIM(c.company_name)) AS co_key,
            BOOL_OR(q.status = 'booked') AS is_booked
     FROM customers c
     LEFT JOIN quotes q ON q.customer_id = c.id
-    GROUP BY c.user_id, LOWER(c.company_name)
+    GROUP BY c.user_id, LOWER(TRIM(c.company_name))
   ),
   -- Computed correct stage for every company+salesperson pair
   correct_stages AS (
@@ -87,7 +92,7 @@ async function backfill() {
       SET stage = cs.stage, updated_at = NOW()
       FROM correct_stages cs
       WHERE cs.sales_id = cp.sales_id
-        AND LOWER(cs.company_name) = LOWER(cp.company_name)
+        AND LOWER(cs.company_name) = LOWER(TRIM(cp.company_name))
         AND cp.stage != cs.stage
     `);
     console.log(`  ↳ Corrected ${corrected} existing pipeline stages`);
@@ -109,7 +114,8 @@ async function backfill() {
       SET pipeline_id = cp.id
       FROM customer_pipeline cp
       WHERE cp.sales_id            = c.user_id
-        AND LOWER(cp.company_name) = LOWER(c.company_name)
+        AND LOWER(TRIM(cp.company_name)) = LOWER(TRIM(c.company_name))
+        AND cp.deleted_at IS NULL
         AND c.pipeline_id IS NULL
     `);
     console.log(`  ↳ Linked ${linked} customer rows to pipeline entries`);
