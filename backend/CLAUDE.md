@@ -4,6 +4,19 @@
 
 ---
 
+## ⚠️ Rule 0 — Independent AI review (Codex): verify before reporting "done"
+
+**Every code change is independently reviewed line-by-line by a separate AI reviewer (Codex) before it is merged or deployed.** Your work WILL be audited, so never report a task as done until you have completed ALL of the following:
+
+1. **Confirm every name exists in scope** — every new or referenced variable, import, and function must actually exist with the exact spelling used. Grep to verify. Half-applied edits that reference a non-existent binding are a common failure mode and will be caught.
+2. **Run the checks** — `node --check <file>` on every edited backend file, and `npm run build` for any frontend change. Confirm both pass.
+3. **Confirm no regressions** — the change must not break or contradict existing structure, conventions, or any rule in this file — especially the parallel-dashboard broadcast rule (L9/L10) and the desktop/mobile-parity rule (L26).
+4. **Show concrete evidence** — present the actual grep results and the `node --check` / `npm run build` output, not just a claim of "done".
+
+Treat "it should work" as insufficient: **show that it does.**
+
+---
+
 ## Tech stack
 
 Node.js / Express. CommonJS (`require`/`module.exports`) throughout. No TypeScript, no ORM — raw SQL only via `pg` pool.
