@@ -530,6 +530,15 @@ export default function JobDetailModal({
     enabled: !!jobId,
   });
 
+  // 2026-06-29 CUS field-edit widening — mirrors jobs.js PUT /:id. An ASSIGNED
+  // CUS (a CUS-role user who is the cus_id on THIS job) may edit deadline +
+  // sales_id, but NOT status. `canEditTk` above already encodes CUS_ROLES
+  // membership (['cus','cus1','cus2','cus3']). `isLead` keeps the status control
+  // visible to lead (backend canReassignOwnerOrStatus = TP || lead) — gating
+  // status on bare isTP would wrongly hide it from lead. DD/sales/KT gain nothing.
+  const isLead = user?.role === 'lead';
+  const isAssignedCus = canEditTk && !!job && Number(job.cus_id) === Number(user?.id);
+
   const { data: staffList } = useQuery({
     queryKey: ['logStaff'],
     queryFn: getLogStaff,
@@ -631,7 +640,9 @@ export default function JobDetailModal({
       }
     }
     const payload = { ...draft };
-    if (!isTP) delete payload.deadline;
+    // deadline is sent by TP or the assigned CUS (mirrors jobs.js PUT /:id, which
+    // accepts deadline from both). Dropped for everyone else so it never sends.
+    if (!isTP && !isAssignedCus) delete payload.deadline;
     // Coerce empty strings to null for date/numeric columns; PostgreSQL rejects '' for INTEGER/DECIMAL/DATE/TIMESTAMPTZ
     const NULLABLE_WHEN_BLANK = ['etd','eta','han_lenh','deadline','sales_id','tons','cbm','so_kien','kg'];
     for (const f of NULLABLE_WHEN_BLANK) {
@@ -937,17 +948,19 @@ export default function JobDetailModal({
                             </select>
                           </FRow>
                         )}
-                        {isTP && (
+                        {(isTP || isAssignedCus) && (
                           <FRow label="Deadline">
                             <input style={INP} type="datetime-local" value={draft.deadline} onChange={e => setD('deadline', e.target.value)} />
                           </FRow>
                         )}
-                        <FRow label="Trạng thái">
-                          <select style={INP} value={draft.status} onChange={e => setD('status', e.target.value)}>
-                            <option value="pending">Đang xử lý</option>
-                            <option value="completed">Hoàn thành</option>
-                          </select>
-                        </FRow>
+                        {(isTP || isLead) && (
+                          <FRow label="Trạng thái">
+                            <select style={INP} value={draft.status} onChange={e => setD('status', e.target.value)}>
+                              <option value="pending">Đang xử lý</option>
+                              <option value="completed">Hoàn thành</option>
+                            </select>
+                          </FRow>
+                        )}
                       </div>
 
                       <div style={{ marginBottom: 10 }}>

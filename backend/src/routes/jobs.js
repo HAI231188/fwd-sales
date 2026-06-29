@@ -1898,8 +1898,10 @@ router.get('/:id', requireAuth, async (req, res) => {
 router.put('/:id', requireAuth, async (req, res) => {
   if (req.user.role === 'ops')
     return res.status(403).json({ error: 'Không có quyền chỉnh sửa thông tin job' });
-  if (req.body.deadline !== undefined && req.user.role !== 'truong_phong_log')
-    return res.status(403).json({ error: 'Chỉ Trưởng phòng mới được đổi deadline' });
+  // NOTE (2026-06-29 CUS field-edit widening): the deadline permission guard
+  // moved INSIDE the transaction (after the job_assignments lookup) so an
+  // ASSIGNED CUS — not only TP/lead — may set it. See the guard near canEditJob
+  // below. DD/sales/KT remain blocked.
 
   const BASE_FIELDS = ['job_code','customer_name','customer_address','customer_tax_code',
     'pol','pod','cont_number','cont_type','seal_number',
@@ -1912,14 +1914,12 @@ router.put('/:id', requireAuth, async (req, res) => {
     // can switch the displayed date semantic (cutoff vs hạn lệnh). Existing
     // han_lenh value is preserved; only the label/input type follows the toggle.
     'import_export'];
-  // B2 (ĐỢT 1 security fix) — only TP/lead may change ownership (sales_id) or
-  // force status. Strip both for every other caller so an assigned dept user
-  // (or owner-sales) can edit job info but cannot steal a job or force-complete
-  // it via the generic field loop. The DD completion flow (body.completed_at)
-  // is unaffected — it writes dd_completed_at, not status.
-  const FIELDS = canReassignOwnerOrStatus(req.user)
-    ? BASE_FIELDS
-    : BASE_FIELDS.filter(f => f !== 'sales_id' && f !== 'status');
+  // B2 (ĐỢT 1 security fix, widened 2026-06-29) — the editable-field whitelist
+  // (FIELDS) is computed INSIDE the transaction, after the job_assignments
+  // lookup, because sales_id (ownership) is now editable by the ASSIGNED CUS too,
+  // not only TP/lead. status stays TP/lead-only (system-computed — a CUS must
+  // never force it). The DD completion flow (body.completed_at) is unaffected —
+  // it writes dd_completed_at, not status. See the FIELDS build near canEditJob.
 
   // import_export validation guard — mirror POST behavior at jobs.js:1349-1352.
   // Only fires when the field is present in the body; absent leaves the row's
@@ -1974,6 +1974,50 @@ router.put('/:id', requireAuth, async (req, res) => {
       await client.query('ROLLBACK');
       return res.status(403).json({ error: 'Không có quyền chỉnh sửa công việc này' });
     }
+
+    // ── Field-level edit permission (2026-06-29 CUS widening) ────────────────
+    // Ownership (sales_id) + deadline are now editable by the ASSIGNED CUS too,
+    // reusing the same cus_id ownership canEditJob verified above. status stays
+    // TP/lead-only (system-computed — a CUS must never force it). DD/sales/KT get
+    // nothing new here.
+    const _isTpLead = canReassignOwnerOrStatus(req.user);
+    const _isAssignedCus = CUS_ROLES.includes(req.user.role)
+      && !!_ja[0] && _ja[0].cus_id === req.user.id;
+    const _mayOwner = _isTpLead || _isAssignedCus;     // sales_id
+    const _mayDeadline = _isTpLead || _isAssignedCus;  // deadline
+
+    // deadline: TP/lead or assigned CUS only (was a top-level TP-only 403 before
+    // this widening). DD/sales/KT stay blocked.
+    if (req.body.deadline !== undefined && !_mayDeadline) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: 'Chỉ Trưởng phòng hoặc CUS phụ trách mới được đổi deadline' });
+    }
+
+    // Validate a genuine ownership change before it is written. Reuses
+    // validateAssignee (L32) — the id must exist, be active, and be a sales-capable
+    // user (role ∈ {sales, lead}, matching the frontend dropdown filter). Only
+    // fires when the actor MAY set sales_id AND the value actually changes to a
+    // non-null target, so unchanged saves and blank-unassign never break (and a
+    // job whose current sales owner was later disabled stays editable).
+    // NOTE: POST /api/jobs writes sales_id UNVALIDATED (jobs.js ~1482 + the L14
+    // pipeline transfer) — this PUT-side check is stricter on purpose because PUT
+    // is now reachable by a wider role set (assigned CUS), not only TP/lead.
+    if (_mayOwner && req.body.sales_id !== undefined) {
+      const newSalesId = (req.body.sales_id === '' || req.body.sales_id == null) ? null : req.body.sales_id;
+      const changed = String(newSalesId ?? '') !== String(cur[0].sales_id ?? '');
+      if (changed && newSalesId !== null) {
+        const v = await validateAssignee(client, newSalesId, ['sales', 'lead'], 'Sales');
+        if (!v.ok) { await client.query('ROLLBACK'); return res.status(400).json({ error: v.error }); }
+      }
+    }
+
+    // Editable-field whitelist (relocated from above): sales_id permitted for
+    // _mayOwner (TP/lead or assigned CUS); status stays TP/lead-only. Everyone
+    // else has both stripped so they cannot steal a job or force-complete it via
+    // the generic field loop.
+    const FIELDS = BASE_FIELDS.filter(f =>
+      (f !== 'sales_id' || _mayOwner) &&
+      (f !== 'status'   || _isTpLead));
 
     // han_lenh / Cutoff guard — mirror POST behavior. Only fires when the field
     // is explicitly present in the body; absent fields leave the existing value

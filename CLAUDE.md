@@ -1124,6 +1124,22 @@ The planned "OPS work assigned PER-TASK with a weekly rotation between 2 OPS use
 
 ---
 
+### Note — PUT `/api/jobs/:id` field-level edit permissions (assigned-CUS widening, 2026-06-29)
+
+Who may edit which sensitive job field via `PUT /api/jobs/:id`, computed INSIDE the transaction after the `job_assignments` lookup (so it can read `_ja[0].cus_id`):
+
+| Field | Who may set it | Notes |
+|-------|----------------|-------|
+| `sales_id` (ownership) | TP/lead **OR the assigned CUS** (`CUS_ROLES` member with `cus_id === user.id`) | A genuine change to a non-null target is validated via `validateAssignee(client, id, ['sales','lead'], 'Sales')` (L32) — must exist, be active, be sales-capable. Unchanged saves + blank-unassign skip validation. POST writes `sales_id` UNVALIDATED (jobs.js ~1482 + L14 transfer); the PUT check is stricter on purpose because PUT is reachable by the wider assigned-CUS role set. |
+| `deadline` | TP/lead **OR the assigned CUS** | Was a top-level TP-only 403 before this widening. DD/sales/KT stay blocked (403 `Chỉ Trưởng phòng hoặc CUS phụ trách mới được đổi deadline`). |
+| `status` | TP/lead ONLY (`canReassignOwnerOrStatus`) | System-computed — a CUS must never force it. Stripped from the editable-field whitelist for everyone else. The DD completion flow (`body.completed_at`) is unaffected — it writes `dd_completed_at`, not `status`. |
+
+The editable-field whitelist `FIELDS` is built from `BASE_FIELDS` filtered by `_mayOwner` (sales_id) + `_isTpLead` (status), so a non-permitted caller can neither steal a job nor force-complete it via the generic field loop.
+
+**Frontend mirror (`JobDetailModal.jsx` edit form):** `isAssignedCus = canEditTk && Number(job.cus_id) === Number(user.id)` (`canEditTk` already = CUS_ROLES membership). Deadline field + payload-send gated on `(isTP || isAssignedCus)`; **status `<select>` gated on `(isTP || isLead)` so it shows ONLY to TP/lead** — hidden for assigned-CUS, DD, sales, KT (it was previously rendered for all editors but server-stripped, i.e. a misleading no-op control). `sales_id` dropdown renders for any editor (gated on `staffList`) and was always sent — backend now accepts it from the assigned CUS. Net for a CUS: deadline editable, sales_id editable, status hidden. Single source — no other dashboard edits these job-level fields (L9/L10); single edit form, no mobile variant (L26). Backend authority lives in `services/job-access.js` (`canEditJob` / `canReassignOwnerOrStatus`).
+
+---
+
 ### Note — `admin` role + user-management panel (2026-06-11)
 
 `'admin'` = app-wide user administrator, above every department and distinct from `truong_phong_log`. Only admins reach `/api/admin/*` (router-gated `requireAuth + requireAdmin`; `requireAdmin` in `middleware/auth.js` mirrors `requireKeToan`). Endpoints (`routes/admin.js`): list / create / edit / `:id/role` / `:id/disable` / `:id/enable` / `:id/reset-password`. Create + reset-password return a one-time random temp password (bcrypt at rest; `password_hash` and gmail secrets are never returned). Self-lock + last-admin invariants live in `services/admin-guards.js` (`isValidRole` / `isSelf` / `wouldRemoveLastAdmin`). UI: `pages/AdminPage.jsx` (`/admin`, `ProtectedRoute roles={['admin']}`), the 🛡️ "Quản trị" Navbar pill (admin only, desktop + mobile), and the auto-assign toggle reusing `/api/jobs/settings` (gate widened to `admin`).
