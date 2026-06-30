@@ -115,24 +115,44 @@ export default function TruckPlanningModal({ jobId, jobCode, onClose }) {
     }
   }
 
-  async function fireSend(invoiceInfo, attachBbbg = true) {
+  async function fireSend(invoiceInfo, attachBbbg = true, extraFiles = []) {
     if (!pendingMailContext) return;
     const ctx = pendingMailContext;
     setPendingMailContext(null);
     setSendingGroupKey(ctx.group.key || ctx.group.transport_company_id);
     try {
-      const result = await sendMut.mutateAsync({
-        job_id: jobId,
-        transport_company_id: ctx.group.transport_company_id,
-        booking_ids: ctx.group.rows.map(r => r.booking_id).filter(Boolean),
-        mail_type: ctx.mailType,
-        is_replacement: !!ctx.isReplacement,
-        invoice_info: invoiceInfo,
-        // CP4.3.1 — DD checkbox decision from InvoiceRecipientModal. When
-        // false, backend skips PDF generation entirely and drops the
-        // "Đính kèm" line from the mail body.
-        attach_bbbg: attachBbbg,
-      });
+      const bookingIds = ctx.group.rows.map(r => r.booking_id).filter(Boolean);
+      // Common path (no extra files) sends a plain JSON object — byte-identical
+      // to before this feature. Only when the DD attached files do we switch to
+      // multipart/form-data so the buffers ride along with the request.
+      let payload;
+      if (Array.isArray(extraFiles) && extraFiles.length > 0) {
+        const fd = new FormData();
+        fd.append('job_id', jobId);
+        fd.append('transport_company_id', ctx.group.transport_company_id);
+        fd.append('mail_type', ctx.mailType);
+        fd.append('is_replacement', ctx.isReplacement ? 'true' : 'false');
+        // CP4.3.1 — DD checkbox decision (string over multipart; backend coerces).
+        fd.append('attach_bbbg', attachBbbg ? 'true' : 'false');
+        fd.append('invoice_info', JSON.stringify(invoiceInfo));
+        fd.append('booking_ids', JSON.stringify(bookingIds));
+        extraFiles.forEach(f => fd.append('attachments', f));
+        payload = fd;
+      } else {
+        payload = {
+          job_id: jobId,
+          transport_company_id: ctx.group.transport_company_id,
+          booking_ids: bookingIds,
+          mail_type: ctx.mailType,
+          is_replacement: !!ctx.isReplacement,
+          invoice_info: invoiceInfo,
+          // CP4.3.1 — DD checkbox decision from InvoiceRecipientModal. When
+          // false, backend skips PDF generation entirely and drops the
+          // "Đính kèm" line from the mail body.
+          attach_bbbg: attachBbbg,
+        };
+      }
+      const result = await sendMut.mutateAsync(payload);
       // CP4.3 — surface BBBG attachment count + partial-failure warnings.
       // CP4.3.1 — third variant when DD explicitly unticked the attach
       // checkbox: confirm the no-BBBG send explicitly so they know the mail
@@ -529,7 +549,7 @@ export default function TruckPlanningModal({ jobId, jobCode, onClose }) {
         // for that flow anyway since it's just rendering a preview PDF).
         bookings={pendingMailContext?.group?.rows || null}
         onClose={() => setPendingMailContext(null)}
-        onConfirm={(invoiceInfo, attachBbbg) => fireSend(invoiceInfo, attachBbbg)} />
+        onConfirm={(invoiceInfo, attachBbbg, extraFiles) => fireSend(invoiceInfo, attachBbbg, extraFiles)} />
 
       {/* CP4.2 — Separate modal mount for the "Xem BBBG" flow. Same modal
           component, different pending-context state + different onConfirm. */}

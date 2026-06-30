@@ -26,6 +26,17 @@ const SLB = {
   address: '8th Floor, Diamond Building, No 7 Lot 8A Le Hong Phong, Ngo Quyen, Hai Phong, Viet Nam',
 };
 
+// Manual-attachment limits — mirror the backend caps in routes/email.js
+// (≤10 files, ≤15MB total). The client guard disables Send when exceeded; the
+// server re-validates regardless (never trust the client).
+const ATTACH_MAX_FILES = 10;
+const ATTACH_MAX_TOTAL_BYTES = 15 * 1024 * 1024; // 15MB
+function fmtSize(b) {
+  if (b < 1024) return `${b} B`;
+  if (b < 1024 * 1024) return `${(b / 1024).toFixed(0)} KB`;
+  return `${(b / 1024 / 1024).toFixed(1)} MB`;
+}
+
 // CP4.3.1 — when `bookings` is supplied (mail-send flow from
 // TruckPlanningModal), the modal renders an "Đính kèm BBBG PDF" checkbox.
 // Smart default: ON when every booking has receiver_name + receiver_phone +
@@ -43,6 +54,8 @@ export default function InvoiceRecipientModal({ isOpen, customer, bookings, onCl
   // the user's choice sticks for the rest of this modal session.
   const [attachBbbg, setAttachBbbg] = useState(true);
   const [userTouchedAttach, setUserTouchedAttach] = useState(false);
+  // Manual extra files (optional). Held as File[] in state; sent as multipart.
+  const [extraFiles, setExtraFiles] = useState([]);
 
   const showAttachToggle = Array.isArray(bookings) && bookings.length > 0;
   const allComplete = useMemo(() => {
@@ -55,6 +68,7 @@ export default function InvoiceRecipientModal({ isOpen, customer, bookings, onCl
   // Reset attach decision when the modal opens (new send session).
   useEffect(() => {
     if (!isOpen) return;
+    setExtraFiles([]); // fresh send session — drop any previously-picked files
     if (showAttachToggle) {
       setAttachBbbg(allComplete);
       setUserTouchedAttach(false);
@@ -77,6 +91,23 @@ export default function InvoiceRecipientModal({ isOpen, customer, bookings, onCl
     return !!(customCompany.trim() && customTax.trim() && customAddress.trim());
   }, [selected, customerHasInfo, customCompany, customTax, customAddress]);
 
+  // Manual-attachment derived state + handlers. Files are optional; zero files
+  // behaves exactly like before this feature (plain JSON send in the parent).
+  const totalAttachBytes = extraFiles.reduce((s, f) => s + (f.size || 0), 0);
+  const filesTooMany = extraFiles.length > ATTACH_MAX_FILES;
+  const filesTooBig = totalAttachBytes > ATTACH_MAX_TOTAL_BYTES;
+  const filesInvalid = filesTooMany || filesTooBig;
+
+  function onPickFiles(e) {
+    const picked = Array.from(e.target.files || []);
+    if (picked.length === 0) return;
+    setExtraFiles(prev => [...prev, ...picked]);
+    e.target.value = ''; // reset so the same file can be re-picked after removal
+  }
+  function removeFile(idx) {
+    setExtraFiles(prev => prev.filter((_, i) => i !== idx));
+  }
+
   function handleConfirm() {
     let payload;
     if (selected === 'customer') {
@@ -92,10 +123,10 @@ export default function InvoiceRecipientModal({ isOpen, customer, bookings, onCl
         address: customAddress.trim(),
       };
     }
-    // CP4.3.1 — onConfirm signature is (invoiceInfo, attachBbbg). Callers
-    // that don't pass `bookings` get attachBbbg=true here (backwards compat
-    // with the BBBG-preview flow, which ignores the second arg anyway).
-    onConfirm?.(payload, attachBbbg);
+    // onConfirm signature is (invoiceInfo, attachBbbg, extraFiles). The
+    // BBBG-preview flow ignores args 2-3 (it doesn't pass `bookings`, so the
+    // attach toggle + file picker are hidden and extraFiles stays []).
+    onConfirm?.(payload, attachBbbg, extraFiles);
   }
 
   if (!isOpen) return null;
@@ -227,11 +258,63 @@ export default function InvoiceRecipientModal({ isOpen, customer, bookings, onCl
               )}
             </div>
           )}
+
+          {/* Manual extra-file picker — send flow only (gated on showAttachToggle).
+              Optional: ≤10 files, ≤15MB total, ANY type. Sent ALONGSIDE the BBBG
+              PDFs and discarded server-side after the mail goes out. */}
+          {showAttachToggle && (
+            <div style={{ marginTop: 12, padding: 12, background: '#f9fafb',
+              border: '1px solid var(--border)', borderRadius: 8 }}>
+              <div style={{ display: 'flex', alignItems: 'center',
+                justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 14, fontWeight: 500 }}>📎 Đính kèm file khác (tùy chọn)</span>
+                <label className="btn btn-ghost btn-sm" style={{ cursor: 'pointer', margin: 0 }}>
+                  + Chọn file
+                  <input type="file" multiple style={{ display: 'none' }} onChange={onPickFiles} />
+                </label>
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 4 }}>
+                Tối đa 10 file, tổng ≤ 15MB. Mọi định dạng (PDF, ảnh, Word, Excel...).
+              </div>
+
+              {extraFiles.length > 0 && (
+                <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  {extraFiles.map((f, i) => (
+                    <div key={i} style={{ display: 'flex', alignItems: 'center',
+                      justifyContent: 'space-between', gap: 8, fontSize: 13, background: '#fff',
+                      border: '1px solid var(--border)', borderRadius: 6, padding: '6px 10px' }}>
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap', flex: 1, minWidth: 0 }} title={f.name}>{f.name}</span>
+                      <span style={{ color: 'var(--text-3)', flexShrink: 0 }}>{fmtSize(f.size)}</span>
+                      <button type="button" className="btn btn-ghost btn-sm btn-icon"
+                        style={{ flexShrink: 0 }} onClick={() => removeFile(i)} title="Xóa file">✕</button>
+                    </div>
+                  ))}
+                  <div style={{ fontSize: 12, marginTop: 2,
+                    color: filesInvalid ? '#dc2626' : 'var(--text-2)' }}>
+                    {extraFiles.length} file · tổng {fmtSize(totalAttachBytes)}
+                  </div>
+                </div>
+              )}
+
+              {filesTooMany && (
+                <div style={{ marginTop: 6, fontSize: 13, color: '#dc2626' }}>
+                  ⚠️ Tối đa 10 file đính kèm.
+                </div>
+              )}
+              {filesTooBig && (
+                <div style={{ marginTop: 6, fontSize: 13, color: '#dc2626' }}>
+                  ⚠️ Tổng dung lượng file đính kèm vượt 15MB.
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="modal-footer">
           <button className="btn btn-ghost btn-sm" onClick={onClose}>Hủy</button>
-          <button className="btn btn-primary btn-sm" onClick={handleConfirm} disabled={!canConfirm}>
+          <button className="btn btn-primary btn-sm" onClick={handleConfirm}
+            disabled={!canConfirm || filesInvalid}>
             Tiếp tục → Gửi mail
           </button>
         </div>

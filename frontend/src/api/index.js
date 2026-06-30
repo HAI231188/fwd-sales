@@ -208,7 +208,14 @@ export const deleteGmailSetup = () => api.delete('/users/me/gmail-setup');
 // Planning email (Phase 5 Step 3 Part 2 CP3 + CP3.5b)
 // body: { job_id, transport_company_id, booking_ids: int[], mail_type: 'new'|'cancel',
 //         invoice_info: {type, company, tax, address}, is_replacement?: bool }
-export const sendPlanningEmail = (body) => api.post('/email/send-planning', body);
+// Accepts either a plain object (JSON — the no-attachment common case, behaves
+// exactly as before) OR a FormData (when the DD attached extra files). For
+// FormData we hand axios the multipart Content-Type; axios v1 detects the
+// FormData body and fills in the boundary itself — never force application/json.
+export const sendPlanningEmail = (body) =>
+  body instanceof FormData
+    ? api.post('/email/send-planning', body, { headers: { 'Content-Type': 'multipart/form-data' } })
+    : api.post('/email/send-planning', body);
 export const getEmailHistory = (jobId) =>
   api.get('/email/history', { params: { job_id: jobId } });
 // SLB legal info — used by the invoice modal "SLB Logistics" pre-fill so the

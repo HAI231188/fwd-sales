@@ -319,6 +319,13 @@ async function sendPlanningEmail({
   // compat: existing callers + scripts keep the auto-attach behavior they
   // expect; the InvoiceRecipientModal explicitly threads this through.
   attachBbbg = true,
+  // Manual user-uploaded attachments — buffers held in memory by the route's
+  // multer, discarded after the request. Each entry is the nodemailer shape
+  // { filename, content: <Buffer>, contentType }. Appended to attachments[]
+  // alongside the auto-generated BBBG PDFs. Defaults to [] so the cancel route
+  // and any other caller work unchanged. Contents are NEVER persisted (not to
+  // disk, DB, or email_history).
+  extraAttachments = [],
   // CP5.1 — cancel-flow overrides. When the caller supplies bookingsOverride
   // (an array of snapshot rows from a previous 'new' mail), the loader is
   // bypassed and the snapshot is used verbatim. This lets HỦY mails render
@@ -491,6 +498,12 @@ async function sendPlanningEmail({
     }
   }
 
+  // BBBG attachments are complete here. Capture the count BEFORE appending the
+  // user files so the email_history `bbbg_attached` flag, the body's "N file
+  // Biên bản bàn giao" line, and the returned attachmentCount all stay
+  // BBBG-only — user files are extra and tracked separately.
+  const bbbgAttachedCount = attachments.length;
+
   // ─── 5. Render ──────────────────────────────────────────────────────────
   // Earliest planned_datetime across the bookings → dd/MM subject suffix.
   const earliestPlanned = bookings
@@ -557,6 +570,13 @@ async function sendPlanningEmail({
     // sends, patched after INSERT below to equal the row's own id.
     mail_group_id: mailType === 'cancel' ? (mailGroupId || null) : null,
   };
+
+  // Append the user-uploaded files (if any) to the nodemailer attachments
+  // array — AFTER rendering + the BBBG-count capture, so BBBG semantics are
+  // untouched. These buffers live only for this request and are never persisted.
+  if (Array.isArray(extraAttachments) && extraAttachments.length > 0) {
+    attachments.push(...extraAttachments);
+  }
 
   // ─── 7. Send via nodemailer (Gmail SMTP) ───────────────────────────────
   // Gmail SMTP over STARTTLS on 587 instead of implicit-TLS on 465. Railway's
@@ -625,7 +645,7 @@ async function sendPlanningEmail({
     sender.id, sender.gmail_address, sender.gmail_display_name,
     tc.id, recipientEmail, JSON.stringify(ccList),
     job.id, bookingIds, mailType,
-    subject, body, attachments.length > 0,
+    subject, body, bbbgAttachedCount > 0,
     status, errorMessage, JSON.stringify(snapshot),
   ]);
 
@@ -668,7 +688,7 @@ async function sendPlanningEmail({
     recipient_email: recipientEmail,
     cc: ccList,
     subject,
-    attachmentCount: attachments.length,
+    attachmentCount: bbbgAttachedCount,
     bbbgErrors: bbbgErrors.length ? bbbgErrors : null,
     // CP5.3 — surface the batch id so the frontend can correlate. For 'new'
     // it's the row's own id; for 'cancel' it's the source 'new' mail's id.

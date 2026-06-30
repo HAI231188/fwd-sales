@@ -15,18 +15,54 @@ const {
 } = require('../services/email-sender');
 const { generateMultiBookingBBBG } = require('../services/bbbg-pdf');
 const { getMailStatusPerTransport } = require('../services/email-status');
+const multer = require('multer');
 
 const SEND_ROLES = ['dieu_do', 'truong_phong_log'];
 const READ_ROLES = ['dieu_do', 'truong_phong_log', 'lead'];
 const INVOICE_TYPES = ['customer', 'slb', 'custom'];
 
+// ─── Manual attachment upload — send-planning ONLY ───────────────────────────
+// DD can attach EXTRA files to the carrier mail at send time, ALONGSIDE the
+// auto-generated BBBG PDFs. Files are held in memory (multer.memoryStorage),
+// attached to nodemailer's attachments[] array, sent, then discarded when the
+// request ends — NEVER written to disk, DB, or email_history content.
+// Limits: ≤10 files, ≤15MB TOTAL. ANY file type (no mimetype whitelist).
+const ATTACH_MAX_FILES = 10;
+const ATTACH_MAX_TOTAL_BYTES = 15 * 1024 * 1024; // 15MB
+const uploadAttachments = multer({
+  storage: multer.memoryStorage(),
+  // fileSize is multer's PER-FILE ceiling; the cumulative ≤15MB cap is enforced
+  // in the handler (multer has no native total-size limit). 15MB per file is
+  // the natural upper bound since the total can't exceed it anyway.
+  limits: { fileSize: ATTACH_MAX_TOTAL_BYTES, files: ATTACH_MAX_FILES },
+}).array('attachments', ATTACH_MAX_FILES);
+
+// Wrap multer so its errors surface as a clear Vietnamese 400 instead of
+// bubbling to the generic error handler. multer is a no-op on non-multipart
+// requests (it calls next() immediately), so existing JSON callers — including
+// any direct API client from before this shipped — pass straight through.
+function handleAttachmentUpload(req, res, next) {
+  uploadAttachments(req, res, (err) => {
+    if (err) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({ error: 'Tổng dung lượng file đính kèm vượt 15MB' });
+      }
+      if (err.code === 'LIMIT_FILE_COUNT' || err.code === 'LIMIT_UNEXPECTED_FILE') {
+        return res.status(400).json({ error: 'Tối đa 10 file đính kèm' });
+      }
+      return res.status(400).json({ error: `Lỗi tải file đính kèm: ${err.message}` });
+    }
+    next();
+  });
+}
+
 // ─── POST /api/email/send-planning ─────────────────────────────────────────────
-router.post('/send-planning', requireAuth, async (req, res) => {
+router.post('/send-planning', requireAuth, handleAttachmentUpload, async (req, res) => {
   if (!SEND_ROLES.includes(req.user?.role)) {
     return res.status(403).json({ error: 'Không có quyền gửi mail' });
   }
 
-  const {
+  let {
     job_id, transport_company_id, booking_ids, mail_type,
     invoice_info, is_replacement,
     // CP4.3.1 — DD checkbox decision threaded from InvoiceRecipientModal.
@@ -34,6 +70,37 @@ router.post('/send-planning', requireAuth, async (req, res) => {
     // this CP shipped) keep the auto-attach behavior.
     attach_bbbg,
   } = req.body || {};
+
+  // Multipart (file-attached) requests deliver every field as a string, so the
+  // client JSON.stringifies the structured ones. Parse them back when string;
+  // plain-JSON callers (no files) already receive arrays/objects/booleans.
+  if (typeof booking_ids === 'string') {
+    try { booking_ids = JSON.parse(booking_ids); } catch { /* leave as-is → validation 400s below */ }
+  }
+  if (typeof invoice_info === 'string') {
+    try { invoice_info = JSON.parse(invoice_info); } catch { invoice_info = null; }
+  }
+  // Booleans arrive as 'true'/'false' strings over multipart. is_replacement
+  // is truthy only on an explicit true; attach_bbbg keeps its default-true
+  // semantics (only an explicit false — bool or string — turns it off).
+  const isReplacement = (is_replacement === true || is_replacement === 'true');
+  const attachBbbg = !(attach_bbbg === false || attach_bbbg === 'false');
+
+  // Manual attachments — buffers held in memory by multer, discarded when this
+  // request ends. multer already capped count + per-file size; enforce the
+  // cumulative ≤15MB cap here (multer has no native total-size limit).
+  const extraAttachments = (req.files || []).map(f => ({
+    filename: f.originalname,
+    content: f.buffer,
+    contentType: f.mimetype,
+  }));
+  if (extraAttachments.length > ATTACH_MAX_FILES) {
+    return res.status(400).json({ error: 'Tối đa 10 file đính kèm' });
+  }
+  const totalAttachBytes = (req.files || []).reduce((sum, f) => sum + (f.size || 0), 0);
+  if (totalAttachBytes > ATTACH_MAX_TOTAL_BYTES) {
+    return res.status(400).json({ error: 'Tổng dung lượng file đính kèm vượt 15MB' });
+  }
 
   // Basic shape validation (the service does the heavier checks).
   const jobId = parseInt(job_id, 10);
@@ -98,15 +165,17 @@ router.post('/send-planning', requireAuth, async (req, res) => {
       senderUserId: req.user.id,
       jobId, transportCompanyId: tcId,
       bookingIds, mailType: mail_type,
-      isReplacement: !!is_replacement,
+      isReplacement,
       invoiceInfo: {
         type: invoice_info.type,
         company: invCompany,
         tax: invTax,
         address: invAddress,
       },
-      // CP4.3.1 — null/undefined → default true inside the service.
-      attachBbbg: attach_bbbg !== false,
+      // CP4.3.1 — coerced above (handles multipart 'false' string too).
+      attachBbbg,
+      // Manual user-uploaded files (in-memory, never persisted). [] when none.
+      extraAttachments,
     });
     res.json(result);
   } catch (err) {
