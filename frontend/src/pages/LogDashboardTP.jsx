@@ -231,7 +231,7 @@ const ALL_COLS = [
   // 2026-05-25: TP dept-level Trạng thái pill — up to 3 lines (CUS/DD/OPS).
   { key: 'tp_status',    label: 'Trạng thái' },
   { key: 'tq_datetime',  label: 'Ngày TQ' },
-  { key: 'delivery',     label: 'Ngày giao' },
+  { key: 'delivery',     label: 'Ngày đặt KH' },
   { key: 'phan_cong',    label: 'Phân công' },
   { key: 'delivery_loc', label: 'Địa điểm giao' },
   { key: 'cargo',        label: 'Cont-Loại' },
@@ -1004,15 +1004,14 @@ export default function LogDashboardTP() {
                                   </span>
                                   <span>
                                     <span style={{ color: 'var(--text-2)' }}>KH:</span>{' '}
-                                    {j.first_booking_planned ? fmtDt(j.first_booking_planned) : '—'}
+                                    {j.first_booking_planned ? fmtDate(j.first_booking_planned) : '—'}
                                   </span>
                                 </div>
                               </div>
                             )}
 
-                            {(j.delivery_datetime || j.delivery_location) && (
+                            {j.delivery_location && (
                               <div style={{ fontSize: 12, marginBottom: 6 }}>
-                                <div><span style={{ color: 'var(--text-2)' }}>Ngày giao:</span> {j.delivery_datetime ? fmtDate(j.delivery_datetime) : '—'}</div>
                                 <div><span style={{ color: 'var(--text-2)' }}>Địa điểm:</span> {j.delivery_location || '—'}</div>
                               </div>
                             )}
@@ -1104,7 +1103,7 @@ export default function LogDashboardTP() {
                         // 2026-05-25: TP dept-level Trạng thái — stacked CUS/DD/OPS lines or green "Hoàn thành".
                         case 'tp_status':   return <td key={key} style={{ ...cs, minWidth: 180 }}><TpStatusCell job={j} /></td>;
                         case 'tq_datetime': return <td key={key} style={{ ...cs, fontSize: 12, whiteSpace: 'nowrap', color: 'var(--text-2)' }}>{j.tq_datetime ? fmtDt(j.tq_datetime) : '—'}</td>;
-                        case 'delivery':    return <td key={key} style={{ ...cs, fontSize: 12, whiteSpace: 'nowrap', color: 'var(--text-2)' }}>{j.delivery_datetime ? fmtDate(j.delivery_datetime) : '—'}</td>;
+                        case 'delivery':    return <td key={key} style={{ ...cs, fontSize: 12, whiteSpace: 'nowrap', color: 'var(--text-2)' }}>{j.first_booking_planned ? fmtDate(j.first_booking_planned) : '—'}</td>;
                         case 'phan_cong':   return <td key={key} style={cs}>{tab === 'pending' && <button className="btn btn-ghost btn-sm" style={{ fontSize: 11, padding: '3px 8px', whiteSpace: 'nowrap' }} onClick={() => setAssigningJob(j)}>{waitingAssign ? '⚡ Phân công' : '✏️ Sửa'}</button>}</td>;
                         case 'delivery_loc':return <td key={key} style={{ ...cs, fontSize: 12, color: 'var(--text-2)', maxWidth: 120 }}>{j.delivery_location || '—'}</td>;
                         case 'cargo':       return <td key={key} style={{ ...cs, whiteSpace: 'nowrap', fontSize: 12 }}>{fmtCargo(j)}</td>;
