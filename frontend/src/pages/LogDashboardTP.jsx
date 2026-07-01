@@ -222,6 +222,7 @@ const ALL_COLS = [
   { key: 'import_export',label: 'Loại' },
   { key: 'created_at',   label: 'Ngày tạo' },
   { key: 'customer',     label: 'Tên khách' },
+  { key: 'sales',        label: 'Sales' },
   { key: 'han_lenh',     label: 'Hạn lệnh / Cutoff' },
   { key: 'deadline',     label: 'Deadline' },
   { key: 'tk_flow',      label: 'Luồng TK' },
@@ -248,6 +249,7 @@ const FILTER_CONFIG = {
   job_code:  { filterType: 'text' },
   si_number: { filterType: 'text' },
   customer:  { filterType: 'text', accessor: j => j.customer_name || '' },
+  sales:     { filterType: 'text', accessor: j => j.sales_name || '' },
   service:   { filterType: 'select', options: [
     { value: 'tk', label: 'TK' }, { value: 'truck', label: 'Xe' }, { value: 'both', label: 'TK+Xe' },
   ]},
@@ -967,6 +969,7 @@ export default function LogDashboardTP() {
                                             onClick={() => setReassignTarget({ type: 'cus', job: j })}>{j.cus_name}</span>
                                         : <span style={{ color: 'var(--text-3)' }}>{j.cus_name}</span>)}
                                 </div>
+                                <div><span style={{ color: 'var(--text-2)' }}>Sales:</span>{' '}<span style={{ color: 'var(--text-3)' }}>{j.sales_name || '—'}</span></div>
                                 {/* P3: 3 per-task OPS cells (mirror of the desktop columns, L26). */}
                                 {j.destination === 'hai_phong' ? (
                                   <>
@@ -1086,6 +1089,7 @@ export default function LogDashboardTP() {
                         }
                         case 'created_at':  return <td key={key} style={{ ...cs, whiteSpace: 'nowrap', fontSize: 12 }}>{fmtDate(j.created_at)}</td>;
                         case 'customer':    return <td key={key} style={{ ...cs, maxWidth: 150 }}><div style={{ fontWeight: 500, fontSize: 13 }}>{j.customer_name}</div></td>;
+                        case 'sales':       return <td key={key} style={{ ...cs, maxWidth: 140 }}><div style={{ fontSize: 12, color: 'var(--text-2)' }}>{j.sales_name || '—'}</div></td>;
                         case 'han_lenh': {
                           if (!j.han_lenh) return <td key={key} style={{ ...cs, whiteSpace: 'nowrap', fontSize: 12 }}><span style={{ color: 'var(--text-3)' }}>—</span></td>;
                           const isImport = j.import_export === 'import';
