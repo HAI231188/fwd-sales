@@ -1395,6 +1395,13 @@ router.get('/', requireAuth, async (req, res) => {
 
 // POST /api/jobs/
 router.post('/', requireAuth, async (req, res) => {
+  // KT is read-only across the LOG dashboards and must never create a job.
+  // Denylist (not allowlist) so every role that legitimately creates today is
+  // untouched: truong_phong_log (TP dashboard), cus/cus1/cus2/cus3 + dieu_do
+  // (their dashboards) all call POST /api/jobs — only ke_toan is blocked.
+  if (req.user.role === 'ke_toan') {
+    return res.status(403).json({ error: 'Kế toán chỉ được xem, không thể tạo job' });
+  }
   const {
     job_code, customer_id, customer_name, customer_address, customer_tax_code,
     sales_id, pol, pod, cont_number, cont_type, seal_number,

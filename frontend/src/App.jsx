@@ -21,6 +21,10 @@ function LogDashboard() {
   if (user?.role === 'truong_phong_log') return <LogDashboardTP />;
   if (user?.role === 'dieu_do') return <LogDashboardDieuDo />;
   if (user?.role === 'ops') return <LogDashboardOps />;
+  // KT read-only view — reuses the TP dashboard (all jobs, both tabs) with every
+  // write control hidden via the readOnly flag. KT reaches this only through the
+  // Navbar "Công việc LOG" link; its default home stays /accounting-dashboard.
+  if (user?.role === 'ke_toan') return <LogDashboardTP readOnly />;
   return <LogDashboardCus />;
 }
 
@@ -94,7 +98,7 @@ export default function App() {
             </ProtectedRoute>
           } />
           <Route path="/log-dashboard" element={
-            <ProtectedRoute roles={LOG_ROLES}>
+            <ProtectedRoute roles={[...LOG_ROLES, 'ke_toan']}>
               <LogDashboard />
             </ProtectedRoute>
           } />

@@ -1160,6 +1160,16 @@ Idempotent; also clears `disabled_at`; durable across deploys after L33 (the see
 
 ---
 
+### Note — KT read-only view of the TP LOG dashboard (2026-07-02)
+
+`ke_toan` gets a **strictly read-only** mirror of the Trưởng Phòng LOG dashboard — **both tabs** (CV Pending + CV Hoàn thành), **all jobs** (same scope as TP), view-only. **Reuses `LogDashboardTP` via a `readOnly` prop** (NOT a duplicate component — L9/L10): `LogDashboardTP({ readOnly = false })` — the prop **defaults false so the TP experience is byte-for-byte unchanged**; every gate is `!readOnly && …` or `readOnly ? … : <original>`.
+
+- **Routing** (`App.jsx`): `LogDashboard()` switch adds `if (role === 'ke_toan') return <LogDashboardTP readOnly />;`; the `/log-dashboard` route opens to `roles={[...LOG_ROLES, 'ke_toan']}` (the shared `LOG_ROLES` const is untouched, so `RootRedirect` still sends KT to `/accounting-dashboard` by default — KT reaches the LOG view only via the **Navbar "📋 Công việc LOG" pill**, `ke_toan`-only, desktop + mobile). KT keeps `/accounting-dashboard` as home.
+- **Every write control hidden when `readOnly`** (desktop + mobile, L26): Tạo Job, header stat cards + 3 StaffSections + Overview (hidden as a block — no `/stats` or drilldown `ke_toan` branch), assignee filter, "Phân công" column (dropped from `ftColumns`), inline deadline (→ read-only text), CUS reassign (`cusEligible = !readOnly && …`), the 3 per-task OPS cells + "+ đổi lệnh" (`OpsTaskCell` gained a `readOnly` param → plain text / dash), delete 🗑, "Đặt kế hoạch xe" 📅 (PlanDeliveryModal), and all write modals (`!readOnly &&` defense-in-depth). Kept: both tabs, full table (incl. Sales / Ngày đặt KH), 🔍 → **read-only `JobDetailModal`** (`canEditJob` already excludes `ke_toan`, JobDetailModal.jsx:497). The `getJobStats`/`getJobSettings`/`getLogStaff` queries are `enabled: !readOnly` so KT fires ZERO of them; only reads (`GET /api/jobs` pending+completed, `GET /api/jobs/:id`) run.
+- **Server-side enforcement is the real guardrail** (frontend gating is UX + defense-in-depth): `canViewJob` returns true for `ke_toan` (KT gets full list scope — the main `GET /api/jobs` has no assignment filter for TP/KT). Every mutation is already `truong_phong_log`-gated (assign/manual-assign/reassign-cus/ops-task-assign/+đổi lệnh/set-deadline/deadline-review/delete/delete-review) or excludes `ke_toan` via `canEditJob`/`canEditJobTk` (`PUT /:id`, `PATCH /:id/tk`). The one gap — **`POST /api/jobs` (create) had no role gate** — is now closed with a `ke_toan`→403 denylist (TP/cus*/dieu_do creators unaffected). So a KT hitting any mutation endpoint directly gets 403.
+
+---
+
 ## 6. Session Start Checklist
 
 1. Read this file.

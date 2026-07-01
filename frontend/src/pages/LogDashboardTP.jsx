@@ -145,12 +145,21 @@ function opsTaskShortStatus(task, taskType, j) {
 // One OPS task cell: assignee + short status, click to reassign THAT task (P3 #2).
 // Empty doi_lenh on a tk-only HP job → "+ đổi lệnh" (P3 #3 — rotation picks the
 // person, not TP). Only HP jobs render content. Reused by desktop + mobile (L26).
-function OpsTaskCell({ j, taskType, taskLabel, onReassign, onAddDoiLenh, adding }) {
+function OpsTaskCell({ j, taskType, taskLabel, onReassign, onAddDoiLenh, adding, readOnly = false }) {
   const dash = <span style={{ color: 'var(--text-3)', fontSize: 12 }}>—</span>;
   if (j.destination !== 'hai_phong') return dash;
   const task = opsTaskOf(j, taskType);
   if (task) {
     const st = opsTaskShortStatus(task, taskType, j);
+    // readOnly (KT): show assignee + status as plain, non-clickable text.
+    if (readOnly) {
+      return (
+        <span style={{ display: 'inline-flex', flexDirection: 'column', lineHeight: 1.2 }}>
+          <span style={{ fontSize: 12 }}>{task.ops_name || '(chưa có)'}</span>
+          <span style={{ fontSize: 10, color: st.color, fontWeight: 600 }}>{st.label}</span>
+        </span>
+      );
+    }
     return (
       <span style={{ cursor: 'pointer', display: 'inline-flex', flexDirection: 'column', lineHeight: 1.2 }}
         title={`Đổi người làm ${taskLabel}`}
@@ -160,6 +169,8 @@ function OpsTaskCell({ j, taskType, taskLabel, onReassign, onAddDoiLenh, adding 
       </span>
     );
   }
+  // readOnly (KT): never expose the "+ đổi lệnh" create action.
+  if (readOnly) return dash;
   // "+ đổi lệnh" shows on an empty doi_lenh cell when this HP job is eligible to
   // gain a doi_lenh manually: tk-only (never auto-got one) OR LCL truck/both
   // (LCL no longer auto-gets one — 2026-06-24). This cell is already HP-guarded
@@ -610,7 +621,7 @@ function DeadlineModal({ data, onClose, onReview, onSetDeadline, onReviewDelete 
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
-export default function LogDashboardTP() {
+export default function LogDashboardTP({ readOnly = false }) {
   const qc = useQueryClient();
   const [tab, setTab] = useState('pending');
   const [detailJobId, setDetailJobId] = useState(null);
@@ -652,8 +663,12 @@ export default function LogDashboardTP() {
 
   const pollInterval = isVisible ? 5000 : 30000;
 
-  const { data: stats } = useQuery({ queryKey: ['jobStats'], queryFn: getJobStats, refetchInterval: pollInterval });
-  const { data: settings } = useQuery({ queryKey: ['jobSettings'], queryFn: getJobSettings, refetchInterval: pollInterval });
+  // readOnly (KT): the header stat cards / staff sections are hidden, and the
+  // /stats + /staff-workload endpoints have no ke_toan branch — disable these
+  // queries so KT never fires them. The pending/completed job lists below stay
+  // enabled (KT falls through the list query with full scope; canViewJob=true).
+  const { data: stats } = useQuery({ queryKey: ['jobStats'], queryFn: getJobStats, refetchInterval: pollInterval, enabled: !readOnly });
+  const { data: settings } = useQuery({ queryKey: ['jobSettings'], queryFn: getJobSettings, refetchInterval: pollInterval, enabled: !readOnly });
   const { data: pendingJobs = [], isLoading: isLoadingPending } = useQuery({
     queryKey: ['jobs', 'pending'], queryFn: () => getJobs({ tab: 'pending' }), refetchInterval: pollInterval,
   });
@@ -682,7 +697,7 @@ export default function LogDashboardTP() {
     queryKey: ['deadlineRequests'], queryFn: getDeadlineRequests,
     enabled: showDeadline,
   });
-  const { data: staff = [] } = useQuery({ queryKey: ['logStaff'], queryFn: getLogStaff });
+  const { data: staff = [] } = useQuery({ queryKey: ['logStaff'], queryFn: getLogStaff, enabled: !readOnly });
 
   const createMut = useMutation({
     mutationFn: data => createJob(data),
@@ -759,11 +774,13 @@ export default function LogDashboardTP() {
       <Navbar />
       <div className="container" style={{ padding: '24px 20px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-          <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 20 }}>Dashboard Trưởng Phòng LOG</h2>
-          <button className="btn btn-primary" onClick={() => setShowCreate(true)}>+ Tạo Job Mới</button>
+          <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 20 }}>{readOnly ? 'Công việc LOG (Kế toán — chỉ xem)' : 'Dashboard Trưởng Phòng LOG'}</h2>
+          {!readOnly && <button className="btn btn-primary" onClick={() => setShowCreate(true)}>+ Tạo Job Mới</button>}
         </div>
 
-        {/* Stat cards */}
+        {/* Stat cards + staff sections + overview — hidden for readOnly (KT):
+            no /stats or drilldown branch for ke_toan, and KT is view-only. */}
+        {!readOnly && (<>
         <div className="stat-grid" style={{ marginBottom: 24 }}>
           <StatCard label="Tổng job pending" color="var(--info)"
             rows={[
@@ -814,6 +831,7 @@ export default function LogDashboardTP() {
         />
 
         <TP_OverviewSection />
+        </>)}
 
         {/* Jobs grid */}
         <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
@@ -834,7 +852,7 @@ export default function LogDashboardTP() {
               )}
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, paddingRight: 4 }}>
-              {tab === 'pending' && (
+              {!readOnly && tab === 'pending' && (
                 <select
                   className="form-select"
                   style={{ fontSize: 12, padding: '4px 8px', width: 'auto', minWidth: 140 }}
@@ -881,6 +899,8 @@ export default function LogDashboardTP() {
             ) : (() => {
               const ftColumns = ALL_COLS
                 .filter(c => visibleCols.includes(c.key))
+                // readOnly (KT): drop the "Phân công" action column entirely.
+                .filter(c => !(readOnly && c.key === 'phan_cong'))
                 .map(c => ({ ...c, ...(FILTER_CONFIG[c.key] || {}) }));
               return (
                 <FilteredTable
@@ -889,7 +909,7 @@ export default function LogDashboardTP() {
                   renderMobileCard={(j) => {
                     const isTk = j.service_type === 'tk' || j.service_type === 'both';
                     const waitingAssign = (j.service_type === 'tk' || j.service_type === 'both') && !j.cus_id;
-                    const cusEligible = tab === 'pending' && !j.tk_completed_at;
+                    const cusEligible = !readOnly && tab === 'pending' && !j.tk_completed_at;
                     return (
                       <TPCard key={j.id} job={j} onOpen={() => setDetailJobId(j.id)}
                         codeColor={tab === 'completed' ? 'var(--primary)' : 'var(--info)'}
@@ -915,8 +935,10 @@ export default function LogDashboardTP() {
                             <div style={{ fontSize: 12, marginBottom: 8, display: 'flex', alignItems: 'flex-start', gap: 6 }}>
                               <span style={{ color: 'var(--text-2)', whiteSpace: 'nowrap', paddingTop: 2 }}>Deadline:</span>
                               <div style={{ flex: 1, minWidth: 0 }} onClick={e => e.stopPropagation()}>
-                                <InlineDeadline value={j.deadline}
-                                  onSave={v => setDlMut.mutate({ id: j.id, deadline: v })} />
+                                {readOnly
+                                  ? <span style={deadlineStyle(j.deadline)}>{j.deadline ? fmtDt(j.deadline) : 'Chưa có'}</span>
+                                  : <InlineDeadline value={j.deadline}
+                                      onSave={v => setDlMut.mutate({ id: j.id, deadline: v })} />}
                               </div>
                             </div>
 
@@ -974,12 +996,12 @@ export default function LogDashboardTP() {
                                 {j.destination === 'hai_phong' ? (
                                   <>
                                     <div><span style={{ color: 'var(--text-2)' }}>TQ:</span>{' '}
-                                      <OpsTaskCell j={j} taskType="thong_quan" taskLabel="Thông quan" onReassign={setReassignTarget} /></div>
+                                      <OpsTaskCell j={j} taskType="thong_quan" taskLabel="Thông quan" onReassign={setReassignTarget} readOnly={readOnly} /></div>
                                     <div><span style={{ color: 'var(--text-2)' }}>ĐL:</span>{' '}
                                       <OpsTaskCell j={j} taskType="doi_lenh" taskLabel="Đổi lệnh" onReassign={setReassignTarget}
-                                        onAddDoiLenh={(id) => addDoiLenhMut.mutate(id)} adding={addDoiLenhMut.isPending} /></div>
+                                        onAddDoiLenh={(id) => addDoiLenhMut.mutate(id)} adding={addDoiLenhMut.isPending} readOnly={readOnly} /></div>
                                     <div><span style={{ color: 'var(--text-2)' }}>VK:</span>{' '}
-                                      <OpsTaskCell j={j} taskType="ops_hp" taskLabel="Việc khác" onReassign={setReassignTarget} /></div>
+                                      <OpsTaskCell j={j} taskType="ops_hp" taskLabel="Việc khác" onReassign={setReassignTarget} readOnly={readOnly} /></div>
                                   </>
                                 ) : (
                                   <div><span style={{ color: 'var(--text-2)' }}>OPS:</span>{' '}<span style={{ color: 'var(--text-3)' }}>—</span></div>
@@ -1027,13 +1049,13 @@ export default function LogDashboardTP() {
                           </>
                         }
                         actions={<>
-                          {tab === 'pending' && (
+                          {!readOnly && tab === 'pending' && (
                             <button className="btn btn-ghost btn-sm" title={waitingAssign ? 'Phân công' : 'Sửa phân công'}
                               onClick={() => setAssigningJob(j)}>
                               {waitingAssign ? '⚡ Phân công' : '✏️ Phân công'}
                             </button>
                           )}
-                          {tab === 'pending' && (
+                          {!readOnly && tab === 'pending' && (
                             <button className="btn btn-ghost btn-sm btn-icon" title="Xóa job"
                               style={{ color: 'var(--danger)' }}
                               onClick={() => {
@@ -1042,8 +1064,10 @@ export default function LogDashboardTP() {
                                 }
                               }}>🗑</button>
                           )}
-                          <button className="btn btn-ghost btn-sm btn-icon" title="Đặt kế hoạch xe"
-                            onClick={() => setPlanModalJob({ jobId: j.id, jobCode: j.job_code })}>📅</button>
+                          {!readOnly && (
+                            <button className="btn btn-ghost btn-sm btn-icon" title="Đặt kế hoạch xe"
+                              onClick={() => setPlanModalJob({ jobId: j.id, jobCode: j.job_code })}>📅</button>
+                          )}
                           <button className="btn btn-ghost btn-sm btn-icon" title="Chi tiết"
                             onClick={() => setDetailJobId(j.id)}>🔍</button>
                         </>}
@@ -1099,7 +1123,7 @@ export default function LogDashboardTP() {
                             </span>
                           </td>;
                         }
-                        case 'deadline':    return <td key={key} style={{ ...cs, minWidth: 130 }}><InlineDeadline value={j.deadline} onSave={v => setDlMut.mutate({ id: j.id, deadline: v })} /></td>;
+                        case 'deadline':    return <td key={key} style={{ ...cs, minWidth: 130 }}>{readOnly ? <span style={deadlineStyle(j.deadline)}>{j.deadline ? fmtDt(j.deadline) : '—'}</span> : <InlineDeadline value={j.deadline} onSave={v => setDlMut.mutate({ id: j.id, deadline: v })} />}</td>;
                         case 'tk_flow':     return <td key={key} style={{ ...cs, fontSize: 12, color: 'var(--text-2)' }}>{j.tk_flow || '—'}</td>;
                         case 'tk_number':   return <td key={key} style={{ ...cs, fontSize: 12 }}>{j.tk_number || '—'}</td>;
                         case 'tk_datetime': return <td key={key} style={{ ...cs, fontSize: 12, whiteSpace: 'nowrap', color: 'var(--text-2)' }}>{j.tk_datetime ? fmtDt(j.tk_datetime) : '—'}</td>;
@@ -1114,7 +1138,7 @@ export default function LogDashboardTP() {
                         case 'service':     return <td key={key} style={cs}><span className="badge badge-info" style={{ fontSize: 10 }}>{SVC_LABEL[j.service_type] || j.service_type}</span></td>;
                         case 'etd_eta':     return <td key={key} style={{ ...cs, whiteSpace: 'nowrap', color: 'var(--text-2)', fontSize: 12 }}>{fmtDate(j.etd)}<br />{fmtDate(j.eta)}</td>;
                         case 'cus': {
-                          const cusEligible = tab === 'pending' && !j.tk_completed_at;
+                          const cusEligible = !readOnly && tab === 'pending' && !j.tk_completed_at;
                           if (!j.cus_name) {
                             return <td key={key} style={cs}>
                               {cusEligible ? (
@@ -1149,19 +1173,19 @@ export default function LogDashboardTP() {
                         case 'ops_tq':
                           return <td key={key} style={cs}>
                             <OpsTaskCell j={j} taskType="thong_quan" taskLabel="Thông quan"
-                              onReassign={setReassignTarget} />
+                              onReassign={setReassignTarget} readOnly={readOnly} />
                           </td>;
                         case 'ops_dl':
                           return <td key={key} style={cs}>
                             <OpsTaskCell j={j} taskType="doi_lenh" taskLabel="Đổi lệnh"
                               onReassign={setReassignTarget}
                               onAddDoiLenh={(id) => addDoiLenhMut.mutate(id)}
-                              adding={addDoiLenhMut.isPending} />
+                              adding={addDoiLenhMut.isPending} readOnly={readOnly} />
                           </td>;
                         case 'ops_vk':
                           return <td key={key} style={cs}>
                             <OpsTaskCell j={j} taskType="ops_hp" taskLabel="Việc khác"
-                              onReassign={setReassignTarget} />
+                              onReassign={setReassignTarget} readOnly={readOnly} />
                           </td>;
                         case 'notes':       return <td key={key} style={{ ...cs, fontSize: 12, color: 'var(--text-2)', maxWidth: 140 }}>{j.tk_notes || '—'}</td>;
                         default: return null;
@@ -1173,7 +1197,7 @@ export default function LogDashboardTP() {
                         onDoubleClick={() => setDetailJobId(j.id)}>
                         {ftColumns.map(c => cell(c.key))}
                         <td style={{ ...cs, whiteSpace: 'nowrap' }}>
-                          {tab === 'pending' && (
+                          {!readOnly && tab === 'pending' && (
                             <button className="btn btn-ghost btn-sm btn-icon"
                               title="Xóa job" style={{ color: 'var(--danger)' }}
                               onClick={() => {
@@ -1182,8 +1206,10 @@ export default function LogDashboardTP() {
                                 }
                               }}>🗑</button>
                           )}
-                          <button className="btn btn-ghost btn-sm btn-icon" title="Đặt kế hoạch xe"
-                            onClick={() => setPlanModalJob({ jobId: j.id, jobCode: j.job_code })}>📅</button>
+                          {!readOnly && (
+                            <button className="btn btn-ghost btn-sm btn-icon" title="Đặt kế hoạch xe"
+                              onClick={() => setPlanModalJob({ jobId: j.id, jobCode: j.job_code })}>📅</button>
+                          )}
                           <button className="btn btn-ghost btn-sm btn-icon" title="Chi tiết"
                             onClick={() => setDetailJobId(j.id)}>🔍</button>
                         </td>
@@ -1197,11 +1223,11 @@ export default function LogDashboardTP() {
         </div>
       </div>
 
-      {showCreate && (
+      {!readOnly && showCreate && (
         <CreateJobModal onClose={() => setShowCreate(false)}
           onCreated={data => createMut.mutateAsync(data)} />
       )}
-      {showDeadline && (
+      {!readOnly && showDeadline && (
         <DeadlineModal
           data={dlData}
           onClose={() => setShowDeadline(false)}
@@ -1210,24 +1236,24 @@ export default function LogDashboardTP() {
           onReviewDelete={(rid, action) => reviewDeleteMut.mutate({ rid, action })}
         />
       )}
-      {assigningJob && (
+      {!readOnly && assigningJob && (
         <AssignModal job={assigningJob} staff={staff}
           onClose={() => setAssigningJob(null)}
           onSave={data => assignMut.mutate({ id: assigningJob.id, data })} />
       )}
       {detailJobId && <JobDetailModal jobId={detailJobId} onClose={() => setDetailJobId(null)} />}
-      {planModalJob && (
+      {!readOnly && planModalJob && (
         <PlanDeliveryModal
           jobId={planModalJob.jobId} jobCode={planModalJob.jobCode}
           onClose={() => setPlanModalJob(null)} />
       )}
-      {showAssignment && (
+      {!readOnly && showAssignment && (
         <AssignmentModal
           initialTab={showAssignment}
           onClose={() => setShowAssignment(null)}
         />
       )}
-      {jobListFilter && (
+      {!readOnly && jobListFilter && (
         <JobListModal
           filterType={typeof jobListFilter === 'string' ? jobListFilter : jobListFilter.filterType}
           staffId={typeof jobListFilter === 'string' ? null : jobListFilter.staffId}
@@ -1235,7 +1261,7 @@ export default function LogDashboardTP() {
           onClose={() => setJobListFilter(null)}
         />
       )}
-      {reassignTarget && (
+      {!readOnly && reassignTarget && (
         <ReassignModal
           type={reassignTarget.type}
           taskType={reassignTarget.taskType}

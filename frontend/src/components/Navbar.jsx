@@ -68,7 +68,10 @@ export default function Navbar() {
   const showAdminPill = user && user.role === 'admin';
   const showVansaiPill = user && (user.role === 'truong_phong_log' || user.role === 'dieu_do');
   const showCustomersPill = user && (user.role === 'truong_phong_log' || user.role === 'lead');
-  const showAnyPill = showAdminPill || showVansaiPill || showCustomersPill;
+  // KT read-only LOG view — pill routes ke_toan to /log-dashboard (rendered as
+  // <LogDashboardTP readOnly />). KT's default home stays /accounting-dashboard.
+  const showKtLogPill = user && user.role === 'ke_toan';
+  const showAnyPill = showAdminPill || showVansaiPill || showCustomersPill || showKtLogPill;
   const showGlobalSearch = user && LOG_ROLES.includes(user.role);
   const role = user && (ROLE_LABEL[user.role] || null);
 
@@ -133,6 +136,16 @@ export default function Navbar() {
                     title="Data khách hàng"
                   >
                     👥 Data khách hàng
+                  </button>
+                )}
+                {showKtLogPill && (
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => navigate('/log-dashboard')}
+                    style={{ fontSize: 12, padding: '5px 10px', color: '#0891b2' }}
+                    title="Xem công việc LOG (chỉ xem)"
+                  >
+                    📋 Công việc LOG
                   </button>
                 )}
               </div>
@@ -242,6 +255,15 @@ export default function Navbar() {
                   style={{ fontSize: 13, justifyContent: 'flex-start', width: '100%' }}
                 >
                   👥 Data khách hàng
+                </button>
+              )}
+              {showKtLogPill && (
+                <button
+                  className="btn btn-ghost"
+                  onClick={() => { setMenuOpen(false); navigate('/log-dashboard'); }}
+                  style={{ fontSize: 13, justifyContent: 'flex-start', width: '100%', color: '#0891b2' }}
+                >
+                  📋 Công việc LOG
                 </button>
               )}
             </div>
