@@ -1170,6 +1170,21 @@ Idempotent; also clears `disabled_at`; durable across deploys after L33 (the see
 
 ---
 
+### Note — KT "Đã xuất hóa đơn" invoice-issued marker (2026-07-02)
+
+An **independent** invoice-issued flag on the KT công nợ workflow — tick + pick an issue date + display the date. It is **NOT a pipeline stage**: it does not gate or reorder the `pending_check → checked → debit_sent → paid` lifecycle, does not touch stats/KPIs, and does not affect the return-to-LOG/Sales flow. **Precondition = `accounting_checked_at IS NOT NULL` only** — KT may issue the invoice **before OR after** the debit note (deliberately not requiring `debit_sent_at`). Double-issue rejected; **no un-tick** (mirrors the deliberate one-way nature of debit/payment ticks — un-tick would need a new endpoint if ever wanted).
+
+- **Schema** (`schema.sql` KT1 block): `jobs.invoice_issued_at TIMESTAMPTZ` + `jobs.invoice_issued_by INTEGER REFERENCES users(id) ON DELETE SET NULL`. Nullable (NULL = not yet issued), no partial index. Applied via the L3 transactional `railway ssh` migrate (DB **before** code so the columns exist when the new code runs) AND idempotently on every deploy via `migrate.js`.
+- **Backend** (`routes/accounting.js`, mirrors debit-sent): `PATCH /api/jobs/:id/invoice-issued` on `jobActionsRouter` (inherits `requireAuth + requireKeToan` → non-KT gets 403). Reads `body.issued_at`, BEGIN, `fetchJobForKt`, 404 if missing, 400 `"Job chưa được kiểm tra"` if `!accounting_checked_at`, 400 `"Job đã xuất hóa đơn trước đó"` if already issued, `UPDATE invoice_issued_at = COALESCE($1::timestamptz, NOW()), invoice_issued_by = $2`, `recordHistory('invoice_issued_at', null, ts)`, COMMIT. `fetchJobForKt` SELECT + `GET /api/accounting/jobs` gained `invoice_issued_at`/`invoice_issued_by` + `u_invoice.name AS invoice_issued_by_name` (LEFT JOIN). No `/stats` change.
+- **API** (`api/index.js`): `accountingInvoiceIssued(id, issuedAt) → PATCH /jobs/:id/invoice-issued { issued_at }`.
+- **TWO placements:**
+  1. **`JobDetailModal`** — a `🧾 Đã xuất HĐ` button in the KT action bar, gated `job && isKT && !editMode && job.accounting_checked_at && !job.invoice_issued_at && onInvoiceIssued` → date dialog (default today) → `runKt(onInvoiceIssued, job.id, date)`. Button only (no read-only section). Only `AccountingDashboard` passes `onInvoiceIssued`.
+  2. **`AccountingDashboard` `debit_sent` tab** — a new `Đã xuất HĐ` column: when issued → shows the date (read-only); when not → an **INLINE TICK BUTTON in the table cell** that opens a date dialog and calls `invoiceMut` **without opening the job**. This is a **new inline-action pattern deliberately added to this dashboard** (KT wanted to tick from the table). Present in BOTH the desktop `cell()` and the `debit_sent` mobile card (L26). `invoiceMut` invalidates `['accounting']`; both the modal path and the inline path reuse it.
+
+Independent marker — don't add it to stats, don't gate the lifecycle on it, don't add a LOG/Sales write path. If un-tick or an amount is ever needed, add a new endpoint / child table rather than overloading this flag.
+
+---
+
 ## 6. Session Start Checklist
 
 1. Read this file.
