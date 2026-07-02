@@ -93,6 +93,8 @@ export const getAccountingJobs  = (params) => api.get('/accounting/jobs', { para
 export const accountingCheck           = (id)         => api.patch(`/jobs/${id}/accounting-check`);
 export const accountingDebitSent       = (id, sentAt) => api.patch(`/jobs/${id}/debit-sent`,       { sent_at: sentAt });
 export const accountingPaymentReceived = (id, recvAt) => api.patch(`/jobs/${id}/payment-received`, { received_at: recvAt });
+// Independent invoice-issued marker (2026-07-02). Not a lifecycle stage.
+export const accountingInvoiceIssued   = (id, issuedAt) => api.patch(`/jobs/${id}/invoice-issued`, { issued_at: issuedAt });
 export const accountingReturnToLog     = (id, reason) => api.post (`/jobs/${id}/return-to-log`,    { reason });
 export const accountingReturnToSales   = (id, reason) => api.post (`/jobs/${id}/return-to-sales`,  { reason });
 export const getJob = (id) => api.get(`/jobs/${id}`);

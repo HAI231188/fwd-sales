@@ -920,6 +920,13 @@ ALTER TABLE jobs ADD COLUMN IF NOT EXISTS accounting_note       TEXT;
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS returned_to           VARCHAR(10);
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS returned_reason       TEXT;
 
+-- "Đã xuất hóa đơn" — independent invoice-issued marker (2026-07-02).
+-- NOT a pipeline stage: does not gate/reorder pending_check→checked→debit_sent→paid.
+-- KT ticks it (+ picks an issue date) anytime after accounting_checked_at is set —
+-- before OR after the debit note. NULL = not yet issued. No un-tick, no partial index.
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS invoice_issued_at     TIMESTAMPTZ;
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS invoice_issued_by     INTEGER REFERENCES users(id) ON DELETE SET NULL;
+
 -- Composite partial index — supports the KT 4-tab dashboard queries off
 -- (accounting_checked_at, debit_sent_at, payment_received_at). Partial WHERE
 -- deleted_at IS NULL aligns with L17 + keeps the index small.
@@ -939,6 +946,8 @@ CREATE INDEX IF NOT EXISTS idx_jobs_returned_to
   WHERE deleted_at IS NULL AND returned_to IS NOT NULL;
 
 -- ROLLBACK (KT1):
+-- ALTER TABLE jobs DROP COLUMN IF EXISTS invoice_issued_by;
+-- ALTER TABLE jobs DROP COLUMN IF EXISTS invoice_issued_at;
 -- DROP INDEX IF EXISTS idx_jobs_returned_to;
 -- DROP INDEX IF EXISTS idx_jobs_accounting_status;
 -- ALTER TABLE jobs DROP COLUMN IF EXISTS returned_reason;

@@ -45,6 +45,7 @@ async function fetchJobForKt(client, id) {
             accounting_checked_at, accounting_checked_by,
             debit_sent_at, debit_sent_by,
             payment_received_at, payment_received_by, payment_amount,
+            invoice_issued_at, invoice_issued_by,
             returned_to, returned_reason,
             sales_id, job_code
        FROM jobs WHERE id = $1`,
@@ -118,6 +119,7 @@ router.get('/jobs', async (req, res) => {
         u_kt_checked.name   AS accounting_checked_by_name,
         u_debit_sent.name   AS debit_sent_by_name,
         u_payment_recv.name AS payment_received_by_name,
+        u_invoice.name      AS invoice_issued_by_name,
         u_cus.name          AS cus_name,
         u_ops.name          AS ops_name,
         u_dd.name           AS dieu_do_name,
@@ -134,6 +136,7 @@ router.get('/jobs', async (req, res) => {
       LEFT JOIN users u_kt_checked   ON u_kt_checked.id   = j.accounting_checked_by
       LEFT JOIN users u_debit_sent   ON u_debit_sent.id   = j.debit_sent_by
       LEFT JOIN users u_payment_recv ON u_payment_recv.id = j.payment_received_by
+      LEFT JOIN users u_invoice      ON u_invoice.id      = j.invoice_issued_by
       LEFT JOIN users u_cus          ON u_cus.id          = ja.cus_id
       LEFT JOIN users u_ops          ON u_ops.id          = ja.ops_id
       LEFT JOIN users u_dd           ON u_dd.id           = ja.dieu_do_id
@@ -311,6 +314,56 @@ jobActionsRouter.patch('/:id/debit-sent', async (req, res) => {
       client, req.params.id, req.user.id,
       'debit_sent_at', null,
       rows[0].debit_sent_at?.toISOString?.() || 'NOW()'
+    );
+
+    await client.query('COMMIT');
+    res.json(rows[0]);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// ─── PATCH /api/jobs/:id/invoice-issued ────────────────────────────────────
+// KT marks that the VAT invoice has been issued. INDEPENDENT marker — it does
+// NOT gate or reorder the pending_check→checked→debit_sent→paid lifecycle. The
+// only precondition is that the job has been accounting-checked; KT may issue
+// the invoice before OR after the debit note. Optional body.issued_at lets KT
+// pick the actual issue date (default NOW()). No un-tick; double-issue rejected.
+jobActionsRouter.patch('/:id/invoice-issued', async (req, res) => {
+  const { issued_at } = req.body || {};
+  const client = await db.pool.connect();
+  try {
+    await client.query('BEGIN');
+    const job = await fetchJobForKt(client, req.params.id);
+    if (!job || job.deleted_at) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Job không tồn tại' });
+    }
+    if (!job.accounting_checked_at) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Job chưa được kiểm tra' });
+    }
+    if (job.invoice_issued_at) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Job đã xuất hóa đơn trước đó' });
+    }
+
+    const { rows } = await client.query(`
+      UPDATE jobs
+         SET invoice_issued_at = COALESCE($1::timestamptz, NOW()),
+             invoice_issued_by = $2,
+             updated_at        = NOW()
+       WHERE id = $3 AND deleted_at IS NULL
+       RETURNING *
+    `, [issued_at || null, req.user.id, req.params.id]);
+
+    await recordHistory(
+      client, req.params.id, req.user.id,
+      'invoice_issued_at', null,
+      rows[0].invoice_issued_at?.toISOString?.() || 'NOW()'
     );
 
     await client.query('COMMIT');

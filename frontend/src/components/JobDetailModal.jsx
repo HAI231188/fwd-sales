@@ -479,7 +479,7 @@ function FRow({ label, children }) {
 export default function JobDetailModal({
   jobId, onClose,
   onAccountingCheck, onDebitSent, onPaymentReceived,
-  onReturnToLog, onReturnToSales,
+  onReturnToLog, onReturnToSales, onInvoiceIssued,
 }) {
   const { user } = useAuth();
   const qc = useQueryClient();
@@ -508,8 +508,10 @@ export default function JobDetailModal({
   // null | 'log' | 'sales' so a single dialog block handles both targets.
   const [showDebitDialog, setShowDebitDialog] = useState(false);
   const [showPaymentDialog, setShowPaymentDialog] = useState(false);
+  const [showInvoiceDialog, setShowInvoiceDialog] = useState(false);
   const [showReturnDialog, setShowReturnDialog] = useState(null);
   const [debitDate, setDebitDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [invoiceDate, setInvoiceDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [paymentDate, setPaymentDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [returnReason, setReturnReason] = useState('');
   const [returnErr, setReturnErr] = useState('');
@@ -740,6 +742,17 @@ export default function JobDetailModal({
                 onClick={() => { setDebitDate(new Date().toISOString().slice(0, 10)); setShowDebitDialog(true); }}
                 disabled={ktBusy}>
                 📧 Đã gửi debit
+              </button>
+            )}
+
+            {/* Đã xuất HĐ — independent invoice-issued marker. Available anytime
+                after KT-check (before OR after the debit note); hidden once issued. */}
+            {job.accounting_checked_at && !job.invoice_issued_at && onInvoiceIssued && (
+              <button className="btn btn-primary btn-sm"
+                onClick={() => { setInvoiceDate(new Date().toISOString().slice(0, 10)); setShowInvoiceDialog(true); }}
+                disabled={ktBusy}
+                style={{ background: 'var(--purple)' }}>
+                🧾 Đã xuất HĐ
               </button>
             )}
 
@@ -1360,6 +1373,36 @@ export default function JobDetailModal({
             <button className="btn btn-primary btn-sm"
               disabled={!debitDate || ktBusy}
               onClick={() => { runKt(onDebitSent, job.id, debitDate); setShowDebitDialog(false); }}>
+              Xác nhận
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* Đã xuất hóa đơn dialog. Date picker (default today), confirm/cancel. */}
+    {showInvoiceDialog && (
+      <div style={{
+        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        zIndex: zIndex + 10, padding: 16,
+      }} onClick={e => { if (e.target === e.currentTarget) setShowInvoiceDialog(false); }}>
+        <div style={{
+          background: 'var(--bg-card)', borderRadius: 12, padding: 20,
+          width: 420, maxWidth: 'calc(100vw - 32px)',
+          boxShadow: '0 10px 40px rgba(0,0,0,0.2)',
+        }}>
+          <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 12 }}>
+            🧾 Đã xuất hóa đơn
+          </div>
+          <div style={{ fontSize: 13, color: 'var(--text-2)', marginBottom: 6 }}>Ngày xuất</div>
+          <input type="date" value={invoiceDate} onChange={e => setInvoiceDate(e.target.value)}
+            style={{ ...INP, marginBottom: 16, width: '100%' }} />
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <button className="btn btn-ghost btn-sm" onClick={() => setShowInvoiceDialog(false)}>Hủy</button>
+            <button className="btn btn-primary btn-sm"
+              disabled={!invoiceDate || ktBusy}
+              onClick={() => { runKt(onInvoiceIssued, job.id, invoiceDate); setShowInvoiceDialog(false); }}>
               Xác nhận
             </button>
           </div>

@@ -23,7 +23,7 @@ import DateRangeFilter from '../components/DateRangeFilter';
 import {
   getAccountingStats, getAccountingJobs,
   accountingCheck, accountingDebitSent, accountingPaymentReceived,
-  accountingReturnToLog, accountingReturnToSales,
+  accountingReturnToLog, accountingReturnToSales, accountingInvoiceIssued,
 } from '../api';
 import { fmtDate, fmtDateTime as fmtDt } from '../utils/dateFmt';
 
@@ -103,6 +103,7 @@ const COLS_DEBIT_SENT = [
   { key: 'debit_sent_at',         label: 'Ngày gửi debit' },
   { key: 'days_since_debit_sent', label: 'Số ngày chờ thu' },
   { key: 'debit_sent_by_name',    label: 'Người gửi debit' },
+  { key: 'invoice_issued_at',     label: 'Đã xuất HĐ' },
 ];
 
 const COLS_PAID = [
@@ -229,6 +230,10 @@ export default function AccountingDashboard() {
   const [showOnlyOverdue, setShowOnlyOverdue] = useState(false);
   // KT4 — JobDetailModal trigger from any sub-tab's Số job click.
   const [detailJobId, setDetailJobId] = useState(null);
+  // Inline invoice-issued tick (debit_sent tab): holds the job whose date
+  // dialog is open, plus the chosen issue date (default today).
+  const [invoiceDialogJob, setInvoiceDialogJob] = useState(null);
+  const [invoiceDate, setInvoiceDate] = useState(() => new Date().toISOString().slice(0, 10));
   // KT4 — date range for the paid tab. DateRangeFilter seeds this on mount
   // via its defaultPreset='30d' useEffect (DateRangeFilter.jsx), so the
   // first query fires with explicit dates rather than backend-default.
@@ -257,6 +262,16 @@ export default function AccountingDashboard() {
       invalidate(); setDetailJobId(null);
     },
     onError: (err) => toast.error(err?.error || err?.message || 'Lỗi ghi nhận'),
+  });
+  // Independent invoice-issued marker. Reused by BOTH the modal (onInvoiceIssued)
+  // and the new inline tick button in the debit_sent tab table.
+  const invoiceMut = useMutation({
+    mutationFn: ({ id, issuedAt }) => accountingInvoiceIssued(id, issuedAt),
+    onSuccess: (job) => {
+      toast.success(`Đã ghi nhận xuất HĐ job ${job?.job_code || ''}`.trim());
+      invalidate(); setDetailJobId(null); setInvoiceDialogJob(null);
+    },
+    onError: (err) => toast.error(err?.error || err?.message || 'Lỗi ghi nhận xuất HĐ'),
   });
   const paymentMut = useMutation({
     mutationFn: ({ id, recvAt })   => accountingPaymentReceived(id, recvAt),
@@ -528,6 +543,7 @@ export default function AccountingDashboard() {
                 activeTab={activeTab}
                 data={tabData}
                 onOpen={setDetailJobId}
+                onInvoiceTick={(j) => { setInvoiceDate(new Date().toISOString().slice(0, 10)); setInvoiceDialogJob(j); }}
               />
             )}
           </div>
@@ -547,7 +563,46 @@ export default function AccountingDashboard() {
           onPaymentReceived={(id, recvAt)=> paymentMut.mutateAsync({ id, recvAt })}
           onReturnToLog={(id, reason)    => returnLogMut.mutateAsync({ id, reason })}
           onReturnToSales={(id, reason)  => returnSalesMut.mutateAsync({ id, reason })}
+          onInvoiceIssued={(id, issuedAt)=> invoiceMut.mutateAsync({ id, issuedAt })}
         />
+      )}
+
+      {/* Inline "Đã xuất hóa đơn" date dialog — opened from the debit_sent tab's
+          invoice tick button (table + mobile card) without opening the job. */}
+      {invoiceDialogJob && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          zIndex: 1200, padding: 16,
+        }} onClick={e => { if (e.target === e.currentTarget) setInvoiceDialogJob(null); }}>
+          <div style={{
+            background: 'var(--bg-card)', borderRadius: 12, padding: 20,
+            width: 420, maxWidth: 'calc(100vw - 32px)',
+            boxShadow: '0 10px 40px rgba(0,0,0,0.2)',
+          }}>
+            <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 4 }}>
+              🧾 Đã xuất hóa đơn
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--text-2)', marginBottom: 12 }}>
+              Job {invoiceDialogJob.job_code || `#${invoiceDialogJob.id}`}
+            </div>
+            <div style={{ fontSize: 13, color: 'var(--text-2)', marginBottom: 6 }}>Ngày xuất</div>
+            <input type="date" value={invoiceDate} onChange={e => setInvoiceDate(e.target.value)}
+              style={{
+                width: '100%', padding: 10, fontSize: 13,
+                border: '1px solid var(--border)', borderRadius: 8,
+                marginBottom: 16, boxSizing: 'border-box',
+              }} />
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button className="btn btn-ghost btn-sm" onClick={() => setInvoiceDialogJob(null)}>Hủy</button>
+              <button className="btn btn-primary btn-sm"
+                disabled={!invoiceDate || invoiceMut.isPending}
+                onClick={() => invoiceMut.mutateAsync({ id: invoiceDialogJob.id, issuedAt: invoiceDate })}>
+                Xác nhận
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -557,7 +612,7 @@ export default function AccountingDashboard() {
 // Factored out so the conditional rendering inside AccountingDashboard's
 // return stays readable. Inside this component the shared cell() switch
 // handles every column key declared on the 4 column arrays above.
-function Sub3Table({ activeTab, data, onOpen }) {
+function Sub3Table({ activeTab, data, onOpen, onInvoiceTick }) {
   // tdStyle is the per-cell padding base — concatenated with key-specific
   // styles inside the switch.
   const tdStyle = { padding: '8px 8px' };
@@ -692,6 +747,23 @@ function Sub3Table({ activeTab, data, onOpen }) {
       case 'debit_sent_by_name':
         return <td key={key} style={{ ...tdStyle, fontSize: 12 }}>
           {j.debit_sent_by_name || <span style={{ color: 'var(--text-3)' }}>—</span>}
+        </td>;
+
+      case 'invoice_issued_at':
+        // Issued → show the date (read-only). Not yet → inline tick button that
+        // opens the date dialog without navigating into the job.
+        return <td key={key} style={{ ...tdStyle, fontSize: 12, whiteSpace: 'nowrap' }}>
+          {j.invoice_issued_at ? (
+            <span style={{ color: 'var(--purple)', fontWeight: 600 }}>
+              🧾 {fmtDate(j.invoice_issued_at)}
+            </span>
+          ) : (
+            <button className="btn btn-sm"
+              onClick={e => { e.stopPropagation(); onInvoiceTick?.(j); }}
+              style={{ background: 'var(--purple)', color: '#fff', border: 'none', fontSize: 11, padding: '3px 8px' }}>
+              🧾 Xuất HĐ
+            </button>
+          )}
         </td>;
 
       case 'payment_received_at':
@@ -837,6 +909,18 @@ function Sub3Table({ activeTab, data, onOpen }) {
                     fontWeight: isOverdue ? 600 : 400,
                   }}>
                     {isOverdue && '🔴 '}{d != null ? `${d} ngày chờ thu` : '—'}{isOverdue && ' (quá hạn)'}
+                  </div>
+                  <div style={{ fontSize: 12, marginTop: 6 }}>
+                    <span style={{ color: 'var(--text-2)' }}>Đã xuất HĐ:</span>{' '}
+                    {j.invoice_issued_at ? (
+                      <span style={{ color: 'var(--purple)', fontWeight: 600 }}>🧾 {fmtDate(j.invoice_issued_at)}</span>
+                    ) : (
+                      <button className="btn btn-sm"
+                        onClick={e => { e.stopPropagation(); onInvoiceTick?.(j); }}
+                        style={{ background: 'var(--purple)', color: '#fff', border: 'none', fontSize: 11, padding: '3px 8px' }}>
+                        🧾 Xuất HĐ
+                      </button>
+                    )}
                   </div>
                 </>
               }
