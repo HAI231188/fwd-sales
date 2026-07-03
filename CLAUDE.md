@@ -1185,6 +1185,30 @@ Independent marker — don't add it to stats, don't gate the lifecycle on it, do
 
 ---
 
+### Note — CUS overdue redefined by TK-completion (`tk_datetime`), 2026-07-03
+
+**`jobs.deadline` means "TK phải xong trước giờ này" (customs must be cleared before this time).** The old logic flagged overdue purely on `deadline` vs `NOW()`, so a job whose tờ khai was already done kept showing red. Now a **single CUS-overdue definition** keys off `job_tk.tk_datetime` (the "Ngày TK" stamp) and is applied on **every screen** — the numbers and the colors always agree:
+
+| State | Predicate | Visual |
+|---|---|---|
+| **Sắp hạn (amber)** | `tk_datetime IS NULL AND deadline ∈ [NOW, +24h] AND status='pending'` | amber cell/tint — **self-clears** the moment TK is entered |
+| **Chưa TQ, quá hạn (red)** | `tk_datetime IS NULL AND deadline < NOW() AND status='pending'` | red cell/tint — self-clears on TK entry |
+| **Quá hạn thật (fact, strong red)** | `tk_datetime IS NOT NULL AND tk_datetime > j.deadline` — **all-time, incl. completed jobs** (no status filter) | "Trễ" badge next to the deadline |
+| clean | `tk_datetime <= deadline`, or missing `job_tk` row (→ `tk_datetime` NULL & not late), or `deadline` NULL | no tint, no count |
+
+**Deadline coloring is gated on `!tk_datetime`** at every call site (the per-file `deadlineStyle` helper stays untouched, L30) — a TK-done job never shows amber/red; a TK-done-**after**-deadline job shows a red **"Trễ"** badge instead. `han_lenh` coloring (Hạn lệnh/Cutoff, L19) is a **separate field** and is unchanged.
+
+**One definition, every surface** (all in the same commit `a44cede`):
+- **CUS dashboard** (`LogDashboardCus.jsx`): 3 cards — **Sắp hạn (24h)** / **Chưa TQ, quá hạn** / **Quá hạn thật** (new stat key `qua_han_that`) → drilldowns `cus_near_deadline` / `cus_overdue` / `cus_true_overdue`. Row tint + deadline cell (desktop + mobile L26) gated; `LateBadge`.
+- **TP per-CUS staff stats** (`queryCusStaffStats`, shared `StaffSection.CUS_COLS`): new `qua_han_that` column + tk-gated `overdue`/`near_deadline` → a per-CUS "quá hạn" on TP **equals** what that CUS sees. Drilldowns `staff_cus_overdue` / `staff_cus_near_deadline` / `staff_cus_true_overdue`.
+- **TP global cards** `overdue` / `warn_soon` (jobs.js `/stats` TP branch) + their `overdue`/`warning` drilldowns: gated on `tk_datetime IS NULL` (truck-only / `ops_hp` jobs have no `job_tk` row → `tk_datetime` NULL → **unaffected**).
+- **TP + KT-readonly deadline coloring** (`LogDashboardTP.jsx`, incl. `InlineDeadline` `tkDone`/`isLate` props): gated + "Trễ" badge; KT read-only view inherits it (reuses the component).
+- **JobListModal drilldowns**: tk-aware deadline cell + "Trễ" badge + labels for the 2 new filter types. All-time filters use a `statusPredicate` var in `GET /filtered` that relaxes `j.status='pending'` → `TRUE` for `cus_true_overdue` / `staff_cus_true_overdue` (both drilldown query paths).
+
+**Out of scope — left untouched:** OPS/DD **role-specific** overdue signals (`queryOpsStaffStats`/`queryDieuDoStaffStats`, OPS `/stats` `sap_han`/`qua_han`, `ops_near_deadline`/`ops_overdue`, `dd_sap_han`, `dd_kh_qua_han`) and all `han_lenh`-based coloring. App-code only — no schema change (`tk_datetime` already exists on `job_tk` + is already in every relevant SELECT). When adding any new deadline surface, reuse this definition — never re-introduce raw `deadline < NOW()` without the `tk_datetime` gate.
+
+---
+
 ## 6. Session Start Checklist
 
 1. Read this file.
