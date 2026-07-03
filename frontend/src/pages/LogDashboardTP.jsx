@@ -225,6 +225,22 @@ function deadlineStyle(dl) {
   if (ms < 48 * 3600 * 1000) return { color: 'var(--warning)', fontWeight: 600 };
   return { color: 'var(--primary)' };
 }
+// CUS-overdue coloring gate (2026-07) — mirror LogDashboardCus. The deadline
+// amber/red only applies while TK is not done (tk_datetime NULL); a TK-done job
+// is clean, and a TK-done-after-deadline job shows a "Trễ" badge instead. The
+// han_lenh column (Hạn lệnh/Cutoff, L19) is a separate field and stays as-is.
+// deadlineStyle (L30) is untouched — gating happens at the call site.
+function tpDeadlineTint(j) {
+  if (j.tk_datetime) return {};
+  return deadlineStyle(j.deadline);
+}
+function tpIsLate(j) {
+  return !!(j.tk_datetime && j.deadline && new Date(j.tk_datetime) > new Date(j.deadline));
+}
+function TpLateBadge({ j }) {
+  if (!tpIsLate(j)) return null;
+  return <span title="TK hoàn thành sau deadline" style={{ marginLeft: 6, background: '#b91c1c', color: '#fff', borderRadius: 6, padding: '1px 6px', fontSize: 10, fontWeight: 700, whiteSpace: 'nowrap' }}>Trễ</span>;
+}
 
 const ALL_COLS = [
   { key: 'stt',          label: '#' },
@@ -328,7 +344,7 @@ function StatCard({ label, value, color, onClick, badge, rows }) {
   );
 }
 
-function InlineDeadline({ value, onSave }) {
+function InlineDeadline({ value, onSave, tkDone = false, isLate = false }) {
   const [editing, setEditing] = useState(false);
   const ref = useRef();
 
@@ -339,7 +355,11 @@ function InlineDeadline({ value, onSave }) {
 
   if (!editing) return (
     <div>
-      <div style={deadlineStyle(value)}>{value ? fmtDt(value) : <span style={{ color: 'var(--text-3)' }}>Chưa có</span>}</div>
+      {/* tkDone → deadline satisfied, no amber/red tint (Trễ badge if late-cleared). */}
+      <div style={tkDone ? {} : deadlineStyle(value)}>
+        {value ? fmtDt(value) : <span style={{ color: 'var(--text-3)' }}>Chưa có</span>}
+        {isLate && <span title="TK hoàn thành sau deadline" style={{ marginLeft: 6, background: '#b91c1c', color: '#fff', borderRadius: 6, padding: '1px 6px', fontSize: 10, fontWeight: 700, whiteSpace: 'nowrap' }}>Trễ</span>}
+      </div>
       <span onClick={start} style={{ fontSize: 11, color: 'var(--info)', cursor: 'pointer', borderBottom: '1px dashed var(--info)' }}>
         {value ? 'Sửa' : 'Đặt deadline'}
       </span>
@@ -936,8 +956,8 @@ export default function LogDashboardTP({ readOnly = false }) {
                               <span style={{ color: 'var(--text-2)', whiteSpace: 'nowrap', paddingTop: 2 }}>Deadline:</span>
                               <div style={{ flex: 1, minWidth: 0 }} onClick={e => e.stopPropagation()}>
                                 {readOnly
-                                  ? <span style={deadlineStyle(j.deadline)}>{j.deadline ? fmtDt(j.deadline) : 'Chưa có'}</span>
-                                  : <InlineDeadline value={j.deadline}
+                                  ? <span style={tpDeadlineTint(j)}>{j.deadline ? fmtDt(j.deadline) : 'Chưa có'}<TpLateBadge j={j} /></span>
+                                  : <InlineDeadline value={j.deadline} tkDone={!!j.tk_datetime} isLate={tpIsLate(j)}
                                       onSave={v => setDlMut.mutate({ id: j.id, deadline: v })} />}
                               </div>
                             </div>
@@ -1088,8 +1108,10 @@ export default function LogDashboardTP({ readOnly = false }) {
                                  j.tk_flow === 'vang' ? 'rgba(217,119,6,0.06)' :
                                  j.tk_flow === 'do'   ? 'rgba(239,68,68,0.06)' :
                                  j.tk_status === 'chua_truyen' ? 'rgba(239,68,68,0.04)' : '';
+                    // Deadline-red only while TK not done (tk_datetime NULL) — a TQ-done
+                    // job is no longer overdue (a late-cleared one shows a "Trễ" badge).
                     const rowBg = ktReturnedBg || tkBg || (waitingAssign ? 'rgba(217,119,6,0.04)'
-                      : j.deadline && new Date(j.deadline) < Date.now() ? 'rgba(239,68,68,0.04)' : '');
+                      : !j.tk_datetime && j.deadline && new Date(j.deadline) < Date.now() ? 'rgba(239,68,68,0.04)' : '');
                     const cs = { padding: '8px 8px' };
 
                     const cell = (key) => {
@@ -1123,7 +1145,7 @@ export default function LogDashboardTP({ readOnly = false }) {
                             </span>
                           </td>;
                         }
-                        case 'deadline':    return <td key={key} style={{ ...cs, minWidth: 130 }}>{readOnly ? <span style={deadlineStyle(j.deadline)}>{j.deadline ? fmtDt(j.deadline) : '—'}</span> : <InlineDeadline value={j.deadline} onSave={v => setDlMut.mutate({ id: j.id, deadline: v })} />}</td>;
+                        case 'deadline':    return <td key={key} style={{ ...cs, minWidth: 130 }}>{readOnly ? <span style={tpDeadlineTint(j)}>{j.deadline ? fmtDt(j.deadline) : '—'}<TpLateBadge j={j} /></span> : <InlineDeadline value={j.deadline} tkDone={!!j.tk_datetime} isLate={tpIsLate(j)} onSave={v => setDlMut.mutate({ id: j.id, deadline: v })} />}</td>;
                         case 'tk_flow':     return <td key={key} style={{ ...cs, fontSize: 12, color: 'var(--text-2)' }}>{j.tk_flow || '—'}</td>;
                         case 'tk_number':   return <td key={key} style={{ ...cs, fontSize: 12 }}>{j.tk_number || '—'}</td>;
                         case 'tk_datetime': return <td key={key} style={{ ...cs, fontSize: 12, whiteSpace: 'nowrap', color: 'var(--text-2)' }}>{j.tk_datetime ? fmtDt(j.tk_datetime) : '—'}</td>;

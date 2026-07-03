@@ -61,7 +61,8 @@ const FILTER_TITLES = {
   cus_active: 'Tổng job đang làm',
   cus_waiting_confirm: 'Chờ xác nhận',
   cus_near_deadline: 'Sắp hạn (24h)',
-  cus_overdue: 'Quá hạn',
+  cus_overdue: 'Chưa TQ, quá hạn',
+  cus_true_overdue: 'Quá hạn thật',
   // DieuDo
   truck_total: 'Tổng job truck đang xử lý',
   truck_booked: 'Đã đặt xe',
@@ -94,8 +95,9 @@ const FILTER_TITLES = {
   staff_cus_awaiting_confirm:  'Job chờ xác nhận',
   staff_cus_chua_truyen:       'Chưa truyền TK',
   staff_cus_dang_tq:           'Đang chờ thông quan',
-  staff_cus_overdue:           'Quá deadline',
+  staff_cus_overdue:           'Chưa TQ, quá hạn',
   staff_cus_near_deadline:     'Sắp hạn (24h)',
+  staff_cus_true_overdue:      'Quá hạn thật',
   staff_cus_missing_info:      'Thiếu thông tin',
   // Staff drill-down — Điều Độ
   staff_dd_pending:            'Job pending Điều Độ',
@@ -222,10 +224,19 @@ function renderCell(key, j, filterType) {
       return <span style={{ fontSize: 12, color: 'var(--text-2)', whiteSpace: 'nowrap' }}>{fmtDate(j.created_at)}</span>;
     case 'customer_name':
       return <span style={{ fontWeight: 500 }}>{j.customer_name}</span>;
-    case 'deadline':
-      return <span style={{ whiteSpace: 'nowrap', ...deadlineStyle(j.deadline, filterType) }}>
+    case 'deadline': {
+      // CUS-overdue parity (2026-07): TK-done (tk_datetime set) → no amber/red
+      // unless it was done AFTER the deadline (late → red + "Trễ"). TK-not-done
+      // keeps the existing filter/ms-based coloring. han_lenh (below) is separate.
+      const late = j.tk_datetime && j.deadline && new Date(j.tk_datetime) > new Date(j.deadline);
+      const dlStyle = j.tk_datetime
+        ? (late ? { color: 'var(--danger)', fontWeight: 600 } : {})
+        : deadlineStyle(j.deadline, filterType);
+      return <span style={{ whiteSpace: 'nowrap', ...dlStyle }}>
         {j.deadline ? fmtDt(j.deadline) : <span style={{ color: 'var(--text-3)' }}>—</span>}
+        {late && <span title="TK hoàn thành sau deadline" style={{ marginLeft: 6, background: '#b91c1c', color: '#fff', borderRadius: 6, padding: '1px 6px', fontSize: 10, fontWeight: 700 }}>Trễ</span>}
       </span>;
+    }
     case 'han_lenh':
       if (!j.han_lenh) return <span style={{ color: 'var(--text-3)', fontSize: 12 }}>—</span>;
       return <span style={{ whiteSpace: 'nowrap', ...deadlineStyle(j.han_lenh, filterType), fontSize: 12 }}>

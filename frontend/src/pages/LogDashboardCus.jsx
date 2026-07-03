@@ -45,6 +45,27 @@ function deadlineStyle(dl) {
   if (ms < 24 * 3600 * 1000) return { color: 'var(--warning)', fontWeight: 600 };
   return {};
 }
+// CUS-overdue coloring gate (2026-07): the amber/red deadline warning only
+// applies while TK is not yet done (tk_datetime NULL). Once tk_datetime is set
+// the deadline is satisfied → no tint. If TK was completed AFTER the deadline,
+// that's a "Trễ" fact shown via LateBadge (not a tint). Keeps deadlineStyle (L30)
+// untouched — gating happens here at the call site.
+function cusDeadlineTint(j) {
+  if (j.tk_datetime) return {};
+  return deadlineStyle(j.deadline);
+}
+function cusIsLate(j) {
+  return !!(j.tk_datetime && j.deadline && new Date(j.tk_datetime) > new Date(j.deadline));
+}
+function LateBadge({ j }) {
+  if (!cusIsLate(j)) return null;
+  return (
+    <span title="TK hoàn thành sau deadline" style={{
+      marginLeft: 6, background: '#b91c1c', color: '#fff',
+      borderRadius: 6, padding: '1px 6px', fontSize: 10, fontWeight: 700, whiteSpace: 'nowrap',
+    }}>Trễ</span>
+  );
+}
 function parseJson(val) {
   if (!val) return {};
   if (typeof val === 'object') return val;
@@ -519,7 +540,8 @@ export default function LogDashboardCus() {
           <StatCard label="Tổng job đang làm" value={stats?.total_active} color="var(--info)" onClick={() => setJobListFilter('cus_active')} />
           <StatCard label="Chờ xác nhận" value={stats?.cho_xac_nhan} color="var(--warning)" onClick={() => setJobListFilter('cus_waiting_confirm')} />
           <StatCard label="Sắp hạn (24h)" value={stats?.sap_han} color="var(--warning)" onClick={() => setJobListFilter('cus_near_deadline')} />
-          <StatCard label="Quá hạn" value={stats?.qua_han} color="var(--danger)" onClick={() => setJobListFilter('cus_overdue')} />
+          <StatCard label="Chưa TQ, quá hạn" value={stats?.qua_han} color="var(--danger)" onClick={() => setJobListFilter('cus_overdue')} />
+          <StatCard label="Quá hạn thật" value={stats?.qua_han_that} color="#b91c1c" onClick={() => setJobListFilter('cus_true_overdue')} />
         </div>
 
         {/* Staff section — 1 row for current user */}
@@ -573,7 +595,8 @@ export default function LogDashboardCus() {
 
                           <div style={{ fontSize: 12, marginBottom: 6 }}>
                             <span style={{ color: 'var(--text-2)' }}>Deadline:</span>{' '}
-                            <span style={deadlineStyle(j.deadline)}>{fmtDt(j.deadline)}</span>
+                            <span style={cusDeadlineTint(j)}>{fmtDt(j.deadline)}</span>
+                            <LateBadge j={j} />
                           </div>
 
                           {isConfirmPending && tab === 'pending' && (
@@ -738,9 +761,11 @@ export default function LogDashboardCus() {
                     const isConfirmPending = j.cus_confirm_status === 'pending';
                     // KT5 — KT-returned-to-log paints orange on top of any other tint.
                     const ktReturnedBg = j.returned_to === 'log' ? 'rgba(249,115,22,0.10)' : '';
+                    // Deadline tint only while TK not done (tk_datetime NULL) — a
+                    // TQ-done job is no longer overdue (late-cleared shows a "Trễ" badge).
                     const rowBg = ktReturnedBg || tkFlowRowBg(j) ||
-                      (j.deadline && new Date(j.deadline) < Date.now() ? 'rgba(239,68,68,0.04)' :
-                      j.deadline && (new Date(j.deadline) - Date.now()) < 24*3600*1000 ? 'rgba(217,119,6,0.04)' : '');
+                      (!j.tk_datetime && j.deadline && new Date(j.deadline) < Date.now() ? 'rgba(239,68,68,0.04)' :
+                      !j.tk_datetime && j.deadline && (new Date(j.deadline) - Date.now()) < 24*3600*1000 ? 'rgba(217,119,6,0.04)' : '');
 
                     return (
                       <tr key={j.id} style={{ borderBottom: '1px solid var(--border)', background: rowBg }}
@@ -765,10 +790,11 @@ export default function LogDashboardCus() {
                         <td style={{ padding: '8px 8px', whiteSpace: 'nowrap', color: 'var(--text-2)', fontSize: 12 }}>
                           {fmtDate(j.etd)}<br />{fmtDate(j.eta)}
                         </td>
-                        <td style={{ padding: '8px 8px', whiteSpace: 'nowrap', ...deadlineStyle(j.deadline) }}>
+                        <td style={{ padding: '8px 8px', whiteSpace: 'nowrap', ...cusDeadlineTint(j) }}>
                           {j.deadline
                             ? new Date(j.deadline).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
                             : '—'}
+                          <LateBadge j={j} />
                           {isConfirmPending && tab === 'pending' && (
                             <div style={{ marginTop: 4, display: 'flex', gap: 4 }}>
                               <button className="btn btn-primary btn-sm" style={{ padding: '2px 8px', fontSize: 11 }}

@@ -56,8 +56,13 @@ function queryCusStaffStats(scope) {
       COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND ja.cus_confirm_status = 'pending') AS awaiting_confirm,
       COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND (jt.tk_status IS NULL OR jt.tk_status = 'chua_truyen')) AS chua_truyen,
       COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND jt.tk_status = 'dang_lam') AS dang_tq,
-      COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND j.deadline < NOW()) AS overdue,
-      COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '24 hours') AS near_deadline,
+      -- CUS-overdue semantics (2026-07): deadline = "TK phải xong trước giờ này".
+      -- A job whose tk_datetime is set is NO LONGER a pending-overdue risk (the
+      -- TK is done); if it was done AFTER the deadline it becomes a TRUE overdue
+      -- fact (qua_han_that, all-time, below). Missing job_tk row → tk_datetime NULL.
+      COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND jt.tk_datetime IS NULL AND j.deadline < NOW()) AS overdue,
+      COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND jt.tk_datetime IS NULL AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '24 hours') AS near_deadline,
+      COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.deleted_at IS NULL AND jt.tk_datetime IS NOT NULL AND jt.tk_datetime > j.deadline) AS qua_han_that,
       COUNT(*) FILTER (WHERE j.id IS NOT NULL AND j.status = 'pending' AND j.deleted_at IS NULL AND (
         j.han_lenh IS NULL
         OR jt.tk_flow IS NULL OR jt.tk_flow = ''
@@ -227,8 +232,11 @@ router.get('/stats', requireAuth, async (req, res) => {
           WHERE j.status = 'pending' AND j.deleted_at IS NULL
             AND ja.cus_confirm_status = 'adjustment_requested'`),
         db.query(`SELECT COUNT(*) AS v FROM jobs WHERE status = 'pending' AND deleted_at IS NULL AND deadline IS NULL`),
-        db.query(`SELECT COUNT(*) AS v FROM jobs WHERE status = 'pending' AND deleted_at IS NULL AND deadline < NOW()`),
-        db.query(`SELECT COUNT(*) AS v FROM jobs WHERE status = 'pending' AND deleted_at IS NULL AND deadline BETWEEN NOW() AND NOW() + INTERVAL '48 hours'`),
+        // Global overdue/near cards gate on tk_datetime IS NULL for parity with
+        // the CUS-overdue coloring (a TK-done pending job no longer shows overdue).
+        // Truck-only / ops_hp jobs have no job_tk row → tk_datetime NULL → unchanged.
+        db.query(`SELECT COUNT(*) AS v FROM jobs j LEFT JOIN job_tk jt ON jt.job_id = j.id WHERE j.status = 'pending' AND j.deleted_at IS NULL AND jt.tk_datetime IS NULL AND j.deadline < NOW()`),
+        db.query(`SELECT COUNT(*) AS v FROM jobs j LEFT JOIN job_tk jt ON jt.job_id = j.id WHERE j.status = 'pending' AND j.deleted_at IS NULL AND jt.tk_datetime IS NULL AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '48 hours'`),
         db.query(`SELECT COUNT(*) AS v FROM jobs WHERE status = 'pending' AND deleted_at IS NULL AND (pol IS NULL OR pod IS NULL OR cont_number IS NULL OR han_lenh IS NULL)`),
         db.query(`SELECT COUNT(*) AS v FROM job_delete_requests WHERE status = 'pending'`),
         queryCusStaffStats({}),
@@ -345,11 +353,15 @@ router.get('/stats', requireAuth, async (req, res) => {
         ke_hoach_d5:              cv(khD5),
       });
     } else if (CUS_ROLES.includes(role)) {
-      const [total, choXacNhan, sapHan, quaHan, cusStats] = await Promise.all([
+      const [total, choXacNhan, sapHan, quaHan, quaHanThat, cusStats] = await Promise.all([
         db.query(`SELECT COUNT(*) AS v FROM job_assignments ja JOIN jobs j ON j.id = ja.job_id WHERE ja.cus_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL`, [userId]),
         db.query(`SELECT COUNT(*) AS v FROM job_assignments ja JOIN jobs j ON j.id = ja.job_id WHERE ja.cus_id = $1 AND j.deleted_at IS NULL AND ja.cus_confirm_status = 'pending'`, [userId]),
-        db.query(`SELECT COUNT(*) AS v FROM job_assignments ja JOIN jobs j ON j.id = ja.job_id WHERE ja.cus_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '24 hours'`, [userId]),
-        db.query(`SELECT COUNT(*) AS v FROM job_assignments ja JOIN jobs j ON j.id = ja.job_id WHERE ja.cus_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL AND j.deadline < NOW()`, [userId]),
+        // Sắp hạn (amber): TK chưa xong (tk_datetime NULL) + deadline trong 24h.
+        db.query(`SELECT COUNT(*) AS v FROM job_assignments ja JOIN jobs j ON j.id = ja.job_id LEFT JOIN job_tk jt ON jt.job_id = j.id WHERE ja.cus_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL AND jt.tk_datetime IS NULL AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '24 hours'`, [userId]),
+        // Chưa TQ, quá hạn (red): TK chưa xong + deadline đã qua (còn pending).
+        db.query(`SELECT COUNT(*) AS v FROM job_assignments ja JOIN jobs j ON j.id = ja.job_id LEFT JOIN job_tk jt ON jt.job_id = j.id WHERE ja.cus_id = $1 AND j.status = 'pending' AND j.deleted_at IS NULL AND jt.tk_datetime IS NULL AND j.deadline < NOW()`, [userId]),
+        // Quá hạn thật (fact, all-time incl. completed): TK xong SAU deadline.
+        db.query(`SELECT COUNT(*) AS v FROM job_assignments ja JOIN jobs j ON j.id = ja.job_id LEFT JOIN job_tk jt ON jt.job_id = j.id WHERE ja.cus_id = $1 AND j.deleted_at IS NULL AND jt.tk_datetime IS NOT NULL AND jt.tk_datetime > j.deadline`, [userId]),
         queryCusStaffStats({ userId }),
       ]);
       res.json({
@@ -357,6 +369,7 @@ router.get('/stats', requireAuth, async (req, res) => {
         cho_xac_nhan:  parseInt(choXacNhan.rows[0].v),
         sap_han:       parseInt(sapHan.rows[0].v),
         qua_han:       parseInt(quaHan.rows[0].v),
+        qua_han_that:  parseInt(quaHanThat.rows[0].v),
         cus_stats:     cusStats.rows,
       });
     } else if (role === 'ops') {
@@ -722,6 +735,10 @@ router.get('/filtered', requireAuth, async (req, res) => {
   let idx = 1;
   let baseWhere = '';
   let extraWhere = '';
+  // Default drilldown status gate. The all-time "true overdue" filters
+  // (cus_true_overdue / staff_cus_true_overdue) override this to 'TRUE' so
+  // completed jobs are included (a TK-done-late fact survives completion).
+  let statusPredicate = "j.status = 'pending'";
 
   // staff_* filters: TP can pass any staff_id; other LOG roles can only pass their own.
   if (typeof type === 'string' && type.startsWith('staff_')) {
@@ -876,12 +893,20 @@ router.get('/filtered', requireAuth, async (req, res) => {
         extraWhere = `AND jt.tk_status = 'dang_lam'`;
         break;
       case 'staff_cus_overdue':
+        // "Chưa TQ, quá hạn": TK chưa xong + deadline đã qua (pending).
         staffField = 'cus_id';
-        extraWhere = `AND j.deadline < NOW()`;
+        extraWhere = `AND jt.tk_datetime IS NULL AND j.deadline < NOW()`;
         break;
       case 'staff_cus_near_deadline':
         staffField = 'cus_id';
-        extraWhere = `AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '24 hours'`;
+        extraWhere = `AND jt.tk_datetime IS NULL AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '24 hours'`;
+        break;
+      case 'staff_cus_true_overdue':
+        // "Quá hạn thật" (all-time): TK xong SAU deadline. Includes completed
+        // jobs → statusPredicate relaxed to TRUE.
+        staffField = 'cus_id';
+        extraWhere = `AND jt.tk_datetime IS NOT NULL AND jt.tk_datetime > j.deadline`;
+        statusPredicate = 'TRUE';
         break;
       case 'staff_cus_missing_info':
         staffField = 'cus_id';
@@ -964,7 +989,7 @@ router.get('/filtered', requireAuth, async (req, res) => {
         LEFT JOIN users ops ON ops.id = ja.ops_id
         LEFT JOIN job_tk jt ON jt.job_id = j.id
         LEFT JOIN job_truck jtr ON jtr.job_id = j.id
-        WHERE j.status = 'pending' AND j.deleted_at IS NULL ${baseWhere} ${extraWhere}
+        WHERE ${statusPredicate} AND j.deleted_at IS NULL ${baseWhere} ${extraWhere}
         ORDER BY j.deadline ASC NULLS LAST, j.created_at DESC
       `, params);
       return res.json(rows);
@@ -1074,15 +1099,17 @@ router.get('/filtered', requireAuth, async (req, res) => {
 
   switch (type) {
     // TP filters
-    case 'warning':   extraWhere = `AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '48 hours'`; break;
+    case 'warning':   extraWhere = `AND jt.tk_datetime IS NULL AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '48 hours'`; break;
     case 'missing':   extraWhere = `AND (j.pol IS NULL OR j.pod IS NULL OR j.cont_number IS NULL OR j.han_lenh IS NULL)`; break;
-    case 'overdue':        extraWhere = `AND j.deadline < NOW()`; break;
+    case 'overdue':        extraWhere = `AND jt.tk_datetime IS NULL AND j.deadline < NOW()`; break;
     case 'tp_tk_pending':    extraWhere = `AND j.service_type IN ('tk','both') AND (jt.id IS NULL OR jt.completed_at IS NULL)`; break;
     case 'tp_truck_pending': extraWhere = `AND j.service_type IN ('truck','both') AND (jtr.id IS NULL OR jtr.completed_at IS NULL)`; break;
     // CUS filters
     case 'cus_waiting_confirm': extraWhere = `AND ja.cus_id IS NOT NULL AND ja.cus_confirm_status = 'pending'`; break;
-    case 'cus_near_deadline':   extraWhere = `AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '24 hours'`; break;
-    case 'cus_overdue':         extraWhere = `AND j.deadline < NOW()`; break;
+    case 'cus_near_deadline':   extraWhere = `AND jt.tk_datetime IS NULL AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '24 hours'`; break;
+    case 'cus_overdue':         extraWhere = `AND jt.tk_datetime IS NULL AND j.deadline < NOW()`; break;
+    // "Quá hạn thật" (all-time incl. completed): TK xong SAU deadline.
+    case 'cus_true_overdue':    extraWhere = `AND jt.tk_datetime IS NOT NULL AND jt.tk_datetime > j.deadline`; statusPredicate = 'TRUE'; break;
     // DieuDo filters — Phase 5 CP4.5: migrated to 8-status enum. 'hoan_thanh'
     // is now the true completion signal (= all bookings have actual_datetime).
     case 'truck_total':      break;
@@ -1162,7 +1189,7 @@ router.get('/filtered', requireAuth, async (req, res) => {
       LEFT JOIN users ops ON ops.id = ja.ops_id
       LEFT JOIN job_tk jt ON jt.job_id = j.id
       LEFT JOIN job_truck jtr ON jtr.job_id = j.id
-      WHERE j.status = 'pending' AND j.deleted_at IS NULL ${baseWhere} ${extraWhere}
+      WHERE ${statusPredicate} AND j.deleted_at IS NULL ${baseWhere} ${extraWhere}
       ORDER BY j.deadline ASC NULLS LAST, j.created_at DESC
     `, params);
     res.json(rows);

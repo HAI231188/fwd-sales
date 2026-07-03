@@ -7,8 +7,12 @@ export const CUS_COLS = [
   { key: 'awaiting_confirm', label: 'Job chờ xác nhận',   filter: 'staff_cus_awaiting_confirm', color: 'var(--warning)' },
   { key: 'chua_truyen',      label: 'Chưa truyền TK',     filter: 'staff_cus_chua_truyen',      color: '#6b7280'        },
   { key: 'dang_tq',          label: 'Đang chờ thông quan',filter: 'staff_cus_dang_tq',          color: '#d97706'        },
-  { key: 'overdue',          label: 'Quá deadline',       filter: 'staff_cus_overdue',          color: 'var(--danger)'  },
+  // CUS-overdue semantics (2026-07): near/overdue = TK chưa xong (tk_datetime NULL);
+  // qua_han_that = TK xong SAU deadline (fact, all-time). Mirrors the 3 CUS cards
+  // so a per-CUS "quá hạn" on TP equals what that CUS sees.
   { key: 'near_deadline',    label: 'Sắp hạn (24h)',      filter: 'staff_cus_near_deadline',    color: 'var(--warning)' },
+  { key: 'overdue',          label: 'Chưa TQ, quá hạn',   filter: 'staff_cus_overdue',          color: 'var(--danger)'  },
+  { key: 'qua_han_that',     label: 'Quá hạn thật',       filter: 'staff_cus_true_overdue',     color: '#b91c1c'        },
   { key: 'missing_info',     label: 'Thiếu thông tin',    filter: 'staff_cus_missing_info',     color: 'var(--purple)'  },
 ];
 
