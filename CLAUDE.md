@@ -1207,6 +1207,30 @@ Independent marker — don't add it to stats, don't gate the lifecycle on it, do
 
 **Out of scope — left untouched:** OPS/DD **role-specific** overdue signals (`queryOpsStaffStats`/`queryDieuDoStaffStats`, OPS `/stats` `sap_han`/`qua_han`, `ops_near_deadline`/`ops_overdue`, `dd_sap_han`, `dd_kh_qua_han`) and all `han_lenh`-based coloring. App-code only — no schema change (`tk_datetime` already exists on `job_tk` + is already in every relevant SELECT). When adding any new deadline surface, reuse this definition — never re-introduce raw `deadline < NOW()` without the `tk_datetime` gate.
 
+> **Superseded for DD (2026-07-05):** the DD signals named "out of scope" above (`dd_sap_han`, `dd_kh_qua_han`, `canh_bao_chua_van_tai`) were **removed** by the DD-overdue redesign below.
+
+---
+
+### Note — DD overdue redefined as 3 per-leg content-based tiers (2026-07-05)
+
+The Điều Độ dashboard's **3 old mixed overdue signals** — "Sắp hạn (48h)" (`sap_han`, `j.deadline` 48h), "Chưa vận tải (24h)" (`canh_bao_chua_van_tai`, `han_lenh` 24h + status), "Kế hoạch trả hàng → Quá hạn" (`ke_hoach_qua_han`, per-container booking date) — were inconsistent (different fields, container-vs-booking granularity, action-timing) and are **replaced** by one **content-based, per-delivery-leg** 3-tier definition. A "leg" = a `truck_bookings` row (FCL = per-container leg via `truck_booking_containers`; **LCL = whole-lot leg with no container link — tracked identically to FCL**). Commit `fc1104a`.
+
+**ONE definition, three consumers** (module-level SQL fragments in `routes/jobs.js` ~L50-105, shared by the DD `/stats` cards + `/filtered` drilldowns + `GET /` row flags → counts, lists, coloring never diverge, L5/L30):
+
+| Tier | Card / stat key / filter | Definition (per leg; `COUNT(DISTINCT j.id)` for the card) |
+|---|---|---|
+| **T1** Quá hạn đặt KH xe | `dd_qh_dat_kh` | `han_lenh < NOW()` AND a leg is **unplanned** — FCL: ≥1 container with no live booking link; **LCL: job has ZERO live `truck_bookings` legs**. Partial planning still flags (4 conts, 2 booked → the 2 unbooked qualify). |
+| **T2** Quá hạn giao hàng | `dd_qh_giao` | ∃ leg (`truck_bookings`) with `planned_datetime < NOW() AND transport_company_id IS NULL` (no carrier). |
+| **T3** Quá hạn nhập thu | `dd_qh_nhap_thu` | ∃ leg with `NOW() > planned_datetime + INTERVAL '5 days' AND actual_datetime IS NULL` (delivered-date not entered). `T3_OVERDUE_DAYS = 5` named const. |
+
+**"Trễ" fact badge** (separate from the 3 tiers): a leg delivered late — `actual_datetime > planned_datetime` (`dd_tre_giao` flag). Shown next to the han_lenh cell (desktop + mobile).
+
+**Exclusions (all tiers unless noted):** cancelled legs (`tb.deleted_at IS NULL`); completed jobs (`j.dd_completed_at IS NULL` — DD's own done-stamp, L25); tk-only / no-truck-side (`service_type IN ('truck','both')`); **T1 only** additionally excludes a `'both'` job still waiting on CUS clearance (`DD_T1_CUS_GATE = service_type='truck' OR job_tk.completed_at IS NOT NULL`). **LCL is NOT excluded** — T2/T3/"Trễ" are leg-anchored off `truck_bookings` (cover FCL + LCL); only T1's "unplanned" branches by `cargo_type` (FCL branch byte-identical to prior → FCL unchanged). LCL delivery goes through the bulk "Đặt kế hoạch xe" endpoint as a container-less whole-lot booking (`truck-bookings.js` — FCL requires `container_id`, LCL forbids it).
+
+**Frontend** (`LogDashboardDieuDo.jsx`): the old 3 rows/cards removed → **new "Cảnh báo quá hạn" card** (3 rows T1/T2/T3, click → drilldown). Kept: Card 1 workload, Card 2 forward day-buckets, Card 3 "Chưa đổi lệnh"/"Chưa hoàn thành". Row tint (red) + han_lenh cell (red for T1) + "Trễ" badge driven by the backend `dd_qh_*`/`dd_tre_giao` row flags (computed in `GET /` **only** for `role='dieu_do'`); old `deadlineStyle(han_lenh)` time coloring removed. Desktop + mobile parity (L26). Drilldown labels in `JobListModal` (`dd_qh_dat_kh`/`dd_qh_giao`/`dd_qh_nhap_thu`).
+
+**No schema change** (all fields — `planned_datetime`/`transport_company_id`/`actual_datetime`/`deleted_at` on `truck_bookings`, `job_containers`, `dd_completed_at`, `han_lenh`, `job_tk.completed_at` — already exist). **TP does NOT aggregate DD overdue** — TP's per-DD staff stats (`queryDieuDoStaffStats` → `DD_COLS`: `urgent_no_truck`/`overdue_delivery`/`cham_cost`) are a **separate** signal set and were left untouched; CUS/OPS untouched. When adding a new DD delivery-overdue surface, reuse these leg-anchored fragments — don't re-introduce a container-only or deadline-based signal.
+
 ---
 
 ## 6. Session Start Checklist
