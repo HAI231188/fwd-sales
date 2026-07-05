@@ -17,7 +17,7 @@ import { fmtDate, fmtDateTime as fmtDt } from '../utils/dateFmt';
 // job-level (handled by the prefix-match branch below).
 const BOOKING_LEVEL_FILTERS = [
   'dd_kh_da_dat_chi_tiet',
-  'dd_kh_qua_han', 'dd_kh_today',
+  'dd_kh_today',
   'dd_kh_d1', 'dd_kh_d2', 'dd_kh_d3', 'dd_kh_d4', 'dd_kh_d5',
   'staff_dd_no_plan',
   'staff_dd_has_plan',
@@ -76,14 +76,15 @@ const FILTER_TITLES = {
   dd_ke_hoach_chua_dat:    'Kế hoạch chưa đặt',
   dd_kh_da_dat_chi_tiet:   'Kế hoạch đã chốt',
   // Phase 5 Step 1 add-on — Kế hoạch trả hàng per-day drilldowns.
-  dd_kh_qua_han:           'Kế hoạch quá hạn',
   dd_kh_today:             'Kế hoạch hôm nay',
   dd_kh_d1:                'Kế hoạch ngày mai',
   // dd_kh_d2..d5 titles are resolved at render time via resolveTitle().
-  dd_canh_bao_chua_van_tai: 'Cảnh báo: chưa có vận tải',
   dd_canh_bao_chua_doi_lenh: 'Cảnh báo: chưa đổi lệnh',
   dd_canh_bao_chua_hoan_thanh: 'Cảnh báo: chưa hoàn thành',
-  dd_sap_han: 'Sắp hạn (48h)',
+  // 3-tier DD overdue (2026-07) — content-based, per-container.
+  dd_qh_dat_kh:            'Quá hạn đặt KH xe',
+  dd_qh_giao:              'Quá hạn giao hàng',
+  dd_qh_nhap_thu:          'Quá hạn nhập thu',
   // OPS
   ops_total: 'Tổng job đang quản lý',
   ops_waiting_tq_doilenh: 'Chờ thông quan',

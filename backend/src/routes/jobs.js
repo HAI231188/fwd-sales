@@ -47,6 +47,67 @@ async function validateAssignee(client, userId, allowedRoles, label) {
 
 // ─── Staff stats query helpers ─────────────────────────────────────────────────
 // scope: { userId } → single row for that user; {} → all matching role users.
+// ─── DD delivery overdue tiers (2026-07) ───────────────────────────────────
+// ONE definition shared by the DD /stats cards, the /filtered drilldowns, and
+// the GET / row flags — so counts, lists, and row coloring never diverge (L5/L30).
+// A delivery "leg" = a truck_bookings row. FCL splits a job into per-container
+// legs (linked via truck_booking_containers); LCL is delivered the same way but
+// as a whole-lot leg with NO container link. So T2/T3/late are LEG-anchored
+// (straight off truck_bookings) to cover FCL AND LCL identically; only T1's
+// "unplanned" notion differs by shape (see below). Cancelled legs (tb.deleted_at)
+// drop out everywhere; tk-only / no-truck-side jobs are still excluded by the
+// service_type gate on the callers (DD_TIER_BASE / drilldown / row-flag WHERE).
+// Every fragment assumes the outer query aliases jobs AS `j` (and, for the T1
+// CUS gate, LEFT JOINs job_tk AS `jt`). Comparisons use NOW() (TZ-safe instants).
+const T3_OVERDUE_DAYS = 5; // T3 "Quá hạn nhập thu" grace window after planned delivery.
+// T1 "unplanned" — shape-aware (NOT an LCL exclusion; LCL is included):
+//   • FCL: ≥1 container (delivery leg) with NO active booking link (partial
+//          planning still flags — 4 conts, 2 booked → the 2 unbooked qualify).
+//   • LCL: whole-lot, no containers → "unplanned" = the job has ZERO live
+//          delivery-plan legs (no truck_bookings row) at all.
+// The FCL branch is byte-identical to the prior definition, so FCL is unchanged.
+const DD_UNPLANNED_CONT_EXISTS = `(
+  (j.cargo_type = 'lcl' AND NOT EXISTS (
+    SELECT 1 FROM truck_bookings tb WHERE tb.job_id = j.id AND tb.deleted_at IS NULL
+  ))
+  OR (j.cargo_type <> 'lcl' AND EXISTS (
+    SELECT 1 FROM job_containers jc
+    WHERE jc.job_id = j.id
+      AND NOT EXISTS (
+        SELECT 1 FROM truck_booking_containers tbc
+          JOIN truck_bookings tb ON tb.id = tbc.booking_id
+         WHERE tbc.container_id = jc.id AND tb.deleted_at IS NULL
+      )
+  ))
+)`;
+// T1 CUS gate: a 'both' job is only DD's turn once TK is completed (customs
+// cleared). truck-only jobs have no TK → always DD's turn.
+const DD_T1_CUS_GATE = `(j.service_type = 'truck' OR jt.completed_at IS NOT NULL)`;
+// T2: a delivery leg past its planned date with NO carrier chosen. Leg-anchored
+// off truck_bookings → covers FCL (per-container leg) AND LCL (whole-lot leg).
+const DD_T2_CONT_EXISTS = `EXISTS (
+  SELECT 1 FROM truck_bookings tb
+   WHERE tb.job_id = j.id AND tb.deleted_at IS NULL
+     AND tb.planned_datetime < NOW()
+     AND tb.transport_company_id IS NULL
+)`;
+// T3: a delivery leg > T3_OVERDUE_DAYS past its OWN planned date with no actual
+// delivery date entered (per-leg, not MAX-of-job). FCL + LCL alike.
+const DD_T3_CONT_EXISTS = `EXISTS (
+  SELECT 1 FROM truck_bookings tb
+   WHERE tb.job_id = j.id AND tb.deleted_at IS NULL
+     AND NOW() > tb.planned_datetime + INTERVAL '${T3_OVERDUE_DAYS} days'
+     AND tb.actual_datetime IS NULL
+)`;
+// "Trễ" fact marker: a leg delivered AFTER its planned date. Separate from the
+// 3 warning tiers — a trace that a delivery ran late. FCL + LCL alike.
+const DD_LATE_DELIVERED_EXISTS = `EXISTS (
+  SELECT 1 FROM truck_bookings tb
+   WHERE tb.job_id = j.id AND tb.deleted_at IS NULL
+     AND tb.actual_datetime IS NOT NULL
+     AND tb.actual_datetime > tb.planned_datetime
+)`;
+
 function queryCusStaffStats(scope) {
   const where = scope.userId ? `u.id = $1` : `u.role = ANY($1)`;
   const params = scope.userId ? [scope.userId] : [CUS_ROLES];
@@ -302,22 +363,30 @@ router.get('/stats', requireAuth, async (req, res) => {
           AND tb.deleted_at IS NULL`;
       const VN_BOOK_DATE = `(tb.planned_datetime AT TIME ZONE 'Asia/Ho_Chi_Minh')::date`;
       const VN_TODAY     = `(NOW() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date`;
-      const [tongJob, coKhXe, chuaKhXe, datXe, canhBaoVanTai, canhBaoDoiLenh, canhBaoHoanThanh, sapHan, dieuDoStats,
+      // DD overdue tier base — dd_completed_at IS NULL (DD not done) excludes
+      // finished jobs; LEFT JOIN job_tk jt for the T1 CUS gate. service_type gate
+      // excludes tk-only. Leg-anchored fragments track FCL + LCL identically.
+      const DD_TIER_BASE = `FROM jobs j JOIN job_assignments ja ON ja.job_id = j.id LEFT JOIN job_tk jt ON jt.job_id = j.id WHERE ja.dieu_do_id = $1 AND j.deleted_at IS NULL AND j.dd_completed_at IS NULL AND j.service_type IN ('truck','both')`;
+      const [tongJob, coKhXe, chuaKhXe, datXe, canhBaoDoiLenh, canhBaoHoanThanh, dieuDoStats,
              jobChuaHt, keHoachDaDat, keHoachChuaDat,
-             khQuaHan, khHomNay, khD1, khD2, khD3, khD4, khD5] = await Promise.all([
+             qhDatKh, qhGiao, qhNhapThu,
+             khHomNay, khD1, khD2, khD3, khD4, khD5] = await Promise.all([
         db.query(`SELECT COUNT(*) AS v ${BASE}`, [userId]),
         db.query(`SELECT COUNT(*) AS v ${BASE} AND get_truck_booking_status(j.id) NOT IN ('chua_dat_kh','dd_da_xong','hoan_thanh')`, [userId]),
         db.query(`SELECT COUNT(*) AS v ${BASE} AND get_truck_booking_status(j.id) = 'chua_dat_kh'`, [userId]),
         db.query(`SELECT COUNT(*) AS v ${BASE} AND get_truck_booking_status(j.id) NOT IN ('chua_dat_kh','dd_da_xong','hoan_thanh')`, [userId]),
-        db.query(`SELECT COUNT(*) AS v ${BASE} AND get_truck_booking_status(j.id) = 'chua_dat_kh' AND j.han_lenh BETWEEN NOW() AND NOW() + INTERVAL '24 hours'`, [userId]),
         db.query(`SELECT COUNT(*) AS v ${BASE} AND get_truck_booking_status(j.id) NOT IN ('chua_dat_kh','dd_da_xong','hoan_thanh') AND j.destination = 'hai_phong' AND EXISTS (SELECT 1 FROM job_ops_task jot WHERE jot.job_id = j.id AND jot.task_type = 'doi_lenh' AND (jot.completed = FALSE OR jot.cost_entered_at IS NULL))`, [userId]),
         db.query(`SELECT COUNT(*) AS v ${BASE} AND get_truck_booking_status(j.id) = 'du_xe_cho_giao'`, [userId]),
-        db.query(`SELECT COUNT(*) AS v ${BASE} AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '48 hours'`, [userId]),
         queryDieuDoStaffStats({ userId }),
         // Phase 5 Step 1 — new counts driving Card 1.
         db.query(`SELECT COUNT(DISTINCT j.id) AS v ${BASE}`, [userId]),
         db.query(`SELECT COUNT(DISTINCT jc.id) AS v ${CONT_BASE} AND ${BOOKED_EXISTS}`, [userId]),
         db.query(`SELECT COUNT(DISTINCT jc.id) AS v ${CONT_BASE} AND NOT ${BOOKED_EXISTS}`, [userId]),
+        // 3-tier DD overdue (2026-07) — COUNT(DISTINCT j.id): a job appears once
+        // per tier if ANY of its containers qualifies. Drilldowns list those jobs.
+        db.query(`SELECT COUNT(DISTINCT j.id) AS v ${DD_TIER_BASE} AND j.han_lenh < NOW() AND ${DD_T1_CUS_GATE} AND ${DD_UNPLANNED_CONT_EXISTS}`, [userId]),
+        db.query(`SELECT COUNT(DISTINCT j.id) AS v ${DD_TIER_BASE} AND ${DD_T2_CONT_EXISTS}`, [userId]),
+        db.query(`SELECT COUNT(DISTINCT j.id) AS v ${DD_TIER_BASE} AND ${DD_T3_CONT_EXISTS}`, [userId]),
         // Phase 5 Step 1 add-on — Kế hoạch trả hàng (per-day delivery buckets).
         db.query(`SELECT COUNT(DISTINCT jc.id) AS v ${BOOKED_CONT_BASE} AND ${VN_BOOK_DATE} <  ${VN_TODAY}`,        [userId]),
         db.query(`SELECT COUNT(DISTINCT jc.id) AS v ${BOOKED_CONT_BASE} AND ${VN_BOOK_DATE} =  ${VN_TODAY}`,        [userId]),
@@ -334,17 +403,18 @@ router.get('/stats', requireAuth, async (req, res) => {
         tong_chua_kh_xe:          cv(chuaKhXe),
         da_dat_xe_co_kh:          cv(coKhXe),
         da_dat_xe_da_dat:         cv(datXe),
-        canh_bao_chua_van_tai:    cv(canhBaoVanTai),
         canh_bao_chua_doi_lenh:   cv(canhBaoDoiLenh),
         canh_bao_chua_hoan_thanh: cv(canhBaoHoanThanh),
-        sap_han:                  cv(sapHan),
         dieu_do_stats:            dieuDoStats.rows,
+        // 3-tier DD overdue (2026-07) — per-container, content-based.
+        dd_qh_dat_kh:             cv(qhDatKh),    // T1 Quá hạn đặt KH xe
+        dd_qh_giao:               cv(qhGiao),     // T2 Quá hạn giao hàng
+        dd_qh_nhap_thu:           cv(qhNhapThu),  // T3 Quá hạn nhập thu
         // Phase 5 Step 1 — Card 1 redesign (job + container-level breakdown).
         job_chua_hoan_thanh:      cv(jobChuaHt),
         ke_hoach_da_dat:          cv(keHoachDaDat),
         ke_hoach_chua_dat:        cv(keHoachChuaDat),
         // Phase 5 Step 1 add-on — Kế hoạch trả hàng (per-day, Vietnam tz).
-        ke_hoach_qua_han:         cv(khQuaHan),
         ke_hoach_hom_nay:         cv(khHomNay),
         ke_hoach_d1:              cv(khD1),
         ke_hoach_d2:              cv(khD2),
@@ -1022,7 +1092,7 @@ router.get('/filtered', requireAuth, async (req, res) => {
   // row click still opens JobDetailModal for the parent job.
   const BOOKING_LEVEL_TYPES = [
     'dd_kh_da_dat_chi_tiet',
-    'dd_kh_qua_han', 'dd_kh_today',
+    'dd_kh_today',
     'dd_kh_d1', 'dd_kh_d2', 'dd_kh_d3', 'dd_kh_d4', 'dd_kh_d5',
   ];
   if (BOOKING_LEVEL_TYPES.includes(type)) {
@@ -1040,7 +1110,6 @@ router.get('/filtered', requireAuth, async (req, res) => {
     const VN_TODAY     = `(NOW() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date`;
     let dateWhere = '';
     switch (type) {
-      case 'dd_kh_qua_han':  dateWhere = `AND ${VN_BOOK_DATE} <  ${VN_TODAY}`; break;
       case 'dd_kh_today':    dateWhere = `AND ${VN_BOOK_DATE} =  ${VN_TODAY}`; break;
       case 'dd_kh_d1':       dateWhere = `AND ${VN_BOOK_DATE} = (${VN_TODAY} + 1)`; break;
       case 'dd_kh_d2':       dateWhere = `AND ${VN_BOOK_DATE} = (${VN_TODAY} + 2)`; break;
@@ -1141,10 +1210,14 @@ router.get('/filtered', requireAuth, async (req, res) => {
            )
       )`;
       break;
-    case 'dd_canh_bao_chua_van_tai':   extraWhere = `AND get_truck_booking_status(j.id) = 'chua_dat_kh' AND j.han_lenh BETWEEN NOW() AND NOW() + INTERVAL '24 hours'`; break;
     case 'dd_canh_bao_chua_doi_lenh':  extraWhere = `AND get_truck_booking_status(j.id) NOT IN ('chua_dat_kh','dd_da_xong','hoan_thanh') AND j.destination = 'hai_phong' AND EXISTS (SELECT 1 FROM job_ops_task jot WHERE jot.job_id = j.id AND jot.task_type = 'doi_lenh' AND (jot.completed = FALSE OR jot.cost_entered_at IS NULL))`; break;
     case 'dd_canh_bao_chua_hoan_thanh':extraWhere = `AND get_truck_booking_status(j.id) = 'du_xe_cho_giao'`; break;
-    case 'dd_sap_han':       extraWhere = `AND j.deadline BETWEEN NOW() AND NOW() + INTERVAL '48 hours'`; break;
+    // 3-tier DD overdue (2026-07) — must match the /stats card WHERE exactly (L5).
+    // dd_completed_at IS NULL + service_type gate mirror DD_TIER_BASE; role=dieu_do
+    // baseWhere already adds ja.dieu_do_id. Leg-anchored fragments (module level, FCL+LCL).
+    case 'dd_qh_dat_kh':     extraWhere = `AND j.dd_completed_at IS NULL AND j.service_type IN ('truck','both') AND j.han_lenh < NOW() AND ${DD_T1_CUS_GATE} AND ${DD_UNPLANNED_CONT_EXISTS}`; break;
+    case 'dd_qh_giao':       extraWhere = `AND j.dd_completed_at IS NULL AND j.service_type IN ('truck','both') AND ${DD_T2_CONT_EXISTS}`; break;
+    case 'dd_qh_nhap_thu':   extraWhere = `AND j.dd_completed_at IS NULL AND j.service_type IN ('truck','both') AND ${DD_T3_CONT_EXISTS}`; break;
     // OPS filters — must match the corresponding stat-card WHERE clauses exactly (CLAUDE.md L5)
     case 'ops_waiting_tq_doilenh':
       // P2: match the flipped header count — I must OWN the pending thong_quan task.
@@ -1296,6 +1369,16 @@ router.get('/', requireAuth, async (req, res) => {
 
   const WHERE = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
 
+  // DD row flags (2026-07) — computed ONLY for the DieuDo dashboard so the main
+  // grid can tint rows + show the "Trễ" badge by the same tier definition as the
+  // cards/drilldowns (module-level leg-anchored fragments; FCL+LCL). Other roles
+  // get no extra columns (zero payload/perf impact).
+  const ddFlags = role === 'dieu_do' ? `,
+    (j.dd_completed_at IS NULL AND j.service_type IN ('truck','both') AND j.han_lenh < NOW() AND ${DD_T1_CUS_GATE} AND ${DD_UNPLANNED_CONT_EXISTS}) AS dd_qh_dat_kh,
+    (j.dd_completed_at IS NULL AND j.service_type IN ('truck','both') AND ${DD_T2_CONT_EXISTS}) AS dd_qh_giao,
+    (j.dd_completed_at IS NULL AND j.service_type IN ('truck','both') AND ${DD_T3_CONT_EXISTS}) AS dd_qh_nhap_thu,
+    ${DD_LATE_DELIVERED_EXISTS} AS dd_tre_giao` : '';
+
   try {
     const { rows } = await db.query(`
       SELECT j.*,
@@ -1388,6 +1471,7 @@ router.get('/', requireAuth, async (req, res) => {
         tb_first.cost                AS first_booking_cost,
         tb_first.notes               AS first_booking_notes,
         tb_first.transport_company_id AS first_booking_transport_company_id
+        ${ddFlags}
       FROM jobs j
       LEFT JOIN LATERAL (
         SELECT * FROM job_assignments WHERE job_id = j.id ORDER BY id DESC LIMIT 1

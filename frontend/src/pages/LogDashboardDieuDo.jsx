@@ -64,12 +64,23 @@ function fmtCargo(j) {
   if (j.cont_number) return `${j.cont_number}${j.cont_type ? ' / ' + j.cont_type : ''}`;
   return '—';
 }
-function deadlineStyle(dl) {
-  if (!dl) return {};
-  const ms = new Date(dl) - Date.now();
-  if (ms < 0) return { color: 'var(--danger)', fontWeight: 600 };
-  if (ms < 24 * 3600 * 1000) return { color: 'var(--warning)', fontWeight: 600 };
-  return {};
+// DD overdue coloring (2026-07) — driven by the backend per-leg tier flags
+// (dd_qh_dat_kh / dd_qh_giao / dd_qh_nhap_thu on the GET / row; FCL + LCL), NOT by
+// a deadline/han_lenh time threshold. Red row tint when the job is in ANY tier;
+// the han_lenh cell reddens specifically for T1 (the han_lenh-based tier). The
+// old time-based deadlineStyle(han_lenh) coloring was removed (replaced here).
+function ddInOverdueTier(j) {
+  return !!(j.dd_qh_dat_kh || j.dd_qh_giao || j.dd_qh_nhap_thu);
+}
+function ddRowTint(j) {
+  return ddInOverdueTier(j) ? 'rgba(239,68,68,0.06)' : '';
+}
+function ddHanLenhStyle(j) {
+  return j.dd_qh_dat_kh ? { color: 'var(--danger)', fontWeight: 600 } : {};
+}
+function DdLateBadge({ j }) {
+  if (!j.dd_tre_giao) return null;
+  return <span title="Có container giao sau ngày kế hoạch" style={{ marginLeft: 6, background: '#b91c1c', color: '#fff', borderRadius: 6, padding: '1px 6px', fontSize: 10, fontWeight: 700, whiteSpace: 'nowrap' }}>Trễ</span>;
 }
 
 // Phase 5 Step 1 add-on: per-day delivery bucket label for the
@@ -347,7 +358,6 @@ export default function LogDashboardDieuDo() {
             <div style={{ fontSize: 11, color: 'var(--text-2)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 10 }}>Kế hoạch trả hàng</div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {[
-                { label: 'Quá hạn',                                  value: stats?.ke_hoach_qua_han, color: 'var(--danger)',  filter: 'dd_kh_qua_han' },
                 { label: `Hôm nay (${formatDayLabel(0)})`,           value: stats?.ke_hoach_hom_nay, color: 'var(--info)',    filter: 'dd_kh_today' },
                 { label: `Ngày mai (${formatDayLabel(1)})`,          value: stats?.ke_hoach_d1,      color: 'var(--text)',    filter: 'dd_kh_d1' },
                 { label: formatDayLabel(2),                          value: stats?.ke_hoach_d2,      color: 'var(--text)',    filter: 'dd_kh_d2' },
@@ -369,7 +379,6 @@ export default function LogDashboardDieuDo() {
             <div style={{ fontSize: 11, color: 'var(--text-2)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 10 }}>Cảnh báo</div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {[
-                { label: 'Chưa vận tải (24h)', value: stats?.canh_bao_chua_van_tai, color: 'var(--warning)', filter: 'dd_canh_bao_chua_van_tai' },
                 { label: 'Chưa đổi lệnh', value: stats?.canh_bao_chua_doi_lenh, color: 'var(--purple)', filter: 'dd_canh_bao_chua_doi_lenh' },
                 { label: 'Chưa hoàn thành', value: stats?.canh_bao_chua_hoan_thanh, color: 'var(--danger)', filter: 'dd_canh_bao_chua_hoan_thanh' },
               ].map(r => (
@@ -382,8 +391,23 @@ export default function LogDashboardDieuDo() {
             </div>
           </div>
 
-          {/* Card 4: Sắp hạn */}
-          <StatCard label="Sắp hạn (48h)" value={stats?.sap_han} color="var(--danger)" onClick={() => setJobListFilter('dd_sap_han')} />
+          {/* Card 4 (2026-07): Cảnh báo quá hạn — per-container, content-based 3 tiers. */}
+          <div className="card" style={{ padding: '14px 16px' }}>
+            <div style={{ fontSize: 11, color: 'var(--text-2)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 10 }}>Cảnh báo quá hạn</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {[
+                { label: 'Quá hạn đặt KH xe',  value: stats?.dd_qh_dat_kh,   color: 'var(--danger)', filter: 'dd_qh_dat_kh' },
+                { label: 'Quá hạn giao hàng',  value: stats?.dd_qh_giao,     color: 'var(--danger)', filter: 'dd_qh_giao' },
+                { label: 'Quá hạn nhập thu',   value: stats?.dd_qh_nhap_thu, color: '#b91c1c',       filter: 'dd_qh_nhap_thu' },
+              ].map(r => (
+                <div key={r.label} onClick={() => setJobListFilter(r.filter)}
+                  style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '5px 8px', borderRadius: 8, background: `${r.color}12`, border: `1px solid ${r.color}30`, cursor: 'pointer' }}>
+                  <span style={{ fontSize: 11, color: r.color, fontWeight: 600 }}>{r.label}</span>
+                  <span style={{ fontSize: 20, fontWeight: 700, color: r.color, fontFamily: 'var(--font-display)' }}>{r.value ?? '—'}</span>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
 
         {/* Staff section — 1 row for current user */}
@@ -444,7 +468,7 @@ export default function LogDashboardDieuDo() {
                   const isReturned = j.returned_to === 'log';
                   return (
                     <div key={j.id} className="data-card" onClick={() => setDetailJobId(j.id)}
-                      style={isReturned ? { borderLeft: '4px solid #ea580c' } : undefined}>
+                      style={isReturned ? { borderLeft: '4px solid #ea580c' } : (ddInOverdueTier(j) ? { borderLeft: '4px solid var(--danger)', background: ddRowTint(j) } : undefined)}>
                       {isReturned && (
                         <div style={{
                           background: 'rgba(249,115,22,0.10)',
@@ -489,7 +513,8 @@ export default function LogDashboardDieuDo() {
 
                       <div style={{ fontSize: 12, marginBottom: 10 }}>
                         <span style={{ color: 'var(--text-2)' }}>Hạn lệnh / Cutoff:</span>{' '}
-                        <span style={deadlineStyle(j.han_lenh)}>{hl}</span>
+                        <span style={ddHanLenhStyle(j)}>{hl}</span>
+                        <DdLateBadge j={j} />
                       </div>
 
                       {/* Status pill + inline metrics. 2026-05-24: ddPillInfo splits
@@ -585,9 +610,10 @@ export default function LogDashboardDieuDo() {
                   };
                   const dash = <span style={{ color: 'var(--text-3)', fontSize: 12 }}>—</span>;
                   // KT5 — orange row tint when KT bounced job back to LOG.
+                  // Overdue tier tint (red) applies when KT hasn't bounced it.
                   const ktReturnedBg = j.returned_to === 'log' ? 'rgba(249,115,22,0.10)' : '';
                   return (
-                    <tr key={j.id} style={{ borderBottom: '1px solid var(--border)', cursor: 'pointer', background: ktReturnedBg }}
+                    <tr key={j.id} style={{ borderBottom: '1px solid var(--border)', cursor: 'pointer', background: ktReturnedBg || ddRowTint(j) }}
                       onDoubleClick={() => setDetailJobId(j.id)}>
                       <td style={{ ...cs, whiteSpace: 'nowrap', fontSize: 12 }}>{fmtDate(j.created_at)}</td>
                       <td style={{ ...cs, whiteSpace: 'nowrap', fontWeight: 600, color: 'var(--info)' }}>
@@ -611,12 +637,13 @@ export default function LogDashboardDieuDo() {
                       <td style={{ ...cs, whiteSpace: 'nowrap', color: 'var(--text-2)', fontSize: 12 }}>
                         {fmtDate(j.etd)}<br />{fmtDate(j.eta)}
                       </td>
-                      <td style={{ ...cs, whiteSpace: 'nowrap', ...deadlineStyle(j.han_lenh) }}>
+                      <td style={{ ...cs, whiteSpace: 'nowrap', ...ddHanLenhStyle(j) }}>
                         {j.han_lenh
                           ? (imp
                               ? fmtDate(j.han_lenh)
                               : new Date(j.han_lenh).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }))
                           : '—'}
+                        <DdLateBadge j={j} />
                       </td>
                       <td style={cs}>
                         {(() => {
