@@ -128,9 +128,14 @@ CREATE TABLE IF NOT EXISTS pipeline_history (
 -- Link customers back to their pipeline entry
 ALTER TABLE customers ADD COLUMN IF NOT EXISTS pipeline_id INTEGER REFERENCES customer_pipeline(id) ON DELETE SET NULL;
 
--- One pipeline entry per salesperson per company (case-insensitive)
-CREATE UNIQUE INDEX IF NOT EXISTS idx_pipeline_sales_company
-  ON customer_pipeline(sales_id, LOWER(company_name));
+-- One pipeline entry per salesperson per company (case-insensitive).
+-- NOTE: the unique constraint is enforced by the PARTIAL index
+-- `idx_pipeline_sales_company_active` (WHERE deleted_at IS NULL) created further
+-- below, after the `deleted_at` column is added (L17/L28). A non-partial unique
+-- index here is INVALID and must NOT be re-added: once a pipeline row is
+-- soft-deleted and the same (sales_id, LOWER(company_name)) is re-created, a
+-- non-partial index sees a duplicate and `CREATE UNIQUE INDEX` fails, crashing
+-- migrate.js (process.exit(1)) and the whole container boot.
 
 CREATE INDEX IF NOT EXISTS idx_pipeline_sales_id ON customer_pipeline(sales_id);
 CREATE INDEX IF NOT EXISTS idx_pipeline_stage ON customer_pipeline(stage);
