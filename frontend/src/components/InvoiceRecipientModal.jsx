@@ -23,7 +23,7 @@ const SLB = {
   type: 'slb',
   company: 'SLB GLOBAL LOGISTICS COMPANY LIMITED',
   tax: '0201743661',
-  address: '8th Floor, Diamond Building, No 7 Lot 8A Le Hong Phong, Ngo Quyen, Hai Phong, Viet Nam',
+  address: 'No 18/100 Tasa Residential Area, Dong Hai Ward, Hai Phong City, Viet Nam',
 };
 
 // Manual-attachment limits — mirror the backend caps in routes/email.js

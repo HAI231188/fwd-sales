@@ -88,7 +88,7 @@ function buildBbbgPdf(data) {
   doc.font('R').fontSize(8).fillColor('#000');
   // CP4.2.3 — placeholder address/phone replaced with real SLB info. Website
   // line kept as-is (not a placeholder).
-  doc.text('Address: 8th Floor, Diamond Building, No 7 Lot 8A Le Hong Phong, Ngo Quyen, Hai Phong, Viet Nam',
+  doc.text('Address: No 18/100 Tasa Residential Area, Dong Hai Ward, Hai Phong City, Viet Nam',
     companyX, doc.y + 1);
   doc.text('Tel: +84 931 334 331   |   Email: info@slbglobal.com', companyX, doc.y + 1);
   doc.text('Website: www.slbglobal.com   |   Email: info@slbglobal.com', companyX, doc.y + 1);
@@ -374,7 +374,7 @@ function drawPageHeader(doc, bookingCode, todayDate) {
   // stops short of the right-aligned meta block ("Mã KH:" / "Ngày:") to avoid
   // horizontal collision. lineBreak:false keeps it on one line.
   doc.fontSize(7).text(
-    '8th Floor, Diamond Building, No 7 Lot 8A Le Hong Phong, Ngo Quyen, Hai Phong, Viet Nam',
+    'No 18/100 Tasa Residential Area, Dong Hai Ward, Hai Phong City, Viet Nam',
     txtX, doc.y + 1,
     { width: usableW - 96 - 120, lineBreak: false }
   );

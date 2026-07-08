@@ -34,7 +34,7 @@ const enc = require('../utils/encryption');
 const SLB_INVOICE_INFO = Object.freeze({
   company: 'CÔNG TY TNHH TIẾP VẬN TOÀN CẦU SLB',
   tax: '0201743661',
-  address: 'Tầng 8 Tòa nhà Diamond, Số 7 Lô 8A Đường Lê Hồng Phong, Phường Gia Viên, Thành phố Hải Phòng, Việt Nam',
+  address: 'Số 18/100 Khu dân cư Tasa, Phường Đông Hải, Thành phố Hải Phòng, Việt Nam',
 });
 
 // CP4.2.2 — English variant for the BBBG PDF (which goes to the customer for
@@ -45,7 +45,7 @@ const SLB_INVOICE_INFO = Object.freeze({
 const SLB_INVOICE_INFO_EN = Object.freeze({
   company: 'SLB GLOBAL LOGISTICS COMPANY LIMITED',
   tax: '0201743661',
-  address: '8th Floor, Diamond Building, No 7 Lot 8A Le Hong Phong, Ngo Quyen, Hai Phong, Viet Nam',
+  address: 'No 18/100 Tasa Residential Area, Dong Hai Ward, Hai Phong City, Viet Nam',
 });
 
 // Vietnam-time datetime rendering (L3) — single source of truth in

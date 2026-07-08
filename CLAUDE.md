@@ -1233,6 +1233,24 @@ The Điều Độ dashboard's **3 old mixed overdue signals** — "Sắp hạn (
 
 ---
 
+### Note — SLB company identity on outgoing documents (2026-07-08)
+
+SLB's own legal info as printed on outgoing documents. **Name + MST are stable; only the address changed** (moved from the old Diamond Building / Lê Hồng Phong address to the Tasa / Đông Hải address):
+- **Tên công ty:** `CÔNG TY TNHH TIẾP VẬN TOÀN CẦU SLB` (VN) / `SLB GLOBAL LOGISTICS COMPANY LIMITED` · `SLB GLOBAL LOGISTICS CO., LTD.` (EN letterhead).
+- **MST:** `0201743661`.
+- **Địa chỉ (VN):** `Số 18/100 Khu dân cư Tasa, Phường Đông Hải, Thành phố Hải Phòng, Việt Nam`.
+- **Địa chỉ (EN):** `No 18/100 Tasa Residential Area, Dong Hai Ward, Hai Phong City, Viet Nam`.
+- **Unchanged:** Tel `+84 931 334 331`, Email `info@slbglobal.com`, Website `www.slbglobal.com`.
+
+**Where it lives (address is NOT single-sourced — 6 edit points):**
+- **Canonical constants** — `backend/src/services/email-sender.js`: `SLB_INVOICE_INFO` (VN, address line ~37) + `SLB_INVOICE_INFO_EN` (EN, line ~48). These feed the **email invoice block/footer/signature** (`type==='slb'` body render), the **cancel-mail** invoice defaults, the BBBG invoice-info override (`bbbg-pdf.js` imports `SLB_INVOICE_INFO_EN`), and the `GET /api/email/slb-invoice-info` API. One edit each covers all those.
+- **Letterhead literals (duplicated, NOT from the constant)** — `bbbg-pdf.js` single-BBBG header (~:91) + multi-booking header (~:377); `sea-quote-pdf.js` quotation header (~:127). Each hardcodes the EN address string inline.
+- **Frontend hardcode** — `frontend/src/components/InvoiceRecipientModal.jsx` local `SLB` const (~:26), duplicate of `SLB_INVOICE_INFO_EN`, shipped on the wire (backend re-overrides `type==='slb'` for the mail body). Not fetched from `/slb-invoice-info` despite the API existing.
+
+**Rule:** if SLB's address/name/MST ever changes again, edit **all 6** (2 constants + 3 letterhead literals + 1 frontend const) — grep `Tasa Residential Area` / `Khu dân cư Tasa` to enumerate. Brand-only surfaces (Login/Navbar/index.html/manifest — name "SLB Global Logistics", no legal info) are intentionally NOT part of this and were left untouched. `routes/accounting.js` (KT công nợ) generates no document and carries no company info.
+
+---
+
 ## 6. Session Start Checklist
 
 1. Read this file.
