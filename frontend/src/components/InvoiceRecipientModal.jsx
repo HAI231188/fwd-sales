@@ -14,16 +14,19 @@ import { useModalZIndex } from '../hooks/useModalZIndex';
 // {type, company, tax, address} object matching the backend's
 // INVOICE_TYPES whitelist and ships it via POST /api/email/send-planning.
 
-// CP4.2.2 — English variant. The BBBG PDF is signed by the customer and is
-// an international document; the mail body needs Vietnamese. Frontend ships
-// these EN strings on the wire — backend overrides to VN when rendering the
-// mail body (`type==='slb'` switch in email-sender.js renderBody). The PDF
-// renderer overrides to EN too (defense in depth — values match either way).
+// CP4.2.2 (rev 2026-07 — picker now Vietnamese): show SLB's OFFICIAL Vietnamese
+// legal info on the SLB option, to match the Vietnamese customer + the mail the
+// carrier actually receives. These strings are DISPLAY-ONLY for this picker; the
+// backend forces the per-document language regardless of what is POSTed for
+// `type==='slb'`:
+//   - carrier mail body → Vietnamese via SLB_INVOICE_INFO (email-sender.js renderBody)
+//   - BBBG PDF          → English via SLB_INVOICE_INFO_EN (bbbg-pdf.js buildPageCtx)
+// So these Vietnamese values change ONLY this picker, not the issued documents.
 const SLB = {
   type: 'slb',
-  company: 'SLB GLOBAL LOGISTICS COMPANY LIMITED',
+  company: 'CÔNG TY TNHH TIẾP VẬN TOÀN CẦU SLB',
   tax: '0201743661',
-  address: 'No 18/100 Tasa Residential Area, Dong Hai Ward, Hai Phong City, Viet Nam',
+  address: 'Số 18/100 Khu dân cư Tasa, Phường Đông Hải, Thành phố Hải Phòng, Việt Nam',
 };
 
 // Manual-attachment limits — mirror the backend caps in routes/email.js
