@@ -17,6 +17,20 @@ Treat "it should work" as insufficient: **show that it does.**
 
 ---
 
+## ⚠️ Rule 0.6 — Trace-before-edit (no collateral breakage)
+
+**Top-priority quality rule. Before editing ANY function, variable, API endpoint, DB column, shared constant, or component prop, you MUST first trace everything that depends on it — never edit blind.**
+
+1. **Trace before you touch it.** Use the CodeGraph MCP tools (`codegraph_callers` / `codegraph_impact` / `codegraph_context`) to find every caller and dependent, PLUS a grep for the symbol name, BEFORE changing it. List every dependent site you found.
+2. **Verify each dependent against your change.** For every site, confirm it still works — signature, return shape, field name, behavior.
+3. **Applies to ALL edits** — not just signal-meaning / sibling-state changes (L5 stat=drilldown parity, L29 sibling-invariant transactions). The goal is that fixing one place never silently breaks another.
+4. **Report the blast radius FIRST when it ripples.** If a change would reach many callers, present the full list of affected sites and the plan to handle each BEFORE editing — don't discover breakage after.
+5. **After editing, prove it.** Build (`node --check` / `npm run build`) and confirm every traced dependent still compiles and behaves.
+
+Reason: the single biggest source of wasted time here is a fix in one file surfacing a bug in another because the dependency map wasn't checked first — CodeGraph exists precisely to prevent this; **use it every time.**
+
+---
+
 ## Tech stack
 
 React 18 + Vite. ES modules throughout. No TypeScript, no CSS modules, no Tailwind.
