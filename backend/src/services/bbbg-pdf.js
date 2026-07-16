@@ -15,10 +15,11 @@ const PDFDocument = require('pdfkit');
 const path = require('path');
 const fs = require('fs');
 const db = require('../db');
-// CP4.2.2 — English variant used when the caller picks "SLB Logistics" in
-// InvoiceRecipientModal. The BBBG goes to the customer for signature and is
-// an international document; the mail body keeps the Vietnamese variant.
-const { SLB_INVOICE_INFO_EN } = require('./email-sender');
+// The BBBG is a Vietnamese-facing driver-handover document, so the SLB invoice
+// block + letterheads render the Vietnamese SLB_INVOICE_INFO (the carrier mail
+// body already uses it too). The English SLB_INVOICE_INFO_EN is no longer read
+// here — it stays exported from email-sender.js for any future international doc.
+const { SLB_INVOICE_INFO } = require('./email-sender');
 
 const FONT_REGULAR = path.join(__dirname, '..', 'assets', 'fonts', 'Roboto-Regular.ttf');
 const FONT_BOLD    = path.join(__dirname, '..', 'assets', 'fonts', 'Roboto-Bold.ttf');
@@ -84,11 +85,11 @@ function buildBbbgPdf(data) {
     try { doc.image(logoPath, left, headerY, { width: 90 }); } catch { /* skip */ }
   }
   const companyX = left + (hasLogo ? 110 : 0);
-  doc.font('RB').fontSize(11).fillColor('#0066b3').text('SLB GLOBAL LOGISTICS CO., LTD.', companyX, headerY);
+  doc.font('RB').fontSize(11).fillColor('#0066b3').text('CÔNG TY TNHH TIẾP VẬN TOÀN CẦU SLB', companyX, headerY);
   doc.font('R').fontSize(8).fillColor('#000');
   // CP4.2.3 — placeholder address/phone replaced with real SLB info. Website
   // line kept as-is (not a placeholder).
-  doc.text('Address: No 18/100 Tasa Residential Area, Dong Hai Ward, Hai Phong City, Viet Nam',
+  doc.text('Địa chỉ: Số 18/100 Khu dân cư Tasa, Phường Đông Hải, Thành phố Hải Phòng, Việt Nam',
     companyX, doc.y + 1);
   doc.text('Tel: +84 931 334 331   |   Email: info@slbglobal.com', companyX, doc.y + 1);
   doc.text('Website: www.slbglobal.com   |   Email: info@slbglobal.com', companyX, doc.y + 1);
@@ -368,13 +369,13 @@ function drawPageHeader(doc, bookingCode, todayDate) {
   }
   const txtX = left + (logoPath ? 96 : 0);
   doc.font('RB').fontSize(11).fillColor('#0066b3')
-     .text('SLB GLOBAL LOGISTICS CO., LTD.', txtX, headerY);
+     .text('CÔNG TY TNHH TIẾP VẬN TOÀN CẦU SLB', txtX, headerY);
   doc.font('R').fontSize(8).fillColor('#000');
   // CP4.2.3 — real address is long; render at 7pt with an explicit width that
   // stops short of the right-aligned meta block ("Mã KH:" / "Ngày:") to avoid
   // horizontal collision. lineBreak:false keeps it on one line.
   doc.fontSize(7).text(
-    'No 18/100 Tasa Residential Area, Dong Hai Ward, Hai Phong City, Viet Nam',
+    'Số 18/100 Khu dân cư Tasa, Phường Đông Hải, Thành phố Hải Phòng, Việt Nam',
     txtX, doc.y + 1,
     { width: usableW - 96 - 120, lineBreak: false }
   );
@@ -544,7 +545,7 @@ function renderBookingPage(doc, {
 // Per-job context (invoice + cargo totals) — same for every page of a job.
 function buildPageCtx({ job, invoiceInfo }) {
   const invSource = invoiceInfo?.type === 'slb'
-    ? { ...invoiceInfo, ...SLB_INVOICE_INFO_EN }
+    ? { ...invoiceInfo, ...SLB_INVOICE_INFO }
     : invoiceInfo;
   const inv = invSource && invSource.company && invSource.tax && invSource.address
     ? invSource : null;

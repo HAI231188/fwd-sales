@@ -122,9 +122,9 @@ function drawHeader(doc, left, right, opts) {
   const companyX = left + (logoPath ? 90 : 0);
   const companyW = right - companyX;
   doc.font('RB').fontSize(11).fillColor(COLOR.brandDark)
-    .text('SLB GLOBAL LOGISTICS CO., LTD.', companyX, top, { width: companyW });
+    .text('CÔNG TY TNHH TIẾP VẬN TOÀN CẦU SLB', companyX, top, { width: companyW });
   doc.font('R').fontSize(FS.label).fillColor(COLOR.textMuted);
-  doc.text('No 18/100 Tasa Residential Area, Dong Hai Ward, Hai Phong City, Viet Nam',
+  doc.text('Số 18/100 Khu dân cư Tasa, Phường Đông Hải, Thành phố Hải Phòng, Việt Nam',
     companyX, doc.y + 1, { width: companyW });
   doc.text('Tel  +84 931 334 331    Email  info@slbglobal.com    Web  www.slbglobal.com',
     companyX, doc.y + 1, { width: companyW });
@@ -609,7 +609,7 @@ function drawClosing(doc, left, right) {
   doc.font('R').fontSize(FS.body).fillColor(COLOR.text)
     .text('Best regards,', left, doc.y, { width: usable });
   doc.font('RB').fontSize(FS.body + 0.5).fillColor(COLOR.brandDark)
-    .text('SLB GLOBAL LOGISTICS CO., LTD.', left, doc.y, { width: usable });
+    .text('CÔNG TY TNHH TIẾP VẬN TOÀN CẦU SLB', left, doc.y, { width: usable });
   resetPaint(doc);
 }
 
@@ -623,7 +623,7 @@ function drawPageFooter(doc) {
   const right = doc.page.width - doc.page.margins.right;
   const bottom = doc.page.height - 24;
   doc.font('R').fontSize(FS.footer).fillColor(COLOR.textFaint)
-    .text('SLB GLOBAL LOGISTICS CO., LTD.   |   www.slbglobal.com',
+    .text('CÔNG TY TNHH TIẾP VẬN TOÀN CẦU SLB   |   www.slbglobal.com',
       left, bottom, { width: right - left, align: 'left', lineBreak: false });
   doc.font('R').fontSize(FS.footer).fillColor(COLOR.textFaint)
     .text(`Page 1`, left, bottom, { width: right - left, align: 'right', lineBreak: false });
