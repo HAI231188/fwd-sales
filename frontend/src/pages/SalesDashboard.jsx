@@ -76,7 +76,7 @@ const PENDING_COLS = [
   { key: 'tk_flow',       label: 'Luồng TK',   filterType: 'select', options: [
     { value: 'xanh', label: 'Xanh' }, { value: 'vang', label: 'Vàng' }, { value: 'do', label: 'Đỏ' },
   ]},
-  { key: 'delivery_dt',   label: 'Ngày giao' },
+  { key: 'delivery_dt',   label: 'Ngày KH giao' },
   { key: 'cargo',         label: 'Cont-Loại' },
   { key: 'notes',         label: 'Ghi chú' },
 ];
@@ -325,8 +325,12 @@ export default function SalesDashboard() {
         </td>;
       }
       case 'delivery_dt':
+        // "Ngày KH giao" = earliest PLANNED delivery date (MIN planned_datetime
+        // over non-cancelled legs), exposed by the GET /api/jobs tb_first LATERAL
+        // as first_booking_planned. NOT the actual/TK delivery date (delivered_at
+        // stays used by DD overdue T3 etc. — unchanged). fmtDate → "—" when NULL.
         return <td key={key} style={{ ...tdStyle, fontSize: 12, whiteSpace: 'nowrap', color: 'var(--text-2)' }}>
-          {fmtDate(j.delivery_datetime)}
+          {fmtDate(j.first_booking_planned)}
         </td>;
       case 'cargo':
         return <td key={key} style={{ ...tdStyle, fontSize: 12, whiteSpace: 'nowrap' }}>{fmtCargo(j)}</td>;
