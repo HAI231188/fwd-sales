@@ -14,6 +14,7 @@ import JobDetailModal from '../components/JobDetailModal';
 import { getStats, getReports, getJobs, tickJobRevenue, untickJobRevenue } from '../api';
 import { useAuth } from '../App';
 import { fmtDate, fmtDateTime as fmtDt } from '../utils/dateFmt';
+import { DeptStatusCell } from '../utils/jobDeptStatus';
 
 const TYPE_LABEL = { saved: 'Lưu liên hệ', contacted: 'Đã liên hệ', quoted: 'Đã báo giá' };
 const TYPE_CLASS = { saved: 'type-saved', contacted: 'type-contacted', quoted: 'type-quoted' };
@@ -77,6 +78,7 @@ const PENDING_COLS = [
     { value: 'xanh', label: 'Xanh' }, { value: 'vang', label: 'Vàng' }, { value: 'do', label: 'Đỏ' },
   ]},
   { key: 'delivery_dt',   label: 'Ngày KH giao' },
+  { key: 'tp_status',     label: 'Trạng thái' },
   { key: 'cargo',         label: 'Cont-Loại' },
   { key: 'notes',         label: 'Ghi chú' },
 ];
@@ -332,6 +334,10 @@ export default function SalesDashboard() {
         return <td key={key} style={{ ...tdStyle, fontSize: 12, whiteSpace: 'nowrap', color: 'var(--text-2)' }}>
           {fmtDate(j.first_booking_planned)}
         </td>;
+      case 'tp_status':
+        // Per-dept status — SAME shared helper as the TP dashboard
+        // (utils/jobDeptStatus, L30 single source). Display-only on Sales.
+        return <td key={key} style={{ ...tdStyle, minWidth: 160 }}><DeptStatusCell job={j} /></td>;
       case 'cargo':
         return <td key={key} style={{ ...tdStyle, fontSize: 12, whiteSpace: 'nowrap' }}>{fmtCargo(j)}</td>;
       case 'service':
@@ -610,6 +616,10 @@ export default function SalesDashboard() {
                                       padding: '1px 8px', borderRadius: 10, fontSize: 11, fontWeight: 600,
                                     }}>{TK_FLOW_LABEL[j.tk_flow]}</span>
                                   : <span style={{ color: 'var(--text-3)' }}>—</span>}
+                              </div>
+                              <div style={{ fontSize: 12, marginTop: 6 }}>
+                                <span style={{ color: 'var(--text-2)' }}>Trạng thái:</span>{' '}
+                                <DeptStatusCell job={j} />
                               </div>
                             </>
                           }

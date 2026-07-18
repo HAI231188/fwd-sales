@@ -19,110 +19,14 @@ import {
   deleteJob, reviewDeleteRequest, getJobSettings, addDoiLenhTask,
 } from '../api';
 import toast from 'react-hot-toast';
-// 2026-05-25: ddPillInfo shared with DD dashboard — used by tpStatusLines
-// to render the DD-line of TP's 3-dept Trạng thái pill.
-import { ddPillInfo } from '../utils/truckBookingStatus';
+// Per-dept status (Trạng thái pill + Đang làm/Hoàn thành partition) is shared
+// with the Sales "Quản lý công việc" table via utils/jobDeptStatus (L30 single
+// source of truth). TK_TERMINAL is reused below by opsTaskShortStatus.
+import { deptStatusLines, DeptStatusCell, TK_TERMINAL } from '../utils/jobDeptStatus';
 import { fmtDate, fmtDateTime as fmtDt, toDatetimeLocal, vnLocalToIso } from '../utils/dateFmt';
 
-// 2026-05-25 TP dept-level status helper.
-// tpStatusLines: returns an array of pending-dept status strings for this job.
-// Each line = one dept still has work outstanding. Empty array = all done.
-//
-//   CUS (if service_type ∈ tk/both):
-//     !tk_completed_at                    → "CUS: Chưa làm tờ khai"
-//     tk_completed_at && !cost_entered_at → "CUS: Đã làm TK — chưa nhập cost"
-//   DD  (if service_type ∈ truck/both):
-//     dd_completed_at IS NULL             → "DD: {ddPillInfo(j).label}"
-//   OPS (if destination='hai_phong'):
-//     tk/both:
-//       !terminal                                → "OPS: Chưa thông quan"
-//       terminal && !tqCost                      → "OPS: Đã thông quan — chưa nhập cost TQ"
-//       terminal && tqCost && !dlCompleted       → "OPS: Chưa đổi lệnh"
-//       dlCompleted && !dlCost                   → "OPS: Đã đổi lệnh — chưa nhập cost ĐL"
-//     truck:
-//       !dlCompleted                             → "OPS: Chưa đổi lệnh"
-//       dlCompleted && !dlCost                   → "OPS: Đã đổi lệnh — chưa nhập cost ĐL"
-const TP_TK_TERMINAL = ['thong_quan', 'giai_phong', 'bao_quan'];
-function tpStatusLines(j) {
-  const lines = [];
-  const svc = j.service_type;
-  const hasTk = svc === 'tk' || svc === 'both';
-  const hasTruck = svc === 'truck' || svc === 'both';
-  const isHp = j.destination === 'hai_phong';
-
-  // CUS line
-  if (hasTk) {
-    if (!j.tk_completed_at) {
-      lines.push('CUS: Chưa làm tờ khai');
-    } else if (!j.cost_entered_at) {
-      lines.push('CUS: Đã làm TK — chưa nhập cost');
-    }
-  }
-  // DD line
-  if (hasTruck) {
-    if (!j.dd_completed_at) {
-      lines.push(`DD: ${ddPillInfo(j).label}`);
-    }
-  }
-  // ops_hp line — OPS-only job. Gate on its single ops_hp task (done + cost),
-  // independent of destination, so an in-progress ops_hp job keeps emitting a
-  // pending line and stays visible in TP's "Đang làm" tab (was falsely empty →
-  // "Hoàn thành" before Step 2).
-  if (svc === 'ops_hp') {
-    const ohTasks = Array.isArray(j.ops_tasks) ? j.ops_tasks : [];
-    const oh = ohTasks.find(t => t.task_type === 'ops_hp');
-    if (!oh || !oh.completed) lines.push('OPS: chưa hoàn thành');
-    else if (!oh.cost_entered_at) lines.push('OPS: chưa nhập cost');
-  }
-  // OPS line (HP only)
-  if (isHp) {
-    const tasks = Array.isArray(j.ops_tasks) ? j.ops_tasks : [];
-    const tq = tasks.find(t => t.task_type === 'thong_quan');
-    const dl = tasks.find(t => t.task_type === 'doi_lenh');
-    const terminal = TP_TK_TERMINAL.includes(j.tk_status);
-    if (hasTk) {
-      if (!terminal) {
-        lines.push('OPS: Chưa thông quan');
-      } else if (!tq?.cost_entered_at) {
-        lines.push('OPS: Đã thông quan — chưa nhập cost TQ');
-      } else if (dl && !dl.completed) {
-        // P1: only when a doi_lenh task actually exists. tk-only HP jobs no
-        // longer get a doi_lenh task, so after TQ cost is in they fall through
-        // to "Hoàn thành" instead of the phantom "Chưa đổi lệnh".
-        lines.push('OPS: Chưa đổi lệnh');
-      } else if (dl && !dl.cost_entered_at) {
-        lines.push('OPS: Đã đổi lệnh — chưa nhập cost ĐL');
-      }
-    } else if (svc === 'truck') {
-      if (!dl?.completed) {
-        lines.push('OPS: Chưa đổi lệnh');
-      } else if (!dl?.cost_entered_at) {
-        lines.push('OPS: Đã đổi lệnh — chưa nhập cost ĐL');
-      }
-    }
-  }
-  return lines;
-}
-function TpStatusCell({ job }) {
-  const lines = tpStatusLines(job);
-  if (!lines.length) {
-    return (
-      <span style={{ background: 'rgba(34,197,94,0.15)', color: '#16a34a',
-        borderRadius: 6, padding: '2px 8px', fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap' }}>
-        Hoàn thành
-      </span>
-    );
-  }
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-      {lines.map((line, i) => (
-        <span key={i} style={{ color: 'var(--warning)', fontSize: 11, fontWeight: 500, lineHeight: 1.3 }}>
-          {line}
-        </span>
-      ))}
-    </div>
-  );
-}
+// deptStatusLines / DeptStatusCell + TK_TERMINAL moved to utils/jobDeptStatus.jsx
+// (shared with SalesDashboard — L30 single source of truth). Imported above.
 
 // P3 (2026-06-23): per-task OPS cell helpers. j.ops_tasks[] carries ops_id +
 // ops_name + task_type + completed + cost_entered_at (P2 projection).
@@ -133,7 +37,7 @@ function opsTaskOf(j, taskType) {
 function opsTaskShortStatus(task, taskType, j) {
   if (taskType === 'thong_quan') {
     if (task.cost_entered_at) return { label: 'xong', color: '#16a34a' };
-    return TP_TK_TERMINAL.includes(j.tk_status)
+    return TK_TERMINAL.includes(j.tk_status)
       ? { label: 'chưa cost', color: '#b45309' }
       : { label: 'chưa làm', color: '#d97706' };
   }
@@ -698,19 +602,19 @@ export default function LogDashboardTP({ readOnly = false }) {
     enabled: tab === 'completed',
     refetchInterval: pollInterval,
   });
-  // 2026-05-25 TP-split: partition by tpStatusLines (all-depts done predicate),
+  // 2026-05-25 TP-split: partition by deptStatusLines (all-depts done predicate),
   // not by jobs.status. "Đang làm" = at least one dept pending; "Hoàn thành"
   // = all depts done. Race window: a pending job whose CUS+DD+OPS just all
   // ticked but auto-flip hasn't fired surfaces in Hoàn thành too (rare).
   // No service_type filter — TP sees all job types.
-  const tpDoneInPending = pendingJobs.filter(j => tpStatusLines(j).length === 0);
+  const tpDoneInPending = pendingJobs.filter(j => deptStatusLines(j).length === 0);
   const completedAll    = completedJobs || [];
   const completedById   = new Map();
   for (const j of [...tpDoneInPending, ...completedAll]) {
     if (!completedById.has(j.id)) completedById.set(j.id, j);
   }
   const tpCompletedView = Array.from(completedById.values());
-  const tpPendingView   = pendingJobs.filter(j => tpStatusLines(j).length > 0);
+  const tpPendingView   = pendingJobs.filter(j => deptStatusLines(j).length > 0);
   const jobs = tab === 'completed' ? tpCompletedView : tpPendingView;
   const isLoading = tab === 'completed' ? isLoadingCompleted : isLoadingPending;
   const { data: dlData } = useQuery({
@@ -993,7 +897,7 @@ export default function LogDashboardTP({ readOnly = false }) {
                             {/* 2026-05-25: TP Trạng thái block — same content as the desktop tp_status column. */}
                             <div style={{ padding: '8px 10px', background: 'var(--bg)', borderRadius: 8, marginBottom: 8 }}>
                               <div style={{ fontSize: 11, color: 'var(--text-2)', fontWeight: 600, marginBottom: 6 }}>Trạng thái</div>
-                              <TpStatusCell job={j} />
+                              <DeptStatusCell job={j} />
                             </div>
 
                             <div style={{ padding: '8px 10px', background: 'var(--bg)', borderRadius: 8, marginBottom: 8 }}>
@@ -1151,7 +1055,7 @@ export default function LogDashboardTP({ readOnly = false }) {
                         case 'tk_datetime': return <td key={key} style={{ ...cs, fontSize: 12, whiteSpace: 'nowrap', color: 'var(--text-2)' }}>{j.tk_datetime ? fmtDt(j.tk_datetime) : '—'}</td>;
                         case 'tk_status':   return <td key={key} style={cs}>{j.tk_status ? <span style={{ color: TK_STATUS_COLOR[j.tk_status], fontWeight: 500, fontSize: 12 }}>{TK_STATUS_LABEL[j.tk_status]}</span> : <span style={{ color: 'var(--text-3)', fontSize: 12 }}>—</span>}</td>;
                         // 2026-05-25: TP dept-level Trạng thái — stacked CUS/DD/OPS lines or green "Hoàn thành".
-                        case 'tp_status':   return <td key={key} style={{ ...cs, minWidth: 180 }}><TpStatusCell job={j} /></td>;
+                        case 'tp_status':   return <td key={key} style={{ ...cs, minWidth: 180 }}><DeptStatusCell job={j} /></td>;
                         case 'tq_datetime': return <td key={key} style={{ ...cs, fontSize: 12, whiteSpace: 'nowrap', color: 'var(--text-2)' }}>{j.tq_datetime ? fmtDt(j.tq_datetime) : '—'}</td>;
                         case 'delivery':    return <td key={key} style={{ ...cs, fontSize: 12, whiteSpace: 'nowrap', color: 'var(--text-2)' }}>{j.first_booking_planned ? fmtDate(j.first_booking_planned) : '—'}</td>;
                         case 'phan_cong':   return <td key={key} style={cs}>{tab === 'pending' && <button className="btn btn-ghost btn-sm" style={{ fontSize: 11, padding: '3px 8px', whiteSpace: 'nowrap' }} onClick={() => setAssigningJob(j)}>{waitingAssign ? '⚡ Phân công' : '✏️ Sửa'}</button>}</td>;
