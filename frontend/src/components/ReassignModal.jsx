@@ -32,17 +32,21 @@ export default function ReassignModal({ type, taskType, taskLabel, job, onClose 
     .filter(s => s.id !== currentId);
 
   const selectedUser = candidates.find(s => String(s.id) === String(selected));
+  // OPS thong_quan/doi_lenh only: "— Không cần —" DROPS the task (job completes
+  // without it). NOT offered for CUS (this is an OPS-only feature).
+  const canDrop = type === 'ops' && (taskType === 'thong_quan' || taskType === 'doi_lenh');
+  const isDrop = selected === '__drop__';
 
   const mut = useMutation({
     mutationFn: ({ jobId, newId }) =>
       isCus ? reassignCus(jobId, newId) : assignOpsTask(jobId, taskType, newId),
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       qc.invalidateQueries({ queryKey: ['jobs'] });
       qc.invalidateQueries({ queryKey: ['jobStats'] });
       qc.invalidateQueries({ queryKey: ['filteredJobs'] });
       qc.invalidateQueries({ queryKey: ['staffWorkload'] });
       qc.invalidateQueries({ queryKey: ['notifications'] });
-      toast.success(`Đã đổi ${roleLabel} thành công`);
+      toast.success(variables?.newId == null ? `Đã bỏ việc ${taskLabel || roleLabel}` : `Đã đổi ${roleLabel} thành công`);
       onClose();
     },
     onError: (err) => {
@@ -53,9 +57,9 @@ export default function ReassignModal({ type, taskType, taskLabel, job, onClose 
   });
 
   function handleSubmit() {
-    if (!selected) return;
+    if (!selected) return;   // placeholder no-op; '__drop__' (Không cần) is allowed
     if (!confirming) { setConfirming(true); return; }
-    mut.mutate({ jobId: job.id, newId: Number(selected) });
+    mut.mutate({ jobId: job.id, newId: isDrop ? null : Number(selected) });
   }
 
   const jobLabel = job?.job_code || `#${job?.id}`;
@@ -86,6 +90,9 @@ export default function ReassignModal({ type, taskType, taskLabel, job, onClose 
               {candidates.map(s => (
                 <option key={s.id} value={s.id}>{s.name} ({s.role})</option>
               ))}
+              {/* OPS-only (thong_quan/doi_lenh): drop this task so the job
+                  completes without it. Re-assign a person later to bring it back. */}
+              {canDrop && <option value="__drop__">— Không cần (bỏ việc này) —</option>}
             </select>
             {!staffLoading && candidates.length === 0 && (
               <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 6 }}>
@@ -94,6 +101,16 @@ export default function ReassignModal({ type, taskType, taskLabel, job, onClose 
             )}
           </div>
 
+          {confirming && isDrop && (
+            <div style={{
+              background: 'rgba(239,68,68,0.08)',
+              border: '1px solid rgba(239,68,68,0.3)',
+              borderRadius: 8, padding: '10px 12px', marginTop: 12,
+              fontSize: 13, color: 'var(--text)',
+            }}>
+              Bỏ việc <b>{taskLabel}</b>? Job sẽ <b>hoàn thành mà không cần</b> việc này (không tính là chưa làm/quá hạn). Có thể phân lại người sau để làm lại.
+            </div>
+          )}
           {confirming && selectedUser && (
             <div style={{
               background: 'rgba(239,68,68,0.08)',
@@ -122,7 +139,7 @@ export default function ReassignModal({ type, taskType, taskLabel, job, onClose 
             onClick={handleSubmit}
             disabled={!selected || mut.isPending}
           >
-            {mut.isPending ? 'Đang đổi...' : confirming ? 'Xác nhận đổi' : 'Xác nhận'}
+            {mut.isPending ? 'Đang lưu...' : confirming ? (isDrop ? 'Xác nhận bỏ' : 'Xác nhận đổi') : 'Xác nhận'}
           </button>
         </div>
       </div>

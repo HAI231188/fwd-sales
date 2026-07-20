@@ -3336,28 +3336,83 @@ router.patch('/:id/ops-task/:taskType/assign', requireAuth, async (req, res) => 
   if (!OPS_ASSIGNABLE_TASK_TYPES.includes(taskType)) {
     return res.status(400).json({ error: 'Loại task không hợp lệ' });
   }
-  const newOpsId = parseInt(req.body?.ops_id, 10);
-  if (!newOpsId) return res.status(400).json({ error: 'Thiếu ops_id' });
+  // "Không cần" (2026-07-21): an explicit null/'' ops_id DROPS this OPS task so
+  // the completion gate no longer waits on it (checkOpsTasksDone counts existing
+  // rows; the DD truck-complete gate COALESCEs an absent doi_lenh to done). A
+  // MISSING key is still a 400. thong_quan also flips the live skip_ops_thongquan
+  // flag (same state as the create-form checkbox → persists, won't be re-created
+  // by the luồng reconcile). doi_lenh has no flag by design (delete-only). OPS-HP
+  // cannot be dropped (it IS the job). No rotation/auto-refill runs after a drop.
+  const rawOps = req.body?.ops_id;
+  if (rawOps === undefined) return res.status(400).json({ error: 'Thiếu ops_id' });
+  const isDrop = rawOps === null || rawOps === '';
+  const newOpsId = isDrop ? null : parseInt(rawOps, 10);
+  if (!isDrop && !newOpsId) return res.status(400).json({ error: 'ops_id không hợp lệ' });
+  if (isDrop && taskType === 'ops_hp') return res.status(400).json({ error: 'Không thể bỏ việc OPS HP (đây là loại job)' });
   const client = await db.pool.connect();
   try {
     await client.query('BEGIN');
-    const v = await validateAssignee(client, newOpsId, ['ops'], 'OPS');
-    if (!v.ok) { await client.query('ROLLBACK'); return res.status(400).json({ error: v.error }); }
+    if (!isDrop) {
+      const v = await validateAssignee(client, newOpsId, ['ops'], 'OPS');
+      if (!v.ok) { await client.query('ROLLBACK'); return res.status(400).json({ error: v.error }); }
+    }
     const { rows: t } = await client.query(
-      `SELECT id FROM job_ops_task WHERE job_id = $1 AND task_type = $2`, [id, taskType]);
-    if (!t[0]) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Task không tồn tại cho job này' }); }
-    await client.query(
-      `UPDATE job_ops_task SET ops_id = $1, assigned_at = NOW(), assigned_by = $2 WHERE id = $3`,
-      [newOpsId, req.user.id, t[0].id]);
+      `SELECT id, ops_id AS old_ops_id, completed, cost_entered_at
+         FROM job_ops_task WHERE job_id = $1 AND task_type = $2`, [id, taskType]);
+    const { rows: meta } = await client.query(`SELECT job_code, customer_name FROM jobs WHERE id = $1`, [id]);
+    const jc = meta[0]?.job_code || `#${id}`;
+    const taskVi = taskType === 'thong_quan' ? 'thông quan' : 'đổi lệnh';
+
+    if (isDrop) {
+      if (t[0]) {
+        // L35 keep-guard — no cancel column (no schema change), so a task with OPS
+        // work (completed OR cost) is KEPT + the drop rejected, not hard-deleted.
+        if (t[0].completed || t[0].cost_entered_at) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ error: `OPS đã có dữ liệu trên việc ${taskVi} — không thể bỏ (giữ lại để không mất dữ liệu)` });
+        }
+        await client.query(`DELETE FROM job_ops_task WHERE id = $1`, [t[0].id]);
+        await recordHistory(client, id, req.user.id, `${taskType}_reassigned`, null, '(không cần)');
+        if (t[0].old_ops_id) {
+          await client.query(
+            `INSERT INTO notifications (user_id, type, title, message, job_id)
+             VALUES ($1, 'job_reassigned', 'Bỏ việc OPS', $2, $3)`,
+            [t[0].old_ops_id, `Việc ${taskVi} job ${jc} đã được bỏ (không cần)`, id]);
+        }
+      }
+      if (taskType === 'thong_quan') {
+        await client.query(`UPDATE jobs SET skip_ops_thongquan = TRUE WHERE id = $1`, [id]);
+      }
+      await resyncJaOpsPrimary(client, id);
+      await client.query('COMMIT');
+      return res.json({ ok: true, dropped: true });
+    }
+
+    // Assign / reassign to a real OPS person.
+    if (taskType === 'thong_quan') {
+      // Un-skip so the assignment sticks + the task is required again.
+      await client.query(`UPDATE jobs SET skip_ops_thongquan = FALSE WHERE id = $1`, [id]);
+    }
+    if (t[0]) {
+      await client.query(
+        `UPDATE job_ops_task SET ops_id = $1, assigned_at = NOW(), assigned_by = $2 WHERE id = $3`,
+        [newOpsId, req.user.id, t[0].id]);
+    } else {
+      // Reversibility — RE-CREATE a previously-dropped task, owned by the picked person.
+      await client.query(
+        `INSERT INTO job_ops_task (job_id, ops_id, task_type, assigned_at, assigned_by)
+         VALUES ($1, $2, $3, NOW(), $4)
+         ON CONFLICT (job_id, task_type) WHERE task_type IS NOT NULL DO NOTHING`,
+        [id, newOpsId, taskType, req.user.id]);
+    }
     // Keep the cosmetic ja.ops_id primary pointer in sync with the per-task owners.
     await resyncJaOpsPrimary(client, id);
     const { rows: nu } = await client.query(`SELECT name FROM users WHERE id = $1`, [newOpsId]);
     await recordHistory(client, id, req.user.id, `${taskType}_reassigned`, null, nu[0]?.name || String(newOpsId));
-    const { rows: meta } = await client.query(`SELECT job_code, customer_name FROM jobs WHERE id = $1`, [id]);
     await client.query(
       `INSERT INTO notifications (user_id, type, title, message, job_id)
        VALUES ($1, 'manual_job_assigned', 'TP phân việc OPS', $2, $3)`,
-      [newOpsId, `Bạn được phân việc OPS job ${meta[0]?.job_code || `#${id}`} - ${meta[0]?.customer_name || ''}`, id]);
+      [newOpsId, `Bạn được phân việc OPS job ${jc} - ${meta[0]?.customer_name || ''}`, id]);
     await client.query('COMMIT');
     res.json({ ok: true });
   } catch (err) {

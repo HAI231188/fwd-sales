@@ -89,6 +89,24 @@ function OpsTaskCell({ j, taskType, taskLabel, onReassign, onAddDoiLenh, adding,
       </button>
     );
   }
+  // Dropped task (2026-07-21) — a task that normally applies to this job shape but
+  // is absent = it was dropped via "Không cần" (thong_quan also when luồng=xanh /
+  // skip flag). Show a clickable "Không cần" chip so TP can re-assign a person to
+  // bring it back (reversibility). Derived from job shape (no schema): thong_quan
+  // ⇐ HP tk/both; doi_lenh ⇐ HP truck/both FCL (auto-seeded normally ⇒ absent = dropped).
+  const hasTk = j.service_type === 'tk' || j.service_type === 'both';
+  const hasTruck = j.service_type === 'truck' || j.service_type === 'both';
+  const droppedTq = taskType === 'thong_quan' && hasTk;
+  const droppedDl = taskType === 'doi_lenh' && hasTruck && j.cargo_type !== 'lcl';
+  if (droppedTq || droppedDl) {
+    return (
+      <span style={{ cursor: 'pointer', display: 'inline-flex', lineHeight: 1.2 }}
+        title={`Việc ${taskLabel} đã bỏ (không cần) — bấm để phân lại người`}
+        onClick={(e) => { e.stopPropagation(); onReassign({ type: 'ops', taskType, taskLabel, job: j }); }}>
+        <span style={{ fontSize: 11, color: 'var(--text-3)', textDecoration: 'underline dotted', fontWeight: 600 }}>Không cần</span>
+      </span>
+    );
+  }
   return dash;
 }
 

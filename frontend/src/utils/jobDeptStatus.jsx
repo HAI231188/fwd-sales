@@ -80,9 +80,13 @@ export function deptStatusLines(j) {
         lines.push('OPS: Đã đổi lệnh — chưa nhập cost ĐL');
       }
     } else if (svc === 'truck') {
-      if (!dl?.completed) {
+      // Drop-đổi-lệnh (2026-07-21): only emit đổi lệnh lines when a doi_lenh task
+      // EXISTS. A truck-only HP job with đổi lệnh dropped via "Không cần" has no dl
+      // row → no phantom "Chưa đổi lệnh"; it reaches "Hoàn thành" on the truck side
+      // alone (mirrors the tk/both branch's dl-presence guard above).
+      if (dl && !dl.completed) {
         lines.push('OPS: Chưa đổi lệnh');
-      } else if (!dl?.cost_entered_at) {
+      } else if (dl && !dl.cost_entered_at) {
         lines.push('OPS: Đã đổi lệnh — chưa nhập cost ĐL');
       }
     }
