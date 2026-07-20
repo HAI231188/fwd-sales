@@ -606,6 +606,17 @@ SLB's own legal info on outgoing documents. **Name + MST are stable; only the ad
 
 ---
 
+### Note — Hải Phòng OPS "thông quan" task skip (2026-07-20)
+A Hải Phòng **tk/both** job's OPS **thông quan** `job_ops_task` can be skipped two ways. **Đổi lệnh (doi_lenh) is NEVER affected; non-HP jobs untouched.** Single source of truth = **`backend/src/services/ops-thongquan.js`** (`thongQuanWanted` predicate + idempotent `reconcileThongQuanTask`), imported by create + reconcile + the luồng-update endpoint (L30).
+- **Predicate** `thongQuanWanted({destination,service_type,skip_ops_thongquan,tk_flow})` = `destination='hai_phong' && service_type∈{tk,both} && !skip_ops_thongquan && tk_flow!=='xanh'`. Not-yet-set luồng (null) = NOT xanh ⇒ wanted, so a fresh HP tk/both create still gets thong_quan as before. Gates **3 creation sites**: create-seeding (`jobs.js` POST `/` ~L1843), `reconcileJobSides` `tqDesired` (`services/job-reconcile.js`), and the luồng-update reconcile.
+- **PATH A (manual hard skip):** `jobs.skip_ops_thongquan BOOLEAN NOT NULL DEFAULT FALSE` (schema.sql; applied via L3 railway-ssh migrate DB-before-code + idempotently by `migrate.js`). Create-form checkbox **"Không cần OPS thông quan"** shown ONLY for HP tk/both (`CreateJobModal.jsx`). `TRUE` ⇒ thong_quan **NEVER** created regardless of luồng — **wins over PATH B**.
+- **PATH B (auto by luồng):** when NOT manually skipped, `job_tk.tk_flow='xanh'` ⇒ no thong_quan; later `xanh→vàng/đỏ` ⇒ **RE-CREATE** via `getWeekRotation` (rotation unchanged), dup-guarded by `ON CONFLICT (job_id,task_type) DO NOTHING`. Hooked into **`PATCH /api/jobs/:id/tk`** — `reconcileThongQuanTask` runs when a non-OPS caller changes `tk_flow`, BEFORE `checkAndCompleteJob`.
+- **Delete guard (L35 precedent):** removing a skipped thong_quan HARD-deletes it UNLESS OPS already progressed it (`completed` OR `cost_entered_at`) → KEEP + history `ops_thongquan_kept_progressed` (no silent data loss). (A true cancel-flag was deliberately NOT added — would force filter-discipline on every reader.)
+- **Completion gate UNCHANGED:** `checkOpsTasksDone` counts EXISTING rows (`tq_task_id !== null`) — a skipped thong_quan simply isn't there, so the job completes on đổi lệnh alone (or outright for tk-only skipped). No gate edit needed.
+- **Display (L26):** `utils/jobDeptStatus.jsx` `deptStatusLines` OPS lines are gated on the `tq` task existing (mirrors the P1 `dl`-guard) → no phantom "OPS: Chưa thông quan"; fixes **TP + Sales** together. Other surfaces (`OpsTaskCell`, OPS dashboard, `queryOpsStaffStats`, drilldowns) are EXISTS/per-task based → handle "no thong_quan" gracefully. `ja.ops_id` cosmetic pointer left untouched (P2 per-task reads are authoritative).
+
+---
+
 ## 6. Session Start Checklist
 
 1. Read this file.
