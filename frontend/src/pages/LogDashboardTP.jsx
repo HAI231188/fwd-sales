@@ -15,7 +15,7 @@ import StaffSection, { CUS_COLS, DD_COLS, OPS_COLS } from '../components/StaffSe
 import { useModalZIndex } from '../hooks/useModalZIndex';
 import {
   getJobStats, getJobs, getDeadlineRequests, getLogStaff,
-  assignJob, setJobDeadline, reviewDeadlineRequest, createJob,
+  setJobDeadline, reviewDeadlineRequest, createJob,
   deleteJob, reviewDeleteRequest, getJobSettings, addDoiLenhTask,
 } from '../api';
 import toast from 'react-hot-toast';
@@ -164,7 +164,6 @@ const ALL_COLS = [
   { key: 'tp_status',    label: 'Trạng thái' },
   { key: 'tq_datetime',  label: 'Ngày TQ' },
   { key: 'delivery',     label: 'Ngày đặt KH' },
-  { key: 'phan_cong',    label: 'Phân công' },
   { key: 'delivery_loc', label: 'Địa điểm giao' },
   { key: 'cargo',        label: 'Cont-Loại' },
   { key: 'service',      label: 'DV' },
@@ -328,53 +327,6 @@ function TPCard({ job: j, body, actions, onOpen, codeColor }) {
 }
 
 // ─── Assign Modal ─────────────────────────────────────────────────────────────
-function AssignModal({ job, staff, onClose, onSave }) {
-  const zIndex = useModalZIndex();
-  const cusStaff = staff.filter(s => ['cus','cus1','cus2','cus3'].includes(s.role));
-  const opsStaff = staff.filter(s => s.role === 'ops');
-  const [cusId, setCusId] = useState(String(job.cus_id || ''));
-  const [opsId, setOpsId] = useState(String(job.ops_id || ''));
-
-  return createPortal((
-    <div className="modal-overlay" style={{ zIndex }} onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="modal" style={{ maxWidth: 420 }}>
-        <div className="modal-header">
-          <h3>Phân công — {job.job_code || `#${job.id}`}</h3>
-          <button className="btn btn-ghost btn-sm btn-icon" onClick={onClose}>✕</button>
-        </div>
-        <div className="modal-body">
-          <div style={{ fontSize: 13, color: 'var(--text-2)', marginBottom: 16 }}>{job.customer_name}</div>
-          {(job.service_type === 'tk' || job.service_type === 'both') && (
-            <div className="form-group" style={{ marginBottom: 12 }}>
-              <label className="form-label">Phân CUS (tờ khai)</label>
-              <select className="form-select" value={cusId} onChange={e => setCusId(e.target.value)}>
-                <option value="">-- Chọn CUS --</option>
-                {cusStaff.map(s => <option key={s.id} value={s.id}>{s.name} ({s.role})</option>)}
-              </select>
-            </div>
-          )}
-          {(job.service_type === 'tk' || job.service_type === 'both') && (
-            <div className="form-group">
-              <label className="form-label">Phân OPS (tuỳ chọn)</label>
-              <select className="form-select" value={opsId} onChange={e => setOpsId(e.target.value)}>
-                <option value="">-- Chọn OPS --</option>
-                {opsStaff.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-              </select>
-            </div>
-          )}
-        </div>
-        <div className="modal-footer">
-          <button className="btn btn-ghost btn-sm" onClick={onClose}>Hủy</button>
-          <button className="btn btn-primary btn-sm"
-            onClick={() => onSave({ cus_id: cusId ? Number(cusId) : undefined, ops_id: opsId ? Number(opsId) : undefined })}>
-            Xác nhận phân công
-          </button>
-        </div>
-      </div>
-    </div>
-  ), document.body);
-}
-
 // ─── Deadline Modal ───────────────────────────────────────────────────────────
 function DeadlineModal({ data, onClose, onReview, onSetDeadline, onReviewDelete }) {
   const zIndex = useModalZIndex();
@@ -553,7 +505,6 @@ export default function LogDashboardTP({ readOnly = false }) {
   const [planModalJob, setPlanModalJob] = useState(null); // {jobId, jobCode}
   const [showCreate, setShowCreate] = useState(false);
   const [showDeadline, setShowDeadline] = useState(false);
-  const [assigningJob, setAssigningJob] = useState(null);
   const [showAssignment, setShowAssignment] = useState(null); // 'cus' | 'ops' | null
   const [reassignTarget, setReassignTarget] = useState(null); // { type: 'cus'|'ops', job }
   const [filterAssignee, setFilterAssignee] = useState('');
@@ -621,7 +572,6 @@ export default function LogDashboardTP({ readOnly = false }) {
     queryKey: ['deadlineRequests'], queryFn: getDeadlineRequests,
     enabled: showDeadline,
   });
-  const { data: staff = [] } = useQuery({ queryKey: ['logStaff'], queryFn: getLogStaff, enabled: !readOnly });
 
   const createMut = useMutation({
     mutationFn: data => createJob(data),
@@ -629,10 +579,6 @@ export default function LogDashboardTP({ readOnly = false }) {
       qc.invalidateQueries({ queryKey: ['jobs'] });
       qc.invalidateQueries({ queryKey: ['jobStats'] });
     },
-  });
-  const assignMut = useMutation({
-    mutationFn: ({ id, data }) => assignJob(id, data),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['jobs'] }); setAssigningJob(null); },
   });
   // P3 #3: "+ đổi lệnh" — backend rotation assigns this week's ĐL person.
   const addDoiLenhMut = useMutation({
@@ -681,6 +627,10 @@ export default function LogDashboardTP({ readOnly = false }) {
   });
 
   const modeLabel = settings?.assignment_mode === 'manual' ? 'Bán tự động' : 'Tự động';
+  // Fetcher for the ['logStaff'] cache read below (feeds the assignee-filter
+  // dropdown via cusStaff/opsStaff/dieuDoStaff). Previously also bound to `staff`
+  // for the removed Phân công AssignModal; the fetch itself is still required.
+  useQuery({ queryKey: ['logStaff'], queryFn: getLogStaff, enabled: !readOnly });
   const logStaff = qc.getQueryData(['logStaff']) || [];
   const cusStaff = logStaff.filter(s => ['cus','cus1','cus2','cus3'].includes(s.role));
   const opsStaff = logStaff.filter(s => s.role === 'ops');
@@ -823,8 +773,6 @@ export default function LogDashboardTP({ readOnly = false }) {
             ) : (() => {
               const ftColumns = ALL_COLS
                 .filter(c => visibleCols.includes(c.key))
-                // readOnly (KT): drop the "Phân công" action column entirely.
-                .filter(c => !(readOnly && c.key === 'phan_cong'))
                 .map(c => ({ ...c, ...(FILTER_CONFIG[c.key] || {}) }));
               return (
                 <FilteredTable
@@ -974,12 +922,6 @@ export default function LogDashboardTP({ readOnly = false }) {
                         }
                         actions={<>
                           {!readOnly && tab === 'pending' && (
-                            <button className="btn btn-ghost btn-sm" title={waitingAssign ? 'Phân công' : 'Sửa phân công'}
-                              onClick={() => setAssigningJob(j)}>
-                              {waitingAssign ? '⚡ Phân công' : '✏️ Phân công'}
-                            </button>
-                          )}
-                          {!readOnly && tab === 'pending' && (
                             <button className="btn btn-ghost btn-sm btn-icon" title="Xóa job"
                               style={{ color: 'var(--danger)' }}
                               onClick={() => {
@@ -1058,7 +1000,6 @@ export default function LogDashboardTP({ readOnly = false }) {
                         case 'tp_status':   return <td key={key} style={{ ...cs, minWidth: 180 }}><DeptStatusCell job={j} /></td>;
                         case 'tq_datetime': return <td key={key} style={{ ...cs, fontSize: 12, whiteSpace: 'nowrap', color: 'var(--text-2)' }}>{j.tq_datetime ? fmtDt(j.tq_datetime) : '—'}</td>;
                         case 'delivery':    return <td key={key} style={{ ...cs, fontSize: 12, whiteSpace: 'nowrap', color: 'var(--text-2)' }}>{j.first_booking_planned ? fmtDate(j.first_booking_planned) : '—'}</td>;
-                        case 'phan_cong':   return <td key={key} style={cs}>{tab === 'pending' && <button className="btn btn-ghost btn-sm" style={{ fontSize: 11, padding: '3px 8px', whiteSpace: 'nowrap' }} onClick={() => setAssigningJob(j)}>{waitingAssign ? '⚡ Phân công' : '✏️ Sửa'}</button>}</td>;
                         case 'delivery_loc':return <td key={key} style={{ ...cs, fontSize: 12, color: 'var(--text-2)', maxWidth: 120 }}>{j.delivery_location || '—'}</td>;
                         case 'cargo':       return <td key={key} style={{ ...cs, whiteSpace: 'nowrap', fontSize: 12 }}>{fmtCargo(j)}</td>;
                         case 'service':     return <td key={key} style={cs}><span className="badge badge-info" style={{ fontSize: 10 }}>{SVC_LABEL[j.service_type] || j.service_type}</span></td>;
@@ -1161,11 +1102,6 @@ export default function LogDashboardTP({ readOnly = false }) {
           onSetDeadline={(id, deadline) => setDlMut.mutate({ id, deadline })}
           onReviewDelete={(rid, action) => reviewDeleteMut.mutate({ rid, action })}
         />
-      )}
-      {!readOnly && assigningJob && (
-        <AssignModal job={assigningJob} staff={staff}
-          onClose={() => setAssigningJob(null)}
-          onSave={data => assignMut.mutate({ id: assigningJob.id, data })} />
       )}
       {detailJobId && <JobDetailModal jobId={detailJobId} onClose={() => setDetailJobId(null)} />}
       {!readOnly && planModalJob && (
