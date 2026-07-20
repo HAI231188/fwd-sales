@@ -29,6 +29,9 @@ const INIT_FORM = {
   // ops_hp (Step 2) — free-text OPS work description, shown only when
   // service_type === 'ops_hp' (HP-only OPS job).
   ops_hp_note: '',
+  // PATH A (2026-07-20) — manual hard skip of the OPS thông quan task; only
+  // shown/meaningful for HP tk/both jobs. Spread into the create payload as-is.
+  skip_ops_thongquan: false,
 };
 
 export default function CreateJobModal({ onClose, onCreated }) {
@@ -427,6 +430,24 @@ export default function CreateJobModal({ onClose, onCreated }) {
               )}
             </div>
           </div>
+
+          {/* PATH A (2026-07-20) — manual hard skip of the OPS thông quan task.
+              Shown ONLY for a Hải Phòng tk/both job (thong_quan only applies
+              there). Ticked ⇒ no thong_quan OPS task is ever created, regardless
+              of luồng (wins over the auto luồng=xanh skip). Đổi lệnh unaffected. */}
+          {form.destination === 'hai_phong' && (form.service_type === 'tk' || form.service_type === 'both') && (
+            <div className="form-group" style={{ marginTop: 12 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
+                <input type="checkbox" checked={!!form.skip_ops_thongquan}
+                  onChange={e => set('skip_ops_thongquan', e.target.checked)}
+                  style={{ width: 16, height: 16 }} />
+                Không cần OPS thông quan
+              </label>
+              <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 4 }}>
+                Job Hải Phòng này không cần OPS làm thông quan (chỉ đổi lệnh nếu có).
+              </div>
+            </div>
+          )}
 
           {/* ops_hp — free-text OPS work description (HP-only OPS job). Shown only
               when service_type === 'ops_hp'; required on submit. */}

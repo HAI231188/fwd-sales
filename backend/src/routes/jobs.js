@@ -10,6 +10,7 @@ const { canViewJob, canEditJob, canEditJobTk, canReassignOwnerOrStatus } = requi
 const { fmtVnDeadline } = require('../utils/vnTime');
 const { reconcileJobSides } = require('../services/job-reconcile');
 const { getWeekRotation } = require('../services/ops-rotation');
+const { thongQuanWanted, reconcileThongQuanTask } = require('../services/ops-thongquan');
 
 // In-memory suggestion cache (60s TTL) — invalidated on manual assignment
 let suggestionCache = { data: null, ts: 0 };
@@ -1528,6 +1529,10 @@ router.post('/', requireAuth, async (req, res) => {
     import_export,
     // ops_hp (Step 1) — free-text OPS work description for an OPS-only job.
     ops_hp_note,
+    // PATH A (2026-07-20) — manual hard skip of the OPS thông quan task for a
+    // Hải Phòng tk/both job. Persisted to jobs.skip_ops_thongquan; wins over the
+    // luồng-driven PATH B. Default false; only meaningful for HP tk/both.
+    skip_ops_thongquan,
   } = req.body;
 
   // Trim leading/trailing whitespace from the customer name ONCE, then use this
@@ -1591,8 +1596,9 @@ router.post('/', requireAuth, async (req, res) => {
         cargo_type, so_kien, kg, destination, created_by, han_lenh,
         si_number, mbl_no, hbl_no, import_export,
         shipper, vessel, voy, shipping_line, goods_description,
-        ops_hp_note
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34)
+        ops_hp_note,
+        skip_ops_thongquan
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35)
       RETURNING *
     `, [
       job_code || null, customer_id || null, customerName,
@@ -1609,6 +1615,7 @@ router.post('/', requireAuth, async (req, res) => {
       shipper || null, vessel || null, voy || null,
       shipping_line || null, goods_description || null,
       ops_hp_note || null,
+      skip_ops_thongquan === true,
     ]);
 
     const job = rows[0];
@@ -1828,7 +1835,12 @@ router.post('/', requireAuth, async (req, res) => {
         [job.id, dlOwner, ops_hp_note || null, req.user.id]
       );
     } else if (destination === 'hai_phong' && ['tk','truck','both'].includes(service_type)) {
-      if (service_type === 'tk' || service_type === 'both') {
+      // PATH A/B gate (2026-07-20): create thong_quan ONLY if wanted — HP tk/both,
+      // NOT manually skipped (jobs.skip_ops_thongquan) and luồng ≠ 'xanh'. At
+      // create luồng is not yet set (job has no tk_flow ⇒ not xanh), so this
+      // reduces to "!skip_ops_thongquan" here; PATH B (luồng change) runs later
+      // in PATCH /:id/tk via reconcileThongQuanTask. Đổi lệnh below is unchanged.
+      if ((service_type === 'tk' || service_type === 'both') && thongQuanWanted(job)) {
         await client.query(
           `INSERT INTO job_ops_task (job_id, ops_id, task_type, assigned_at, assigned_by)
            VALUES ($1, $2, 'thong_quan', NOW(), $3)
@@ -3040,6 +3052,16 @@ router.patch('/:id/tk', requireAuth, async (req, res) => {
     // booking via POST /api/truck-bookings when they're ready. The tk row's
     // truck_booked flag is still flipped above (in the FIELDS loop) for any
     // legacy reader that hasn't migrated; no downstream side effect needed.
+
+    // PATH B (2026-07-20): the tờ khai luồng drives the thong_quan OPS task.
+    // When CUS changes tk_flow, reconcile it — xanh ⇒ remove thong_quan (unless
+    // OPS already progressed it), vàng/đỏ ⇒ re-create via the weekly rotation
+    // (unless jobs.skip_ops_thongquan wins). Idempotent, never touches đổi lệnh.
+    // Runs BEFORE checkAndCompleteJob so the completion gate sees the correct
+    // task set. OPS is status-only (tk_flow not in its FIELDS) → skip for OPS.
+    if (!isOps && req.body.tk_flow !== undefined) {
+      await reconcileThongQuanTask(client, req.params.id, req.user.id);
+    }
 
     // Trigger-gap fix (2026-05-21): every other side-completion event calls
     // checkAndCompleteJob (truck/complete:2719, ops-done:2861, truck-bookings

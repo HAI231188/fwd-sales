@@ -932,6 +932,13 @@ ALTER TABLE jobs ADD COLUMN IF NOT EXISTS returned_reason       TEXT;
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS invoice_issued_at     TIMESTAMPTZ;
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS invoice_issued_by     INTEGER REFERENCES users(id) ON DELETE SET NULL;
 
+-- Skip OPS "thông quan" task for Hải Phòng jobs (2026-07-20). PATH A (manual
+-- hard skip): when TRUE, a thong_quan job_ops_task is NEVER created regardless
+-- of luồng, and wins over PATH B. PATH B (auto skip when tờ khai luồng = 'xanh')
+-- is dynamic and lives in app code (services/ops-thongquan.js), NOT this flag.
+-- Đổi lệnh (doi_lenh) is never affected. Only meaningful for HP tk/both jobs.
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS skip_ops_thongquan BOOLEAN NOT NULL DEFAULT FALSE;
+
 -- Composite partial index — supports the KT 4-tab dashboard queries off
 -- (accounting_checked_at, debit_sent_at, payment_received_at). Partial WHERE
 -- deleted_at IS NULL aligns with L17 + keeps the index small.

@@ -61,9 +61,15 @@ export function deptStatusLines(j) {
     const dl = tasks.find(t => t.task_type === 'doi_lenh');
     const terminal = TK_TERMINAL.includes(j.tk_status);
     if (hasTk) {
-      if (!terminal) {
+      // Skip-thông-quan (2026-07-20): only emit thong_quan lines when a
+      // thong_quan task actually EXISTS. A Hải Phòng tk/both job with the task
+      // skipped (PATH A manual / PATH B luồng=xanh) has no tq row → fall straight
+      // through to the đổi lệnh checks (mirrors the P1 dl-presence guard) so it
+      // never shows a phantom "Chưa thông quan" and can reach "Hoàn thành" on
+      // đổi lệnh alone (or "Hoàn thành" outright for a tk-only skipped job).
+      if (tq && !terminal) {
         lines.push('OPS: Chưa thông quan');
-      } else if (!tq?.cost_entered_at) {
+      } else if (tq && !tq.cost_entered_at) {
         lines.push('OPS: Đã thông quan — chưa nhập cost TQ');
       } else if (dl && !dl.completed) {
         // P1: only when a doi_lenh task actually exists. tk-only HP jobs no

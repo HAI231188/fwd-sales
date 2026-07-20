@@ -23,6 +23,7 @@
 
 const { recordHistory } = require('./job-history');
 const { getWeekRotation } = require('./ops-rotation');
+const { thongQuanWanted } = require('./ops-thongquan');
 
 const TK_SET = ['tk', 'both'];
 const TRUCK_SET = ['truck', 'both'];
@@ -43,14 +44,22 @@ async function reconcileJobSides(client, jobId, opts) {
   // LCL (2026-06-24): LCL shipments don't auto-get a doi_lenh task. cargo_type
   // doesn't change on a service_type/destination edit, so read it fresh here
   // (avoids threading a new opt through PUT /:id). Mirrors create-seeding.
-  const { rows: cr } = await client.query(`SELECT cargo_type FROM jobs WHERE id = $1`, [jobId]);
+  const { rows: cr } = await client.query(
+    `SELECT j.cargo_type, j.skip_ops_thongquan, jt.tk_flow
+       FROM jobs j LEFT JOIN job_tk jt ON jt.job_id = j.id WHERE j.id = $1`, [jobId]);
   const isLcl = (cr[0]?.cargo_type || 'fcl') === 'lcl';
+  const skipTq = cr[0]?.skip_ops_thongquan === true;   // PATH A
+  const tkFlow = cr[0]?.tk_flow || null;               // PATH B (xanh ⇒ no thong_quan)
 
   const newHP = newDest === 'hai_phong';
   const tkDesired = hasTk(newSvc), tkWas = hasTk(oldSvc);
   const truckDesired = hasTruck(newSvc), truckWas = hasTruck(oldSvc);
-  const tqDesired = newHP && tkDesired;             // thong_quan: tk/both at Hải Phòng
-  const dlDesired = newHP && truckDesired && !isLcl; // doi_lenh: truck/both at HP, FCL only (LCL → manual "+ đổi lệnh")
+  // thong_quan: tk/both at Hải Phòng, UNLESS manually skipped (PATH A) or luồng
+  // = xanh (PATH B). Shared predicate (services/ops-thongquan.js) so create /
+  // reconcile / luồng-update never diverge (L30). tqDesired=false ⇒ removeOpsTask
+  // below deletes the thong_quan task (keeping any OPS-progressed one, L35).
+  const tqDesired = thongQuanWanted({ destination: newDest, service_type: newSvc, skip_ops_thongquan: skipTq, tk_flow: tkFlow });
+  const dlDesired = newHP && truckDesired && !isLcl; // doi_lenh: truck/both at HP, FCL only (LCL → manual "+ đổi lệnh") — UNCHANGED
 
   const tkGain = tkDesired && !tkWas;
   const tkLose = !tkDesired && tkWas;
