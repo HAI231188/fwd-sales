@@ -67,6 +67,78 @@ function fieldRow(doc, vn, en, value, x, y, labelWidth, valueWidth) {
   return y + 22;
 }
 
+// Wrapping variant of fieldRow — same bilingual label, but the value may flow
+// onto several lines (Ghi chú carries the multi-line invoice block). Returns
+// the y of the next row: a normal 22pt row, taller when the value wrapped.
+function fieldRowWrap(doc, vn, en, value, x, y, labelWidth, valueWidth) {
+  bilingualLabel(doc, vn, en, x, y, labelWidth);
+  const text = value || '';
+  doc.font('R').fontSize(10);
+  const h = text ? doc.heightOfString(text, { width: valueWidth }) : 0;
+  doc.text(text, x + labelWidth, y + 2, { width: valueWidth });
+  doc.fillColor('#000');
+  return y + Math.max(22, h + 8);
+}
+
+// ─── Classic BBBG (Design A) constants + cell helpers ───────────────────────
+// English letterhead — the BBBG is signed by the consignee and travels with the
+// driver, so the printed letterhead is the international one. NOTE: this is a
+// 7th SLB-identity edit point (root CLAUDE.md "SLB company identity" Note) —
+// the landline/hotline pair lives ONLY here; grep 'Tasa Residence Area' when
+// the address changes again.
+const SLB_LETTERHEAD_EN = Object.freeze({
+  company: 'SLB GLOBAL LOGISTICS COMPANY LIMITED',
+  address: 'No 18/100 Tasa Residence Area, Dong Hai Ward, Hai Phong City, Viet Nam',
+  tel:     'Tel: 0084 2257 301 333/302 333     Hotline: 0084 931 334 331',
+  web:     'Website: www.slbglobal.com     Email: info@slbglobal.com',
+});
+
+// Ghi chú (Remarks) always carries SLB's own Vietnamese invoice block, built
+// from the shared SLB_INVOICE_INFO constant (L30 — the carrier mail body reads
+// the same object) so an address change flows through. Any operator-typed
+// remark is appended below it.
+function buildRemarksText(userRemarks) {
+  const block =
+    `Thông tin xuất hoá đơn: ${SLB_INVOICE_INFO.company}.\n` +
+    `MST: ${SLB_INVOICE_INFO.tax}\n` +
+    `${SLB_INVOICE_INFO.address}.`;
+  const extra = (userRemarks || '').trim();
+  return extra ? `${block}\n${extra}` : block;
+}
+
+// Per-container weight/measurement — only when the caller supplies per-cont
+// figures; otherwise the cell falls back to the job-level total on row 0.
+function contMeasureStr(r) {
+  const parts = [];
+  if (r.weight_kgs != null && r.weight_kgs !== '')        parts.push(`${fmtNumber(r.weight_kgs)} KGS`);
+  else if (r.weight_tons != null && r.weight_tons !== '') parts.push(`${fmtNumber(r.weight_tons)} TONS`);
+  if (r.cbm != null && r.cbm !== '')                      parts.push(`${fmtNumber(r.cbm)} CBM`);
+  return parts.join(' / ');
+}
+
+// Job-level weight/measurement — weight (KGS/TONS per weight_unit) + CBM + kiện.
+// data.cbm renders when present; POST /bbbg-pdf does not forward it yet (GET
+// /bbbg-data already returns `cbm`), so it stays blank until that wiring line
+// is added in routes/jobs.js — out of scope here (bbbg-pdf.js only).
+function jobMeasureStr(data) {
+  const parts = [];
+  if (data.weight_value != null && data.weight_value !== '') {
+    parts.push(`${fmtNumber(data.weight_value)} ${data.weight_unit || ''}`.trim());
+  }
+  if (data.cbm != null && data.cbm !== '')         parts.push(`${fmtNumber(data.cbm)} CBM`);
+  if (data.so_kien != null && data.so_kien !== '') parts.push(`${data.so_kien} kiện`);
+  return parts.join(' / ');
+}
+
+// Description per table row: the container's own goods name wins, then the
+// job-level goods name, then "AS PER BILL" when both are empty.
+function rowDescription(r, data) {
+  const own = String(r.goods_description || r.description || '').trim();
+  if (own) return own;
+  const job = String(data.description || '').trim();
+  return job || 'AS PER BILL';
+}
+
 function buildBbbgPdf(data) {
   const doc = new PDFDocument({ size: 'A4', margin: 36 });
   registerFonts(doc);
@@ -77,23 +149,28 @@ function buildBbbgPdf(data) {
   const right = pageW - doc.page.margins.right;
   const usableW = right - left;
 
-  // Header
+  // Header — logo top-left, English letterhead centered in the block to its
+  // right. Degrades gracefully to a full-width centered letterhead when the
+  // logo asset is missing.
   const headerY = doc.y;
   const logoPath = LOGO_CANDIDATES.find(fileExists) || null;
   const hasLogo = !!logoPath;
   if (hasLogo) {
     try { doc.image(logoPath, left, headerY, { width: 90 }); } catch { /* skip */ }
   }
-  const companyX = left + (hasLogo ? 110 : 0);
-  doc.font('RB').fontSize(11).fillColor('#0066b3').text('CÔNG TY TNHH TIẾP VẬN TOÀN CẦU SLB', companyX, headerY);
+  const headX = left + (hasLogo ? 104 : 0);
+  const headW = right - headX;
+  doc.font('RB').fontSize(12).fillColor('#000')
+     .text(SLB_LETTERHEAD_EN.company, headX, headerY, { width: headW, align: 'center' });
   doc.font('R').fontSize(8).fillColor('#000');
-  // CP4.2.3 — placeholder address/phone replaced with real SLB info. Website
-  // line kept as-is (not a placeholder).
-  doc.text('Địa chỉ: Số 18/100 Khu dân cư Tasa, Phường Đông Hải, Thành phố Hải Phòng, Việt Nam',
-    companyX, doc.y + 1);
-  doc.text('Tel: +84 931 334 331   |   Email: info@slbglobal.com', companyX, doc.y + 1);
-  doc.text('Website: www.slbglobal.com   |   Email: info@slbglobal.com', companyX, doc.y + 1);
+  doc.text(SLB_LETTERHEAD_EN.address, headX, doc.y + 2, { width: headW, align: 'center' });
+  doc.text(SLB_LETTERHEAD_EN.tel,     headX, doc.y + 1, { width: headW, align: 'center' });
+  doc.text(SLB_LETTERHEAD_EN.web,     headX, doc.y + 1, { width: headW, align: 'center' });
   doc.y = Math.max(doc.y, headerY + (hasLogo ? 70 : 50));
+  // Letterhead rule
+  doc.moveTo(left, doc.y + 4).lineTo(right, doc.y + 4).strokeColor('#000').lineWidth(1).stroke();
+  doc.lineWidth(1);
+  doc.y += 8;
 
   // Title
   doc.moveDown(0.5);
@@ -159,32 +236,57 @@ function buildBbbgPdf(data) {
     cx += w;
   }
 
-  const rows = (data.containers && data.containers.length)
+  // One row per container (the LCL / no-container case renders a single
+  // whole-lot row). Row 0 carries the job-level weight/measurement when the
+  // container itself has none, so the totals are never lost.
+  const hasConts = !!(data.containers && data.containers.length);
+  const rows = hasConts
     ? data.containers
     : [{ cont_number: '', cont_type: '', seal_number: '' }];
   let rowY = tableTop + headerH;
   const rowH = 22;
-  const totalQty = rows.length;
+  const jobMeasure = jobMeasureStr(data);
 
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i];
     doc.rect(left, rowY, usableW, rowH).stroke('#999');
     let x2 = left;
     const cont = [r.cont_number || '', r.cont_type ? `(${r.cont_type})` : ''].filter(Boolean).join(' ');
-    doc.font('R').fontSize(9).text(cont, x2 + 4, rowY + 6, { width: colWidths[0] - 8, lineBreak: false });
-    x2 += colWidths[0];
-    doc.text(i === 0 ? `${totalQty}` : '', x2 + 4, rowY + 6, { width: colWidths[1] - 8, align: 'center', lineBreak: false });
-    x2 += colWidths[1];
-    doc.text(i === 0 ? (data.description || 'AS PER BILL') : '', x2 + 4, rowY + 6, { width: colWidths[2] - 8, align: 'center', lineBreak: false });
-    x2 += colWidths[2];
-    let weightCell = '';
-    if (i === 0) {
-      const parts = [];
-      if (data.weight_value != null && data.weight_value !== '') parts.push(`${fmtNumber(data.weight_value)} ${data.weight_unit || ''}`.trim());
-      if (data.so_kien != null && data.so_kien !== '') parts.push(`${data.so_kien} kiện`);
-      weightCell = parts.join(' / ');
+    const seal = r.seal_number ? `Seal: ${r.seal_number}` : '';
+    doc.font('R').fontSize(9).fillColor('#000')
+       .text(cont, x2 + 4, rowY + (seal ? 3 : 6), { width: colWidths[0] - 8, lineBreak: false });
+    if (seal) {
+      doc.font('RI').fontSize(6.5).fillColor('#555')
+         .text(seal, x2 + 4, rowY + 13, { width: colWidths[0] - 8, lineBreak: false });
+      doc.fillColor('#000');
     }
-    doc.text(weightCell, x2 + 4, rowY + 6, { width: colWidths[3] - 8, align: 'center', lineBreak: false });
+    x2 += colWidths[0];
+    // Quantity: 1 per container row; the container-less whole-lot row shows the
+    // piece count when we have one.
+    const qtyCell = hasConts
+      ? '1'
+      : (data.so_kien != null && data.so_kien !== '' ? `${data.so_kien} kiện` : '1');
+    doc.font('R').fontSize(9)
+       .text(qtyCell, x2 + 4, rowY + 6, { width: colWidths[1] - 8, align: 'center', lineBreak: false });
+    x2 += colWidths[1];
+    doc.text(rowDescription(r, data), x2 + 4, rowY + 6, { width: colWidths[2] - 8, align: 'center', lineBreak: false });
+    x2 += colWidths[2];
+    const ownMeasure = contMeasureStr(r);
+    const measureCell = ownMeasure || (i === 0 ? jobMeasure : '');
+    doc.text(measureCell, x2 + 4, rowY + 6, { width: colWidths[3] - 8, align: 'center', lineBreak: false });
+    rowY += rowH;
+  }
+
+  // Totals strip — only when per-container figures displaced the job-level
+  // total from row 0, so the sheet always states the shipment total once.
+  const row0HadOwnMeasure = !!contMeasureStr(rows[0] || {});
+  if (jobMeasure && row0HadOwnMeasure) {
+    doc.rect(left, rowY, usableW, rowH).stroke('#999');
+    doc.font('RB').fontSize(8.5).text('TỔNG (Total)', left + 4, rowY + 7,
+      { width: colWidths[0] + colWidths[1] + colWidths[2] - 8, lineBreak: false });
+    doc.font('R').fontSize(9).text(jobMeasure,
+      left + colWidths[0] + colWidths[1] + colWidths[2] + 4, rowY + 7,
+      { width: colWidths[3] - 8, align: 'center', lineBreak: false });
     rowY += rowH;
   }
 
@@ -206,40 +308,49 @@ function buildBbbgPdf(data) {
     doc.y = iy + 4;
   }
 
-  // Delivery confirmation block
+  // Delivery confirmation block — the static certification line always prints,
+  // regardless of which delivery fields are filled in.
   doc.font('RB').fontSize(10).text('Đã được giao trong tình trạng hoàn hảo đến:', left);
-  doc.font('RI').fontSize(8.5).fillColor('#444').text('(Has been delivered in perfect condition to:)', left, doc.y);
+  doc.font('RI').fontSize(8.5).fillColor('#444')
+     .text('(Has been delivered in good order and conditions to)', left, doc.y);
   doc.fillColor('#000');
   doc.moveDown(0.5);
 
+  // Người nhận = name + phone on one line (the form's single free-text field
+  // already carries both today; recipient_phone is honoured when sent).
+  const receiverLine = [data.recipient_name, data.recipient_phone]
+    .map(v => String(v || '').trim()).filter(Boolean).join(' — ');
+  // Thời điểm = ngày giao + giờ trả hàng (both preserved, one row).
+  const deliveryMoment = [data.delivery_date, data.delivery_time]
+    .map(v => String(v || '').trim()).filter(Boolean).join(' ');
+
   let dy = doc.y;
-  dy = fieldRow(doc, 'Công ty',        'Company',        data.delivery_company || data.consignee, left, dy, labelW, usableW - labelW);
-  dy = fieldRow(doc, 'Tại địa chỉ',    'At address',     data.delivery_address,                   left, dy, labelW, usableW - labelW);
-  dy = fieldRow(doc, 'Tên người nhận', 'Recipient name', data.recipient_name,                     left, dy, labelW, usableW - labelW);
-
-  bilingualLabel(doc, 'Thời điểm', 'Time', left, dy, labelW);
-  doc.font('R').fontSize(10).text(data.delivery_time || '', left + labelW, dy + 2, { width: colW - labelW, lineBreak: false });
-  bilingualLabel(doc, 'Ngày', 'Date', left + colW + colGap, dy, labelW);
-  doc.font('R').fontSize(10).text(data.delivery_date || '', left + colW + colGap + labelW, dy + 2, { width: colW - labelW, lineBreak: false });
-  dy += 22;
-
-  dy = fieldRow(doc, 'Ghi chú', 'Remarks', data.remarks, left, dy, labelW, usableW - labelW);
+  dy = fieldRow(doc, 'Công ty',        'Công ty',              data.delivery_company || data.consignee, left, dy, labelW, usableW - labelW);
+  dy = fieldRow(doc, 'Tại địa chỉ',    'Address',              data.delivery_address,                   left, dy, labelW, usableW - labelW);
+  dy = fieldRow(doc, 'Tên người nhận', 'Name of the receiver', receiverLine,                            left, dy, labelW, usableW - labelW);
+  dy = fieldRow(doc, 'Thời điểm',      'Time of Delivery',     deliveryMoment,                          left, dy, labelW, usableW - labelW);
+  dy = fieldRowWrap(doc, 'Ghi chú',    'Remarks',              buildRemarksText(data.remarks),          left, dy, labelW, usableW - labelW);
 
   // Signatures
-  doc.y = Math.max(dy + 30, pageH - 140);
+  doc.y = Math.max(dy + 24, pageH - 150);
   const sigY = doc.y;
   const sigW = (usableW - colGap) / 2;
-  doc.font('RB').fontSize(9).text('NGƯỜI GIAO HÀNG', left, sigY, { width: sigW, align: 'center' });
-  doc.font('RI').fontSize(8).fillColor('#444').text('(Deliverer)', left, sigY + 11, { width: sigW, align: 'center' });
-  doc.font('RB').fontSize(9).fillColor('#000').text('NGƯỜI NHẬN HÀNG', left + sigW + colGap, sigY, { width: sigW, align: 'center' });
-  doc.font('RI').fontSize(8).fillColor('#444').text('(Receiver)', left + sigW + colGap, sigY + 11, { width: sigW, align: 'center' });
+  doc.font('RB').fontSize(9.5).fillColor('#000')
+     .text('ĐẠI DIỆN BÊN GIAO', left, sigY, { width: sigW, align: 'center' });
+  doc.font('RB').fontSize(9.5)
+     .text('ĐẠI DIỆN BÊN NHẬN', left + sigW + colGap, sigY, { width: sigW, align: 'center' });
+  doc.font('RI').fontSize(8).fillColor('#555')
+     .text('Ký, ghi rõ họ tên', left, sigY + 14, { width: sigW, align: 'center' });
+  doc.font('RI').fontSize(8)
+     .text('Ký, ghi rõ họ tên', left + sigW + colGap, sigY + 14, { width: sigW, align: 'center' });
   doc.fillColor('#000');
 
-  // Footer
+  // Footer — VN-time stamp (L3: the server runs UTC, a timeZone-less
+  // toLocaleString printed −7h on the sheet the driver carries).
   const footerY = pageH - doc.page.margins.bottom - 14;
-  const stamp = new Date().toLocaleString('vi-VN', { hour12: false });
+  const stamp = fmtDtVn(new Date());
   doc.font('RI').fontSize(7).fillColor('#666')
-     .text(`Generated ${stamp}   |   page 1/1   |   by ${data.creator_name || ''}`, left, footerY, { width: usableW, align: 'center' });
+     .text(`${stamp}   page 1/1 by ${data.creator_name || ''}`, left, footerY, { width: usableW, align: 'center' });
 
   doc.end();
   return doc;
