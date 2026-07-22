@@ -139,10 +139,15 @@ function rowDescription(r, data) {
   return job || 'AS PER BILL';
 }
 
-function buildBbbgPdf(data) {
-  const doc = new PDFDocument({ size: 'A4', margin: 36 });
-  registerFonts(doc);
-
+// ─── THE single BBBG page renderer ──────────────────────────────────────────
+// Draws one classic (KSVINA-style) BBBG page onto `doc` from a FLAT data
+// object. Every entrypoint funnels through here — the manual BBBGModal export
+// (buildBbbgPdf), the "Xem BBBG" preview (generateMultiBookingBBBG) and the
+// carrier-mail attachment (generateSingleBookingBBBG) — so the three can never
+// drift apart again (L30). Optional slots (booking_code, shipping_line,
+// han_lenh) render only when supplied, so the manual export stays exactly the
+// target layout while the per-booking pages keep their extra identifiers.
+function renderClassicBbbg(doc, data, { pageIdx = 1, pageTotal = 1 } = {}) {
   const pageW = doc.page.width;
   const pageH = doc.page.height;
   const left = doc.page.margins.left;
@@ -183,7 +188,14 @@ function buildBbbgPdf(data) {
   doc.font('RB').fontSize(9);
   doc.text(`Số lô hàng (Job ID): ${data.job_code || ''}`, left, metaY,      { width: usableW, align: 'right' });
   doc.text(`Ngày (Date): ${data.today_date || ''}`,       left, metaY + 12, { width: usableW, align: 'right' });
-  doc.y = metaY + 30;
+  // Optional — per-booking pages carry the booking code; the manual export
+  // does not send one, so the line simply does not appear there.
+  if (data.booking_code) {
+    doc.text(`Mã KH (Booking): ${data.booking_code}`, left, metaY + 24, { width: usableW, align: 'right' });
+    doc.y = metaY + 42;
+  } else {
+    doc.y = metaY + 30;
+  }
 
   // Intro line
   doc.font('RB').fontSize(10).text('Lô hàng với chi tiết như sau:', left);
@@ -211,6 +223,15 @@ function buildBbbgPdf(data) {
 
   leftY  = fieldRow(doc, 'Vận đơn phụ',   'H-B/L',     data.hbl_no,    left,                 leftY,  labelW, valueW);
   rightY = fieldRow(doc, 'Vận đơn chính', 'M-B/L',     data.mbl_no,    left + colW + colGap, rightY, labelW, valueW);
+
+  // Optional 5th row — only the per-booking pages supply these (the old
+  // "THÔNG TIN CHUNG" box carried them; they must not be lost in the redesign).
+  if (data.shipping_line) {
+    leftY  = fieldRow(doc, 'Hãng tàu',    'Shipping line', data.shipping_line, left, leftY, labelW, valueW);
+  }
+  if (data.han_lenh_str) {
+    rightY = fieldRow(doc, 'Hạn lệnh',    'Cutoff',        data.han_lenh_str,  left + colW + colGap, rightY, labelW, valueW);
+  }
 
   doc.y = Math.max(leftY, rightY) + 4;
 
@@ -331,8 +352,11 @@ function buildBbbgPdf(data) {
   dy = fieldRow(doc, 'Thời điểm',      'Time of Delivery',     deliveryMoment,                          left, dy, labelW, usableW - labelW);
   dy = fieldRowWrap(doc, 'Ghi chú',    'Remarks',              buildRemarksText(data.remarks),          left, dy, labelW, usableW - labelW);
 
-  // Signatures
-  doc.y = Math.max(dy + 24, pageH - 150);
+  // Signatures — anchored near the page bottom, but never allowed to run into
+  // the footer when a long Ghi chú pushes the block down (the booking pages
+  // append booking notes + the driver warning under the invoice block).
+  const sigYMax = pageH - doc.page.margins.bottom - 14 - 34;
+  doc.y = Math.min(Math.max(dy + 24, pageH - 150), sigYMax);
   const sigY = doc.y;
   const sigW = (usableW - colGap) / 2;
   doc.font('RB').fontSize(9.5).fillColor('#000')
@@ -350,8 +374,16 @@ function buildBbbgPdf(data) {
   const footerY = pageH - doc.page.margins.bottom - 14;
   const stamp = fmtDtVn(new Date());
   doc.font('RI').fontSize(7).fillColor('#666')
-     .text(`${stamp}   page 1/1 by ${data.creator_name || ''}`, left, footerY, { width: usableW, align: 'center' });
+     .text(`${stamp}   page ${pageIdx}/${pageTotal} by ${data.creator_name || ''}`,
+       left, footerY, { width: usableW, align: 'center' });
+  doc.fillColor('#000');
+}
 
+// Manual BBBGModal export — streams a 1-page PDF. Input contract unchanged.
+function buildBbbgPdf(data) {
+  const doc = new PDFDocument({ size: 'A4', margin: 36 });
+  registerFonts(doc);
+  renderClassicBbbg(doc, data);
   doc.end();
   return doc;
 }
@@ -366,291 +398,66 @@ function buildBbbgPdf(data) {
 // branches on import (date only) / export (full datetime) per L19. Storage is
 // UTC; the old Date#getHours()/getDate() getters printed −7h on this PDF (the
 // sheet the driver carries) and day-shifted the import han_lenh.
-const { fmtVnDateTime: fmtDtVn, fmtVnHanLenh: fmtHanLenhVn } = require('../utils/vnTime');
-function fmtCostVn(c) {
-  if (c == null || c === '') return '—';
-  const n = Number(c);
-  if (!Number.isFinite(n)) return '—';
-  return n.toLocaleString('vi-VN') + 'đ';
-}
-function fmtWeightsList(containers) {
-  // Multi-cont per L20 — emit `25.5 tấn / 26 tấn` for two conts, or `—` when
-  // every container is missing weight_tons.
-  const parts = (containers || [])
-    .map(c => c.weight_tons)
-    .filter(w => w != null && w !== '')
-    .map(w => {
-      const n = Number(w);
-      if (!Number.isFinite(n) || n === 0) return null;
-      const s = Number.isInteger(n) ? String(n) : n.toString();
-      return `${s} tấn`;
-    })
-    .filter(Boolean);
-  return parts.length ? parts.join(' / ') : '—';
-}
-
-// Drawing primitives ─────────────────────────────────────────────────────────
-
-// CP4.2.1 — compact 2-column variant for big info blocks (THÔNG TIN CHUNG /
-// HÀNG HÓA / GIAO HÀNG). `fields` is an array of {label, en, value}; rows are
-// paired into 2 columns left→right, top→bottom. Per-cell label+sublabel sit
-// stacked on the left, value on the right.
-function drawTwoColInfoBox(doc, x, y, w, titleVn, titleEn, fields) {
-  const titleH = 18;
-  doc.rect(x, y, w, titleH).fillAndStroke('#0066b3', '#0066b3');
-  doc.fillColor('#fff').font('RB').fontSize(9)
-     .text(titleVn, x + 8, y + 4, { width: w - 16, lineBreak: false });
-  doc.font('RI').fontSize(7).fillColor('#dbeafe')
-     .text(titleEn, x + 8, y + 4, { width: w - 16, align: 'right', lineBreak: false });
-  doc.fillColor('#000');
-
-  const cols = 2;
-  const colW = w / cols;
-  const labelW = 110;
-  const rowH = 19;
-  const visualRows = Math.ceil(fields.length / cols);
-  const bodyH = visualRows * rowH;
-  doc.rect(x, y + titleH, w, bodyH).stroke('#999');
-
-  fields.forEach((f, i) => {
-    const row = Math.floor(i / cols);
-    const col = i % cols;
-    const cx = x + col * colW;
-    const cy = y + titleH + row * rowH;
-    if (col > 0) {
-      doc.moveTo(cx, cy).lineTo(cx, cy + rowH).strokeColor('#d1d5db').stroke();
-    }
-    if (row > 0 && col === 0) {
-      doc.moveTo(x, cy).lineTo(x + w, cy).strokeColor('#d1d5db').stroke();
-    }
-    doc.strokeColor('#000');
-    doc.font('RB').fontSize(8).fillColor('#374151')
-       .text(f.label, cx + 6, cy + 2, { width: labelW - 8, lineBreak: false });
-    doc.font('RI').fontSize(6.5).fillColor('#6b7280')
-       .text(`(${f.en})`, cx + 6, cy + 11, { width: labelW - 8, lineBreak: false });
-    doc.font('R').fontSize(9).fillColor('#000')
-       .text(f.value || '—', cx + labelW, cy + 4, { width: colW - labelW - 6, lineBreak: false });
-  });
-  doc.fillColor('#000');
-  return y + titleH + bodyH;
-}
-
-function drawBoxedSection(doc, x, y, w, titleVn, titleEn, rows) {
-  // Title strip
-  const titleH = 18;
-  doc.rect(x, y, w, titleH).fillAndStroke('#0066b3', '#0066b3');
-  doc.fillColor('#fff').font('RB').fontSize(9)
-     .text(titleVn, x + 8, y + 4, { width: w - 16, lineBreak: false });
-  doc.font('RI').fontSize(7).fillColor('#dbeafe')
-     .text(titleEn, x + 8, y + 4, { width: w - 16, align: 'right', lineBreak: false });
-  doc.fillColor('#000');
-  // Body rows
-  const rowH = 18;
-  const bodyH = rowH * rows.length;
-  doc.rect(x, y + titleH, w, bodyH).stroke('#999');
-  const labelW = 170;
-  for (let i = 0; i < rows.length; i++) {
-    const ry = y + titleH + i * rowH;
-    if (i > 0) doc.moveTo(x, ry).lineTo(x + w, ry).strokeColor('#d1d5db').stroke().strokeColor('#000');
-    const [labelVn, labelEn, value] = rows[i];
-    doc.font('RB').fontSize(9).fillColor('#374151')
-       .text(labelVn, x + 8, ry + 3, { width: labelW - 8, lineBreak: false });
-    doc.font('RI').fontSize(7).fillColor('#6b7280')
-       .text(`(${labelEn})`, x + 8, ry + 14, { width: labelW - 8, lineBreak: false });
-    doc.font('R').fontSize(10).fillColor('#000')
-       .text(value || '—', x + labelW, ry + 4, { width: w - labelW - 8, lineBreak: false });
-  }
-  doc.fillColor('#000');
-  return y + titleH + bodyH;
-}
-
-function drawPageHeader(doc, bookingCode, todayDate) {
-  // CP4.2.1 — Slim header. Job code / customer name / shipping line moved
-  // into the "THÔNG TIN CHUNG" boxed section below so the page reads more
-  // like the legacy single-BBBG. The header carries only the SLB letterhead
-  // and the BBBG-level identifiers (booking code + issue date).
-  const left = doc.page.margins.left;
-  const right = doc.page.width - doc.page.margins.right;
-  const usableW = right - left;
-
-  const headerY = doc.y;
-  const logoPath = LOGO_CANDIDATES.find(fileExists) || null;
-  if (logoPath) {
-    try { doc.image(logoPath, left, headerY, { width: 80 }); } catch { /* skip */ }
-  }
-  const txtX = left + (logoPath ? 96 : 0);
-  doc.font('RB').fontSize(11).fillColor('#0066b3')
-     .text('CÔNG TY TNHH TIẾP VẬN TOÀN CẦU SLB', txtX, headerY);
-  doc.font('R').fontSize(8).fillColor('#000');
-  // CP4.2.3 — real address is long; render at 7pt with an explicit width that
-  // stops short of the right-aligned meta block ("Mã KH:" / "Ngày:") to avoid
-  // horizontal collision. lineBreak:false keeps it on one line.
-  doc.fontSize(7).text(
-    'Số 18/100 Khu dân cư Tasa, Phường Đông Hải, Thành phố Hải Phòng, Việt Nam',
-    txtX, doc.y + 1,
-    { width: usableW - 96 - 120, lineBreak: false }
-  );
-  doc.fontSize(8).text('Tel: +84 931 334 331   |   Email: info@slbglobal.com', txtX, doc.y + 1);
-  // Right-side meta — booking code + date only.
-  doc.font('RB').fontSize(9).text(`Mã KH: ${bookingCode || '—'}`,
-    left, headerY, { width: usableW, align: 'right' });
-  doc.font('R').fontSize(8).text(`Ngày: ${todayDate}`,
-    left, headerY + 14, { width: usableW, align: 'right' });
-  doc.y = Math.max(doc.y, headerY + (logoPath ? 60 : 44));
-
-  // Title
-  doc.moveDown(0.3);
-  doc.font('RB').fontSize(16).fillColor('#000')
-     .text('BIÊN BẢN BÀN GIAO', { align: 'center' });
-  doc.font('RI').fontSize(9).fillColor('#444')
-     .text('(Handover Record / Proof of Delivery)', { align: 'center' });
-  doc.fillColor('#000');
-  doc.moveDown(0.3);
-}
-
-function drawSignatures(doc) {
-  const left = doc.page.margins.left;
-  const right = doc.page.width - doc.page.margins.right;
-  const usableW = right - left;
-  const pageH = doc.page.height;
-  const sigY = Math.max(doc.y + 8, pageH - 130);
-  const colGap = 12;
-  const sigW = (usableW - colGap) / 2;
-  // Box headers
-  doc.rect(left, sigY, sigW, 22).fillAndStroke('#f3f4f6', '#999');
-  doc.rect(left + sigW + colGap, sigY, sigW, 22).fillAndStroke('#f3f4f6', '#999');
-  doc.fillColor('#000').font('RB').fontSize(9)
-     .text('ĐẠI DIỆN GIAO', left, sigY + 4, { width: sigW, align: 'center' });
-  doc.font('RI').fontSize(7).fillColor('#555')
-     .text('(Deliverer)', left, sigY + 14, { width: sigW, align: 'center' });
-  doc.font('RB').fontSize(9).fillColor('#000')
-     .text('ĐẠI DIỆN NHẬN HÀNG', left + sigW + colGap, sigY + 4, { width: sigW, align: 'center' });
-  doc.font('RI').fontSize(7).fillColor('#555')
-     .text('(Receiver Representative)', left + sigW + colGap, sigY + 14, { width: sigW, align: 'center' });
-  doc.fillColor('#000');
-  // Sign area
-  const signAreaH = 60;
-  doc.rect(left, sigY + 22, sigW, signAreaH).stroke('#999');
-  doc.rect(left + sigW + colGap, sigY + 22, sigW, signAreaH).stroke('#999');
-  doc.font('RI').fontSize(8).fillColor('#888')
-     .text('Ký, ghi rõ họ tên', left, sigY + 22 + signAreaH - 14,
-       { width: sigW, align: 'center' });
-  doc.text('Ký, ghi rõ họ tên', left + sigW + colGap, sigY + 22 + signAreaH - 14,
-       { width: sigW, align: 'center' });
-  doc.fillColor('#000');
-}
-
-function drawPageFooter(doc, pageIdx, pageTotal, creatorName) {
-  const left = doc.page.margins.left;
-  const right = doc.page.width - doc.page.margins.right;
-  const usableW = right - left;
-  const footerY = doc.page.height - doc.page.margins.bottom - 12;
-  const stamp = new Date().toLocaleString('vi-VN', { hour12: false });
-  doc.font('RI').fontSize(7).fillColor('#666')
-     .text(`Generated ${stamp}   |   page ${pageIdx}/${pageTotal}   |   by ${creatorName || ''}`,
-       left, footerY, { width: usableW, align: 'center' });
-  doc.fillColor('#000');
-}
-
-// CP4.3 — Per-booking page renderer. Shared between the multi-booking and
-// single-booking entrypoints so layout stays in lockstep. ctx must carry
-// the job, the booking, the pre-computed invoice/cargo totals, and the
-// page index/total for the footer "page N/M" stamp.
+const { fmtVnDateTime: fmtDtVn, fmtVnHanLenh: fmtHanLenhVn, fmtVnDate } = require('../utils/vnTime');
+// The old colored-block "Design B" drawing helpers (drawTwoColInfoBox /
+// drawBoxedSection / drawPageHeader / drawSignatures / drawPageFooter) and the
+// unused fmtCostVn / fmtWeightsList formatters were removed on 2026-07-22:
+// every BBBG entrypoint now renders through renderClassicBbbg, so a second
+// layout can no longer drift out of sync with the first (L24/L30).
+// CP4.3 — Per-booking page renderer. Maps the job + booking rows onto the FLAT
+// shape renderClassicBbbg expects, so the "Xem BBBG" preview and the emailed
+// attachment render the SAME classic layout as the manual export. (Before the
+// 2026-07-22 redesign this drew its own colored-block layout — the two designs
+// drifted and the DD-facing preview kept the old look after the manual export
+// was redesigned. One renderer now, per L30.)
 function renderBookingPage(doc, {
   job, booking: b, today, inv, totalWeightStr, weightUnit,
   pageIdx, pageTotal, creatorName,
 }) {
-  drawPageHeader(doc, b.booking_code, today);
-
-  const left = doc.page.margins.left;
-  const right = doc.page.width - doc.page.margins.right;
-  const usableW = right - left;
-
-  let y = doc.y;
-  y = drawTwoColInfoBox(doc, left, y, usableW,
-    'THÔNG TIN CHUNG', 'General Info', [
-      { label: 'Số lô hàng',     en: 'Job ID',         value: job.job_code },
-      { label: 'Ngày phát hành', en: 'Date',           value: today },
-      { label: 'Người gửi',      en: 'Shipper',        value: job.shipper },
-      { label: 'Người nhận',     en: 'Consignee',      value: job.customer_name },
-      { label: 'Tàu',            en: 'Vessel',         value: job.vessel },
-      { label: 'Chuyến',         en: 'Voy.',           value: job.voy },
-      { label: 'Từ',             en: 'From',           value: job.pol },
-      { label: 'Đến cảng',       en: 'Terminal',       value: job.pod },
-      { label: 'Hãng tàu',       en: 'Shipping line',  value: job.shipping_line },
-      { label: 'Hạn lệnh',       en: 'Cutoff',         value: fmtHanLenhVn(job.han_lenh, job.import_export) },
-      { label: 'Vận đơn phụ',    en: 'H-B/L',          value: job.hbl_no },
-      { label: 'Vận đơn chính',  en: 'M-B/L',          value: job.mbl_no },
-    ]);
-  y += 6;
-
   const conts = Array.isArray(b.containers) ? b.containers : [];
-  const contRows = [];
-  if (conts.length === 0) {
-    contRows.push(['Số container', 'Container No.', '—']);
-    contRows.push(['Loại',         'Type',          '—']);
-    contRows.push(['Seal',         'Seal No.',      '—']);
-    contRows.push(['Trọng lượng',  'Weight',        '—']);
-  } else {
-    conts.forEach((c, i) => {
-      const prefix = conts.length > 1 ? `Cont ${i + 1} — ` : '';
-      contRows.push([prefix + 'Số container', 'Container No.', c.cont_number || '(chưa số)']);
-      contRows.push([prefix + 'Loại',         'Type',          c.cont_type   || '—']);
-      contRows.push([prefix + 'Seal',         'Seal No.',      c.seal_number || '—']);
-      const w = c.weight_tons;
-      const wStr = (w != null && w !== '')
-        ? `${Number(w).toLocaleString('vi-VN')} TONS`
-        : '—';
-      contRows.push([prefix + 'Trọng lượng',  'Weight',        wStr]);
-    });
-  }
-  y = drawBoxedSection(doc, left, y, usableW,
-    'CONTAINER', 'Container Info', contRows);
-  y += 6;
+  const isFcl = (job.cargo_type || 'fcl') === 'fcl';
 
-  y = drawTwoColInfoBox(doc, left, y, usableW,
-    'HÀNG HÓA', 'Cargo Info', [
-      { label: 'Tên hàng hóa', en: 'Description', value: job.goods_description || 'AS PER BILL' },
-      { label: 'Trọng lượng', en: 'Weight',     value: totalWeightStr },
-      { label: 'Đơn vị',      en: 'Unit',       value: weightUnit },
-      { label: 'Số kiện',     en: 'Pieces',     value: job.so_kien != null ? String(job.so_kien) : '—' },
-    ]);
-  y += 6;
+  // Booking-level notes (b.note/b.notes) and the driver warning (b.bbbg_note)
+  // used to be free-standing lines under the boxes — they now ride along in
+  // Ghi chú, below the standing SLB invoice block, so neither is lost.
+  const remarkParts = [];
+  if (b.note || b.notes)  remarkParts.push(String(b.note || b.notes));
+  if (b.bbbg_note)        remarkParts.push(`⚠️ Lưu ý cho tài xế: ${String(b.bbbg_note)}`);
 
-  y = drawTwoColInfoBox(doc, left, y, usableW,
-    'THÔNG TIN GIAO HÀNG', 'Delivery Info', [
-      { label: 'Ngày giờ giao',          en: 'Delivery time',     value: fmtDtVn(b.planned_datetime) },
-      { label: 'Địa điểm giao',          en: 'Delivery location', value: b.delivery_location },
-      { label: 'Người liên hệ tại kho',  en: 'Warehouse contact', value: b.receiver_name },
-      { label: 'SĐT',                    en: 'Phone',             value: b.receiver_phone },
-    ]);
-  y += 6;
-
-  if (inv) {
-    y = drawBoxedSection(doc, left, y, usableW,
-      'THÔNG TIN XUẤT HÓA ĐƠN NÂNG HẠ', 'Lift/Drop Invoice', [
-        ['Tên công ty', 'Company',  inv.company],
-        ['MST',         'Tax code', inv.tax],
-        ['Địa chỉ',     'Address',  inv.address],
-      ]);
-    y += 6;
-  }
-
-  doc.y = y;
-  if (b.note || b.notes) {
-    doc.font('RB').fontSize(9).fillColor('#000')
-       .text('Ghi chú: ', left, doc.y, { continued: true })
-       .font('R').text(String(b.note || b.notes));
-  }
-  if (b.bbbg_note) {
-    doc.font('RB').fontSize(9).fillColor('#d97706')
-       .text('⚠️ Lưu ý cho tài xế: ', { continued: true })
-       .font('R').fillColor('#b45309').text(String(b.bbbg_note));
-    doc.fillColor('#000');
-  }
-
-  drawSignatures(doc);
-  drawPageFooter(doc, pageIdx, pageTotal, creatorName);
+  renderClassicBbbg(doc, {
+    job_code:   job.job_code,
+    today_date: today,
+    booking_code: b.booking_code,
+    shipper:    job.shipper,
+    consignee:  job.customer_name,
+    vessel:     job.vessel,
+    voy:        job.voy,
+    from_:      job.pol,
+    terminal:   job.pod,
+    hbl_no:     job.hbl_no,
+    mbl_no:     job.mbl_no,
+    shipping_line: job.shipping_line,
+    han_lenh_str:  job.han_lenh ? fmtHanLenhVn(job.han_lenh, job.import_export) : '',
+    // Containers of THIS booking (L20 M:N) — the classic table loops them.
+    containers: conts,
+    description:  job.goods_description,          // '' -> AS PER BILL in the cell
+    weight_value: isFcl ? job.tons : job.kg,
+    weight_unit:  weightUnit,
+    cbm:          job.cbm,
+    so_kien:      job.so_kien,
+    // Lift/drop invoice info (may be SLB's own per InvoiceRecipientModal).
+    invoice_company_name: inv ? inv.company : '',
+    invoice_tax_code:     inv ? inv.tax     : '',
+    invoice_address:      inv ? inv.address : '',
+    delivery_company: job.customer_name,
+    delivery_address: b.delivery_location,
+    recipient_name:   b.receiver_name,
+    recipient_phone:  b.receiver_phone,
+    delivery_date:    fmtDtVn(b.planned_datetime, ''),   // already "DD/MM/YYYY HH:mm"
+    delivery_time:    '',
+    remarks:          remarkParts.join('\n'),
+    creator_name:     creatorName,
+  }, { pageIdx, pageTotal });
 }
 
 // Per-job context (invoice + cargo totals) — same for every page of a job.
@@ -666,7 +473,9 @@ function buildPageCtx({ job, invoiceInfo }) {
   const totalWeightStr = (totalWeight != null && totalWeight !== '')
     ? `${Number(totalWeight).toLocaleString('vi-VN')} ${weightUnit}`
     : '—';
-  const today = new Date().toLocaleDateString('vi-VN');
+  // L3 — VN-anchored issue date. A timeZone-less toLocaleDateString prints the
+  // UTC day on Railway, which flips a day early every evening after 17:00 VN.
+  const today = fmtVnDate(new Date());
   return { today, inv, totalWeightStr, weightUnit };
 }
 
@@ -688,7 +497,7 @@ async function generateMultiBookingBBBG({
   const { rows: [job] } = await db.query(
     `SELECT id, job_code, customer_name, han_lenh, import_export,
             pol, pod, hbl_no, mbl_no,
-            cargo_type, tons, kg, so_kien,
+            cargo_type, tons, kg, so_kien, cbm,
             shipper, vessel, voy, shipping_line, goods_description
        FROM jobs WHERE id = $1 AND deleted_at IS NULL`,
     [jobId]
@@ -775,7 +584,7 @@ async function generateSingleBookingBBBG({
   const { rows: [job] } = await db.query(
     `SELECT id, job_code, customer_name, han_lenh, import_export,
             pol, pod, hbl_no, mbl_no,
-            cargo_type, tons, kg, so_kien,
+            cargo_type, tons, kg, so_kien, cbm,
             shipper, vessel, voy, shipping_line, goods_description
        FROM jobs WHERE id = $1 AND deleted_at IS NULL`,
     [jobId]
