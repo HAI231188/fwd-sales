@@ -21,9 +21,16 @@ const db = require('../db');
 // here — it stays exported from email-sender.js for any future international doc.
 const { SLB_INVOICE_INFO } = require('./email-sender');
 
-const FONT_REGULAR = path.join(__dirname, '..', 'assets', 'fonts', 'Roboto-Regular.ttf');
-const FONT_BOLD    = path.join(__dirname, '..', 'assets', 'fonts', 'Roboto-Bold.ttf');
-const FONT_ITALIC  = path.join(__dirname, '..', 'assets', 'fonts', 'Roboto-Italic.ttf');
+// Primary = Tinos: a Times New Roman metric-compatible serif with COMPLETE
+// Vietnamese coverage (matches the KSVINA target). Roboto stays bundled as a
+// fallback so Vietnamese still renders if the Tinos files are ever missing.
+const FONTS_DIR = path.join(__dirname, '..', 'assets', 'fonts');
+const FONT_REGULAR = path.join(FONTS_DIR, 'Tinos-Regular.ttf');
+const FONT_BOLD    = path.join(FONTS_DIR, 'Tinos-Bold.ttf');
+const FONT_ITALIC  = path.join(FONTS_DIR, 'Tinos-Italic.ttf');
+const FONT_REGULAR_FALLBACK = path.join(FONTS_DIR, 'Roboto-Regular.ttf');
+const FONT_BOLD_FALLBACK    = path.join(FONTS_DIR, 'Roboto-Bold.ttf');
+const FONT_ITALIC_FALLBACK  = path.join(FONTS_DIR, 'Roboto-Italic.ttf');
 // pdfkit's doc.image() detects format from magic bytes, not extension — so a
 // .jpeg with PNG extension would still work. Prefer the actual file we ship.
 const LOGO_CANDIDATES = [
@@ -37,14 +44,19 @@ function fileExists(p) {
 }
 
 function registerFonts(doc) {
-  // If a Vietnamese-capable TTF is bundled, use it. Otherwise fall back to
-  // pdfkit's built-in Helvetica — diacritics will render as boxes, but the
-  // PDF still generates so the endpoint never breaks.
-  if (fileExists(FONT_REGULAR)) doc.registerFont('R',  FONT_REGULAR);  else doc.registerFont('R',  'Helvetica');
-  if (fileExists(FONT_BOLD))    doc.registerFont('RB', FONT_BOLD);     else doc.registerFont('RB', 'Helvetica-Bold');
-  if (fileExists(FONT_ITALIC))  doc.registerFont('RI', FONT_ITALIC);   else doc.registerFont('RI', 'Helvetica-Oblique');
+  // Prefer Tinos (Times-style serif, VN-complete). Fall back to Roboto (also
+  // VN-complete — diacritics still render, just not the serif look), and only
+  // as a last resort to pdfkit's built-in Helvetica (no diacritics) so the
+  // endpoint never breaks. Same R/RB/RI aliases → no draw-call site changes.
+  const pick = (primary, fallback, builtin) =>
+    fileExists(primary) ? primary : (fileExists(fallback) ? fallback : builtin);
+  doc.registerFont('R',  pick(FONT_REGULAR, FONT_REGULAR_FALLBACK, 'Helvetica'));
+  doc.registerFont('RB', pick(FONT_BOLD,    FONT_BOLD_FALLBACK,    'Helvetica-Bold'));
+  doc.registerFont('RI', pick(FONT_ITALIC,  FONT_ITALIC_FALLBACK,  'Helvetica-Oblique'));
   if (!fileExists(FONT_REGULAR)) {
-    console.warn('[bbbg-pdf] Roboto TTF not found — Vietnamese diacritics will not render. Drop fonts into backend/src/assets/fonts/ to enable.');
+    console.warn(fileExists(FONT_REGULAR_FALLBACK)
+      ? '[bbbg-pdf] Tinos TTF not found — falling back to Roboto (Vietnamese renders, but not the Times-style serif). Drop Tinos-*.ttf into backend/src/assets/fonts/ to restore the serif.'
+      : '[bbbg-pdf] Neither Tinos nor Roboto TTF found — Vietnamese diacritics will NOT render. Drop fonts into backend/src/assets/fonts/ to enable.');
   }
 }
 
@@ -161,27 +173,51 @@ function renderClassicBbbg(doc, data, { pageIdx = 1, pageTotal = 1 } = {}) {
   const headerY = doc.y;
   const logoPath = LOGO_CANDIDATES.find(fileExists) || null;
   const hasLogo = !!logoPath;
+  const LOGO_W = 230;
+  // logoBottom = the logo's ACTUAL rendered bottom, measured from the image's
+  // real pixel dimensions (drawn height = LOGO_W × img.height/img.width), not a
+  // guessed constant. No logo → the letterhead text alone defines the bottom.
+  let logoBottom = headerY;
   if (hasLogo) {
-    try { doc.image(logoPath, left, headerY, { width: 90 }); } catch { /* skip */ }
+    try {
+      const img = doc.openImage(logoPath);
+      doc.image(img, left, headerY, { width: LOGO_W });
+      logoBottom = headerY + LOGO_W * (img.height / img.width);
+    } catch { /* skip */ }
   }
-  const headX = left + (hasLogo ? 104 : 0);
-  const headW = right - headX;
+  const headX = left + (hasLogo ? 244 : 0);
+  // Nudge the letterhead text block a bit further right of the logo (KSVINA
+  // look), while keeping it centered in its own block and inside the right
+  // margin. With the 230pt logo the right strip is tight (headX abs ≈280,
+  // widest line ≈266pt), so the nudge is small: at +6 the block width is
+  // ≈273pt (≈7pt slack) — bigger nudges would wrap the address line.
+  const letterX = headX + (hasLogo ? 6 : 0);
+  const headW = right - letterX;
   doc.font('RB').fontSize(12).fillColor('#000')
-     .text(SLB_LETTERHEAD_EN.company, headX, headerY, { width: headW, align: 'center' });
+     .text(SLB_LETTERHEAD_EN.company, letterX, headerY, { width: headW, align: 'center' });
   doc.font('R').fontSize(8).fillColor('#000');
-  doc.text(SLB_LETTERHEAD_EN.address, headX, doc.y + 2, { width: headW, align: 'center' });
-  doc.text(SLB_LETTERHEAD_EN.tel,     headX, doc.y + 1, { width: headW, align: 'center' });
-  doc.text(SLB_LETTERHEAD_EN.web,     headX, doc.y + 1, { width: headW, align: 'center' });
-  doc.y = Math.max(doc.y, headerY + (hasLogo ? 70 : 50));
-  // Letterhead rule
-  doc.moveTo(left, doc.y + 4).lineTo(right, doc.y + 4).strokeColor('#000').lineWidth(1).stroke();
+  doc.text(SLB_LETTERHEAD_EN.address, letterX, doc.y + 2, { width: headW, align: 'center' });
+  doc.text(SLB_LETTERHEAD_EN.tel,     letterX, doc.y + 1, { width: headW, align: 'center' });
+  doc.text(SLB_LETTERHEAD_EN.web,     letterX, doc.y + 1, { width: headW, align: 'center' });
+  // Header bottom computed DYNAMICALLY from actual content — NO hardcoded
+  // reserve. Take the lower of the logo's real drawn bottom (logoBottom) and
+  // the letterhead text bottom (current doc.y, after the last Website/Email
+  // line), then a small gap. This removes the dead space the old fixed reserve
+  // (160) left when the logo/letterhead ended well above it.
+  const textBottom = doc.y;
+  const headerBottom = Math.max(logoBottom, textBottom) + 7;
+  // Letterhead rule at the measured header bottom.
+  doc.moveTo(left, headerBottom).lineTo(right, headerBottom).strokeColor('#000').lineWidth(1).stroke();
   doc.lineWidth(1);
-  doc.y += 8;
+  doc.y = headerBottom + 4;
 
-  // Title
+  // Title — centered across the FULL page width (left → right margin), NOT the
+  // right-hand letterhead block, so it doesn't look shifted toward the logo.
+  // Passing explicit x=left + width=usableW forces the full-page centering
+  // (default centering would use the current doc.x, which sits under the logo).
   doc.moveDown(0.5);
-  doc.font('RB').fontSize(16).text('BIÊN BẢN GIAO HÀNG', { align: 'center' });
-  doc.font('RI').fontSize(10).fillColor('#444').text('(Proof of Delivery)', { align: 'center' });
+  doc.font('RB').fontSize(16).text('BIÊN BẢN GIAO HÀNG', left, doc.y, { width: usableW, align: 'center' });
+  doc.font('RI').fontSize(10).fillColor('#444').text('(Proof of Delivery)', left, doc.y, { width: usableW, align: 'center' });
   doc.fillColor('#000');
 
   // Top-right meta (Job ID + Date)
@@ -367,26 +403,6 @@ function renderClassicBbbg(doc, data, { pageIdx = 1, pageTotal = 1 } = {}) {
 
   doc.y = rowY + 10;
 
-  // Invoice info section (L15) — render only if at least one of the 3 fields is non-empty.
-  const invCompany = (data.invoice_company_name || '').trim();
-  const invTax     = (data.invoice_tax_code     || '').trim();
-  const invAddr    = (data.invoice_address      || '').trim();
-  if (invCompany || invTax || invAddr) {
-    doc.font('RB').fontSize(10).text('Thông tin xuất hóa đơn', left);
-    doc.font('RI').fontSize(8.5).fillColor('#444').text('(Invoice information)', left, doc.y);
-    doc.fillColor('#000');
-    doc.moveDown(0.5);
-    // Values BOLD — this block is the legally-relevant entity on the sheet.
-    // The DATA is untouched: invCompany/invTax/invAddr already reflect whatever
-    // the user picked in InvoiceRecipientModal (customer / SLB / custom).
-    let iy = doc.y;
-    const invOpts = { bold: true, rowH: 20 };
-    iy = fieldRow(doc, 'Tên công ty (xuất HĐ)', 'Company name (for invoice)', invCompany, left, iy, labelW, usableW - labelW, invOpts);
-    iy = fieldRow(doc, 'MST',                   'Tax code',                   invTax,     left, iy, labelW, usableW - labelW, invOpts);
-    iy = fieldRow(doc, 'Địa chỉ',               'Address',                    invAddr,    left, iy, labelW, usableW - labelW, invOpts);
-    doc.y = iy + 4;
-  }
-
   // Delivery confirmation block — the static certification line always prints,
   // regardless of which delivery fields are filled in.
   doc.font('RB').fontSize(10).text('Đã được giao trong tình trạng hoàn hảo đến:', left);
@@ -405,7 +421,7 @@ function renderClassicBbbg(doc, data, { pageIdx = 1, pageTotal = 1 } = {}) {
 
   // Compact pitch (19 vs 22) so the five delivery fields read as one tight
   // group, matching the target's stacked block.
-  const DLV = { rowH: 19 };
+  const DLV = { rowH: 16 };  // compressed from 19 to help fit one page
   let dy = doc.y;
   dy = fieldRow(doc, 'Công ty',        'Công ty',              data.delivery_company || data.consignee, left, dy, labelW, usableW - labelW, DLV);
   dy = fieldRow(doc, 'Tại địa chỉ',    'Address',              data.delivery_address,                   left, dy, labelW, usableW - labelW, DLV);
@@ -415,13 +431,44 @@ function renderClassicBbbg(doc, data, { pageIdx = 1, pageTotal = 1 } = {}) {
   // invoice text — the invoice block above owns that, per the user's pick.
   dy = fieldRowWrap(doc, 'Ghi chú',    'Remarks',              String(data.remarks || '').trim(),       left, dy, labelW, usableW - labelW);
 
-  // Signatures — anchored near the page bottom, but never allowed to run into
-  // the footer when a long Ghi chú pushes the block down (the booking pages
-  // append booking notes + the driver warning under the invoice block).
-  // When a long Ghi chú (or an auto-expanded table) has pushed the content
-  // past that point, the block moves to a fresh page rather than overlapping
-  // — clamping it upward would draw the signatures on top of the remarks.
+  // Bottom limit shared by the invoice block + signatures — content past this
+  // moves to a fresh page rather than overlapping the footer.
   const sigYMax = pageH - doc.page.margins.bottom - 14 - 34;
+
+  // Invoice info section (L15) — MOVED here (after Ghi chú, before the
+  // signatures) to match the KSVINA target. Content + formatting UNCHANGED:
+  // bold values, same 3 fields, still conditional on having data, and the DATA
+  // is untouched — invCompany/invTax/invAddr still reflect whatever the user
+  // picked in InvoiceRecipientModal (customer / SLB / custom). Only POSITION
+  // changed. It advances `dy`, so the signature clamp below still accounts for
+  // it; if it would run into the footer it takes a fresh page first.
+  const invCompany = (data.invoice_company_name || '').trim();
+  const invTax     = (data.invoice_tax_code     || '').trim();
+  const invAddr    = (data.invoice_address      || '').trim();
+  if (invCompany || invTax || invAddr) {
+    const invBlockH = 25 + 3 * 20 + 6; // heading + 3 bold rows + padding
+    if (dy + invBlockH > sigYMax) {
+      doc.addPage({ size: 'A4', margin: 36 });
+      dy = doc.page.margins.top;
+    }
+    doc.y = dy + 2;
+    doc.font('RB').fontSize(10).text('Thông tin xuất hóa đơn', left);
+    doc.font('RI').fontSize(8.5).fillColor('#444').text('(Invoice information)', left, doc.y);
+    doc.fillColor('#000');
+    doc.moveDown(0.25);
+    let iy = doc.y;
+    const invOpts = { bold: true, rowH: 18 };  // compressed from 20 to help fit one page
+    iy = fieldRow(doc, 'Tên công ty (xuất HĐ)', 'Company name (for invoice)', invCompany, left, iy, labelW, usableW - labelW, invOpts);
+    iy = fieldRow(doc, 'MST',                   'Tax code',                   invTax,     left, iy, labelW, usableW - labelW, invOpts);
+    iy = fieldRow(doc, 'Địa chỉ',               'Address',                    invAddr,    left, iy, labelW, usableW - labelW, invOpts);
+    dy = iy + 4;
+  }
+
+  // Signatures — anchored near the page bottom, but never allowed to run into
+  // the footer when a long Ghi chú / invoice block pushes the content down.
+  // When content has pushed past that point, the block moves to a fresh page
+  // rather than overlapping — clamping it upward would draw the signatures on
+  // top of the remarks.
   let sigY;
   if (dy + 24 > sigYMax) {
     doc.addPage({ size: 'A4', margin: 36 });
