@@ -167,55 +167,41 @@ function renderClassicBbbg(doc, data, { pageIdx = 1, pageTotal = 1 } = {}) {
   const right = pageW - doc.page.margins.right;
   const usableW = right - left;
 
-  // Header — logo top-left, English letterhead centered in the block to its
-  // right. Degrades gracefully to a full-width centered letterhead when the
-  // logo asset is missing.
-  const headerY = doc.y;
-  const logoPath = LOGO_CANDIDATES.find(fileExists) || null;
-  const hasLogo = !!logoPath;
-  const LOGO_W = 230;
-  // logoBottom = the logo's ACTUAL rendered bottom, measured from the image's
-  // real pixel dimensions (drawn height = LOGO_W × img.height/img.width), not a
-  // guessed constant. No logo → the letterhead text alone defines the bottom.
-  let logoBottom = headerY;
-  if (hasLogo) {
+  // Header — a SINGLE pre-made banner image (logo + full SLB company info)
+  // replacing the former hand-drawn logo + letterhead text. The supplied PNG
+  // (1331×239) has transparent PADDING around its content — measured bbox in
+  // px: left 41, top 46, right 141, bottom 3 (content fills ~86% × ~79%). Drawn
+  // raw, that padding leaves an empty gap above the logo and makes it look
+  // small/right-shifted. So we scale the CONTENT region up to the full content
+  // width and CLIP away the padding: proportional (no distortion), top-anchored
+  // at the top margin, spanning left→right margin. The title below stays
+  // hand-drawn. No rule. Degrades gracefully if the asset is missing.
+  // (If the header is ever re-exported tightly cropped, delete the clip and
+  // just do doc.image(himg, left, headerY, { width: usableW }).)
+  const headerY = doc.page.margins.top;
+  const headerImgPath = path.join(__dirname, '..', 'assets', 'slb_header.png');
+  let headerBottom = headerY;
+  if (fileExists(headerImgPath)) {
     try {
-      const img = doc.openImage(logoPath);
-      doc.image(img, left, headerY, { width: LOGO_W });
-      logoBottom = headerY + LOGO_W * (img.height / img.width);
-    } catch { /* skip */ }
+      const himg = doc.openImage(headerImgPath);
+      const CX = 41, CY = 46, CW = 1149, CH = 190; // content bbox (px) in slb_header.png
+      const scale = usableW / CW;                  // content width → full content width
+      const clipH = CH * scale;                    // visible (padding-cropped) header height
+      doc.save();
+      doc.rect(left, headerY, usableW, clipH).clip();
+      doc.image(himg, left - CX * scale, headerY - CY * scale, { width: himg.width * scale });
+      doc.restore();
+      headerBottom = headerY + clipH;
+    } catch { /* skip — header simply absent */ }
   }
-  const headX = left + (hasLogo ? 244 : 0);
-  // Nudge the letterhead text block a bit further right of the logo (KSVINA
-  // look), while keeping it centered in its own block and inside the right
-  // margin. With the 230pt logo the right strip is tight (headX abs ≈280,
-  // widest line ≈266pt), so the nudge is small: at +6 the block width is
-  // ≈273pt (≈7pt slack) — bigger nudges would wrap the address line.
-  const letterX = headX + (hasLogo ? 6 : 0);
-  const headW = right - letterX;
-  doc.font('RB').fontSize(12).fillColor('#000')
-     .text(SLB_LETTERHEAD_EN.company, letterX, headerY, { width: headW, align: 'center' });
-  doc.font('R').fontSize(8).fillColor('#000');
-  doc.text(SLB_LETTERHEAD_EN.address, letterX, doc.y + 2, { width: headW, align: 'center' });
-  doc.text(SLB_LETTERHEAD_EN.tel,     letterX, doc.y + 1, { width: headW, align: 'center' });
-  doc.text(SLB_LETTERHEAD_EN.web,     letterX, doc.y + 1, { width: headW, align: 'center' });
-  // Header bottom computed DYNAMICALLY from actual content — NO hardcoded
-  // reserve. Take the lower of the logo's real drawn bottom (logoBottom) and
-  // the letterhead text bottom (current doc.y, after the last Website/Email
-  // line), then a small gap. This removes the dead space the old fixed reserve
-  // (160) left when the logo/letterhead ended well above it.
-  const textBottom = doc.y;
-  const headerBottom = Math.max(logoBottom, textBottom) + 7;
-  // Letterhead rule at the measured header bottom.
-  doc.moveTo(left, headerBottom).lineTo(right, headerBottom).strokeColor('#000').lineWidth(1).stroke();
-  doc.lineWidth(1);
-  doc.y = headerBottom + 4;
+  headerBottom += 6; // small gap so the title follows closely
+  doc.y = headerBottom;
 
   // Title — centered across the FULL page width (left → right margin), NOT the
   // right-hand letterhead block, so it doesn't look shifted toward the logo.
   // Passing explicit x=left + width=usableW forces the full-page centering
   // (default centering would use the current doc.x, which sits under the logo).
-  doc.moveDown(0.5);
+  doc.moveDown(0.15);
   doc.font('RB').fontSize(16).text('BIÊN BẢN GIAO HÀNG', left, doc.y, { width: usableW, align: 'center' });
   doc.font('RI').fontSize(10).fillColor('#444').text('(Proof of Delivery)', left, doc.y, { width: usableW, align: 'center' });
   doc.fillColor('#000');
