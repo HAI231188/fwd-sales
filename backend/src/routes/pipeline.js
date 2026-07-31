@@ -7,11 +7,20 @@ async function applyAutoTransitions(client, salesId) {
   // 1. new/following → dormant: no activity for 7+ days
   //    Skip soft-deleted pipelines (Data khách hàng can soft-delete via deleted_at).
   const { rows: dormantCands } = await client.query(`
-    SELECT id, stage FROM customer_pipeline
-    WHERE sales_id = $1
-      AND deleted_at IS NULL
-      AND stage IN ('new', 'following')
-      AND (last_activity_date IS NULL OR last_activity_date < CURRENT_DATE - INTERVAL '7 days')
+    SELECT cp.id, cp.stage FROM customer_pipeline cp
+    WHERE cp.sales_id = $1
+      AND cp.deleted_at IS NULL
+      AND cp.stage IN ('new', 'following')
+      AND (cp.last_activity_date IS NULL OR cp.last_activity_date < CURRENT_DATE - INTERVAL '7 days')
+      AND NOT EXISTS (
+        -- "Has ever had a shipment" guard: ANY job (completed, pending, or even
+        -- soft-deleted/cancelled) permanently exempts this customer from the
+        -- 7-day-stale dormant demotion. Only genuine zero-job leads go dormant.
+        -- Matches by the same (customer_id OR LOWER(name)) key used everywhere
+        -- else jobs are linked to a pipeline row (L14, customer-search, etc.).
+        SELECT 1 FROM jobs j
+        WHERE j.customer_id = cp.customer_id OR LOWER(j.customer_name) = LOWER(cp.company_name)
+      )
   `, [salesId]);
 
   if (dormantCands.length > 0) {

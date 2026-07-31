@@ -2376,6 +2376,33 @@ router.put('/:id', requireAuth, async (req, res) => {
       jobCompleted = await checkAndCompleteJob(client, req.params.id, req.user.id);
     }
 
+    // ── Re-assert customer_pipeline stage='booked' (mirrors the POST L14
+    // upsert at jobs.js:~1638-1673, which only fires at job CREATION). PUT never
+    // touched customer_pipeline before this — editing an existing job is proof
+    // the customer has an active shipment, so any edit (not just customer-field
+    // edits) re-asserts 'booked' + refreshes last_activity_date. Read the FINAL
+    // customer_name/sales_id/customer_id post-update (req.body may not include
+    // them if this edit touched unrelated fields). Safety net alongside the
+    // applyAutoTransitions has-a-job guard (routes/pipeline.js) — see the CUS
+    // investigation: neither guard alone fully closes the gap.
+    {
+      const { rows: freshRows } = await client.query(
+        `SELECT customer_name, sales_id, customer_id FROM jobs WHERE id = $1`,
+        [req.params.id]
+      );
+      const finalJob = freshRows[0];
+      const finalCustomerName = (finalJob.customer_name || '').trim();
+      if (finalJob.sales_id && finalCustomerName) {
+        await client.query(
+          `INSERT INTO customer_pipeline (sales_id, company_name, customer_id, stage, last_activity_date)
+           VALUES ($1, $2, $3, 'booked', CURRENT_DATE)
+           ON CONFLICT (sales_id, LOWER(company_name)) WHERE deleted_at IS NULL
+             DO UPDATE SET stage = 'booked', last_activity_date = CURRENT_DATE, updated_at = NOW()`,
+          [finalJob.sales_id, finalCustomerName, finalJob.customer_id || null]
+        );
+      }
+    }
+
     await client.query('COMMIT');
     res.json({
       ok: true,
