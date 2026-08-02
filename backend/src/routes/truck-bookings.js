@@ -30,10 +30,25 @@ const { canWrite, PLAN_ROLES } = require('../constants/roles');
 function canPlan(req) { return PLAN_ROLES.includes(req.user?.role); }
 
 // ─── Booking code generator ────────────────────────────────────────────────────
-// Phase 5 Step 3 — auto-generate "Mã kế hoạch" with format "KH-{job_code}-{NN}".
-// NN is sequential per job. Critically, the MAX scan does NOT filter by
-// deleted_at — soft-deleted rows still occupy their number, so re-creating a
-// booking after delete gets the next free number (never recycles).
+// Phase 5 Step 3 — auto-generate "Mã kế hoạch" with format
+// "KH-{job_code}-{job_id}-{NN}" (2026-08-02 — job_id inserted before NN).
+// NN is sequential per job (MAX scan does NOT filter by deleted_at —
+// soft-deleted rows still occupy their number, so re-creating a booking after
+// delete gets the next free number, never recycles).
+//
+// WHY job_id is embedded: job_code is a human-readable label, NOT guaranteed
+// unique — jobs.job_code has no DB uniqueness constraint, and two job ROWS
+// (e.g. one soft-deleted, one active) can share the same job_code. Before this
+// fix, booking_code was derived from job_code alone, so two different jobs
+// sharing a job_code independently generated the IDENTICAL first booking_code
+// ("KH-{job_code}-01"), colliding on idx_truck_bookings_booking_code_uniq (a
+// global unique index, not scoped by job_id). Embedding the job's own unique
+// numeric id makes every generated code collision-proof regardless of
+// job_code duplicates, past or future — closes the bug class structurally
+// instead of patching each duplicate as it's found. The trailing NN stays the
+// last token, so the '\d+$' extraction below (and the one other reader of
+// this pattern, schema.sql's dormant one-time backfill block) still isolates
+// NN correctly — job_id sits BEFORE the final '-', so \d+$ can't cross it.
 //
 // Caller must pass an open client (we're always inside a BEGIN-COMMIT block
 // when this runs), so subsequent INSERTs in the same transaction see the
@@ -44,13 +59,20 @@ async function nextBookingCode(client, jobId) {
   );
   const jobCode = j?.job_code;
   if (!jobCode) throw new Error(`Job #${jobId} không có job_code — không thể sinh booking_code`);
+  // Scoped by the job_id COLUMN alone (exact, unambiguous) — no LIKE-on-format
+  // needed. A LIKE requiring the NEW 'KH-{job_code}-{job_id}-%' shape would
+  // miss any pre-existing OLD-format 'KH-{job_code}-%' rows already on this
+  // exact job_id, silently restarting NN at 01 instead of continuing the
+  // sequence (verified during rollout: a job with 10 pre-fix bookings would
+  // otherwise generate NN=01 for its 11th). job_id already guarantees the
+  // new code can't collide with anything, regardless of NN continuity here.
   const { rows: [{ next_n }] } = await client.query(`
     SELECT COALESCE(MAX(substring(booking_code from '\\d+$')::int), 0) + 1 AS next_n
       FROM truck_bookings
      WHERE job_id = $1
-       AND booking_code LIKE 'KH-' || $2::text || '-%'
-  `, [jobId, jobCode]);
-  return `KH-${jobCode}-${String(next_n).padStart(2, '0')}`;
+       AND booking_code IS NOT NULL
+  `, [jobId]);
+  return `KH-${jobCode}-${jobId}-${String(next_n).padStart(2, '0')}`;
 }
 
 // ─── Shared SELECT fragment ────────────────────────────────────────────────────
@@ -224,7 +246,7 @@ router.post('/', requireAuth, async (req, res) => {
       });
     }
 
-    // Generate the booking_code (Phase 5 Step 3). Format "KH-{job_code}-{NN}".
+    // Generate the booking_code (Phase 5 Step 3). Format "KH-{job_code}-{job_id}-{NN}".
     const bookingCode = await nextBookingCode(client, job_id);
 
     // Insert the booking. vehicle_number left NULL — DD fills when truck assigned.
