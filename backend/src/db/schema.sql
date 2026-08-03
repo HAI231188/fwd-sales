@@ -1033,9 +1033,11 @@ DECLARE
   total_bookings        INT;
   job_completed_at      TIMESTAMPTZ;
   job_dd_done_at        TIMESTAMPTZ;
+  job_cargo_type        VARCHAR(10);
 BEGIN
   -- CP4.5.1 + DD-split — short-circuit on the canonical completion signals.
-  SELECT completed_at, dd_completed_at INTO job_completed_at, job_dd_done_at
+  SELECT completed_at, dd_completed_at, cargo_type
+    INTO job_completed_at, job_dd_done_at, job_cargo_type
     FROM jobs WHERE id = p_job_id;
   -- CP6.5 — fail loudly on bogus job_ids so callers don't silently get
   -- 'chua_dat_kh' for non-existent jobs. Soft-deleted jobs still satisfy
@@ -1068,15 +1070,24 @@ BEGIN
     FROM truck_bookings tb
    WHERE tb.job_id = p_job_id AND tb.deleted_at IS NULL;
 
-  -- Branch: no containers (typical LCL before cont entry).
-  IF a_total_cont = 0 THEN
+  -- Branch: LCL jobs are container-less by design (2026-08-03, L38 — branch on
+  -- cargo_type, NOT container count). A job can legitimately carry a reference
+  -- job_containers row even when cargo_type='lcl' (container info noted for
+  -- tracking; an LCL booking never links to it — the bulk "Đặt kế hoạch xe"
+  -- endpoint's cross-check explicitly forbids a container_id on an LCL row).
+  -- The OLD `a_total_cont = 0` condition wrongly forced such a job through the
+  -- FCL coverage branch below, showing 'chua_dat_kh' despite a fully-planned
+  -- container-less LCL booking. FCL (or any non-LCL cargo_type) is UNCHANGED —
+  -- it still falls through to the coverage check and still requires the link.
+  IF job_cargo_type = 'lcl' THEN
     IF total_bookings = 0                THEN RETURN 'chua_dat_kh';        END IF;
     IF c_with_transport < total_bookings THEN RETURN 'du_kh_chua_chot_vt'; END IF;
     IF d_with_vehicle   < total_bookings THEN RETURN 'du_vt_chua_co_xe';   END IF;
     RETURN 'du_xe_cho_giao';
   END IF;
 
-  -- Main path: A > 0.
+  -- Main path: non-LCL (FCL etc.) — still requires full container-link
+  -- coverage via truck_booking_containers. UNCHANGED.
   IF b_booked_cont = 0            THEN RETURN 'chua_dat_kh';        END IF;
   IF b_booked_cont < a_total_cont THEN RETURN 'dat_kh_1_phan';      END IF;
   IF c_with_transport = 0              THEN RETURN 'du_kh_chua_chot_vt';   END IF;

@@ -2284,14 +2284,52 @@ router.put('/:id', requireAuth, async (req, res) => {
 
     let containersUpdated = false;
     if (Array.isArray(req.body.containers)) {
-      await client.query(`DELETE FROM job_containers WHERE job_id = $1`, [req.params.id]);
+      // RECONCILE, not delete-all-then-reinsert (2026-08-03, L38). The old
+      // unconditional DELETE cascade-deleted truck_booking_containers link
+      // rows (container_id ... ON DELETE CASCADE), silently un-planning an
+      // already-complete, already-mailed booking on an unrelated field edit —
+      // the booking row itself was never touched, so it still LOOKED fully
+      // planned while get_truck_booking_status() saw zero container coverage.
+      // Match incoming rows to existing ones by content (cont_number/cont_type/
+      // seal_number); keep matched rows AS-IS (same id, so any link survives);
+      // insert only genuinely new rows; delete an unmatched existing row ONLY
+      // if no live booking links to it — a linked row is preserved untouched
+      // rather than cascaded away (mirrors the L35 "OPS-completed KEEP"
+      // pattern: don't destroy committed work, record why it was kept).
+      const { rows: existingConts } = await client.query(
+        `SELECT jc.id, jc.cont_number, jc.cont_type, jc.seal_number,
+           EXISTS (
+             SELECT 1 FROM truck_booking_containers tbc
+             JOIN truck_bookings tb ON tb.id = tbc.booking_id
+             WHERE tbc.container_id = jc.id AND tb.deleted_at IS NULL
+           ) AS has_live_booking
+         FROM job_containers jc WHERE jc.job_id = $1`,
+        [req.params.id]
+      );
+      const sig = (n, t, s) =>
+        `${String(n || '').trim().toUpperCase()}|${String(t || '').trim().toUpperCase()}|${String(s || '').trim().toUpperCase()}`;
+      const claimed = new Set();
       for (const c of req.body.containers) {
-        if (c.cont_type) {
+        if (!c.cont_type) continue;
+        const wantSig = sig(c.cont_number, c.cont_type, c.seal_number);
+        const match = existingConts.find(e => !claimed.has(e.id) && sig(e.cont_number, e.cont_type, e.seal_number) === wantSig);
+        if (match) {
+          claimed.add(match.id); // unchanged row, id (and any link) preserved
+        } else {
           await client.query(
             `INSERT INTO job_containers (job_id, cont_number, cont_type, seal_number) VALUES ($1,$2,$3,$4)`,
             [req.params.id, c.cont_number || null, c.cont_type, c.seal_number || null]
           );
         }
+      }
+      for (const e of existingConts) {
+        if (claimed.has(e.id)) continue;
+        if (e.has_live_booking) {
+          await recordHistory(client, req.params.id, req.user.id, 'container_kept_linked',
+            null, `${e.cont_number || `#${e.id}`} (đang có booking, không xoá)`);
+          continue; // preserve — never cascade away a live booking's link
+        }
+        await client.query(`DELETE FROM job_containers WHERE id = $1`, [e.id]);
       }
       await recordHistory(client, req.params.id, req.user.id, 'containers', null, 'updated');
       containersUpdated = true;
