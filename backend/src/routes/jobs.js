@@ -2290,12 +2290,23 @@ router.put('/:id', requireAuth, async (req, res) => {
       // already-complete, already-mailed booking on an unrelated field edit —
       // the booking row itself was never touched, so it still LOOKED fully
       // planned while get_truck_booking_status() saw zero container coverage.
-      // Match incoming rows to existing ones by content (cont_number/cont_type/
-      // seal_number); keep matched rows AS-IS (same id, so any link survives);
-      // insert only genuinely new rows; delete an unmatched existing row ONLY
-      // if no live booking links to it — a linked row is preserved untouched
-      // rather than cascaded away (mirrors the L35 "OPS-completed KEEP"
-      // pattern: don't destroy committed work, record why it was kept).
+      //
+      // ID-based matching (2026-08-04, L38 follow-up). The 2026-08-03 content-
+      // signature reconcile fixed the cascade-delete but created a NARROWER
+      // gap: editing only cont_number on a linked container can't be recognized
+      // as "same row" by content signature, so the old (now-stale) row is kept
+      // linked and the edit lands as a brand-new UNLINKED row — same
+      // uncompletable symptom, reached through a routine cont_number edit
+      // instead of a full resave. Proven live on job 265 (LG26070199, rolled
+      // back): du_xe_cho_giao -> dat_kh_1_phan from a cont_number-only edit.
+      // Fix: when the incoming payload carries an id that belongs to THIS job,
+      // UPDATE that row in place — the row's identity (and therefore its
+      // truck_booking_containers link) never moves. Content-signature matching
+      // is kept as the fallback ONLY for payloads with zero owned ids (a
+      // cached pre-fix frontend bundle) — never mixed with id-mode row-by-row,
+      // so an id-less row in an otherwise id-bearing payload can only ever be
+      // inserted as new, never accidentally claim (and thereby save from
+      // deletion) an existing id-bearing row.
       const { rows: existingConts } = await client.query(
         `SELECT jc.id, jc.cont_number, jc.cont_type, jc.seal_number,
            EXISTS (
@@ -2306,20 +2317,50 @@ router.put('/:id', requireAuth, async (req, res) => {
          FROM job_containers jc WHERE jc.job_id = $1`,
         [req.params.id]
       );
+      // Scoped to THIS job_id by the query above — an id belonging to another
+      // job simply never appears here, so it can never be matched/updated
+      // (ownership guard). The UPDATE statement below also repeats
+      // `AND job_id=$5` as a second, independent check.
+      const existingById = new Map(existingConts.map(e => [e.id, e]));
       const sig = (n, t, s) =>
         `${String(n || '').trim().toUpperCase()}|${String(t || '').trim().toUpperCase()}|${String(s || '').trim().toUpperCase()}`;
+      const hasOwnedId = req.body.containers.some(c => c.id != null && existingById.has(Number(c.id)));
+
       const claimed = new Set();
-      for (const c of req.body.containers) {
-        if (!c.cont_type) continue;
-        const wantSig = sig(c.cont_number, c.cont_type, c.seal_number);
-        const match = existingConts.find(e => !claimed.has(e.id) && sig(e.cont_number, e.cont_type, e.seal_number) === wantSig);
-        if (match) {
-          claimed.add(match.id); // unchanged row, id (and any link) preserved
-        } else {
-          await client.query(
-            `INSERT INTO job_containers (job_id, cont_number, cont_type, seal_number) VALUES ($1,$2,$3,$4)`,
-            [req.params.id, c.cont_number || null, c.cont_type, c.seal_number || null]
-          );
+      if (hasOwnedId) {
+        for (const c of req.body.containers) {
+          if (!c.cont_type) continue;
+          const ownedId = c.id != null ? Number(c.id) : null;
+          const match = ownedId != null ? existingById.get(ownedId) : null;
+          if (match && !claimed.has(match.id)) {
+            claimed.add(match.id); // same row, id (and any link) never moves
+            await client.query(
+              `UPDATE job_containers SET cont_number=$1, cont_type=$2, seal_number=$3 WHERE id=$4 AND job_id=$5`,
+              [c.cont_number || null, c.cont_type, c.seal_number || null, match.id, req.params.id]
+            );
+          } else {
+            // No id, or an id this job doesn't own (foreign/stale) -> new row.
+            await client.query(
+              `INSERT INTO job_containers (job_id, cont_number, cont_type, seal_number) VALUES ($1,$2,$3,$4)`,
+              [req.params.id, c.cont_number || null, c.cont_type, c.seal_number || null]
+            );
+          }
+        }
+      } else {
+        // Legacy fallback (2026-08-03 algorithm, unchanged) — activates only
+        // when the payload carries NO owned id at all (old cached frontend).
+        for (const c of req.body.containers) {
+          if (!c.cont_type) continue;
+          const wantSig = sig(c.cont_number, c.cont_type, c.seal_number);
+          const match = existingConts.find(e => !claimed.has(e.id) && sig(e.cont_number, e.cont_type, e.seal_number) === wantSig);
+          if (match) {
+            claimed.add(match.id); // unchanged row, id (and any link) preserved
+          } else {
+            await client.query(
+              `INSERT INTO job_containers (job_id, cont_number, cont_type, seal_number) VALUES ($1,$2,$3,$4)`,
+              [req.params.id, c.cont_number || null, c.cont_type, c.seal_number || null]
+            );
+          }
         }
       }
       for (const e of existingConts) {

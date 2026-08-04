@@ -449,7 +449,7 @@ function buildDraft(job) {
     status: job.status || 'pending',
     other_services: { ...otherSvc },
     containers: Array.isArray(job.containers) && job.containers.length > 0
-      ? job.containers.map(c => ({ cont_type: c.cont_type || '', cont_number: c.cont_number || '', seal_number: c.seal_number || '', weight_tons: c.weight_tons != null ? String(c.weight_tons) : '' }))
+      ? job.containers.map(c => ({ id: c.id, cont_type: c.cont_type || '', cont_number: c.cont_number || '', seal_number: c.seal_number || '', weight_tons: c.weight_tons != null ? String(c.weight_tons) : '' }))
       : [],
   };
 }
