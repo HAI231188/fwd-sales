@@ -308,6 +308,18 @@ export default function CreateJobModal({ onClose, onCreated }) {
         return;
       }
     }
+    // Hàng nhập + FCL + có vận chuyển (DD): the container is already known before
+    // booking (unlike hàng xuất, where it doesn't exist until the empty is picked
+    // up), so DD needs at least one real cont_number to plan delivery. LCL / hàng
+    // xuất / no-truck (tk-only, ops_hp) are exempt. Create-only guard.
+    if (cargoType === 'fcl' && form.import_export === 'import' &&
+        ['truck', 'both'].includes(form.service_type)) {
+      const hasContNumber = containers.some(c => (c.cont_number || '').trim());
+      if (!hasContNumber) {
+        setInvoiceErr('Hàng nhập có vận chuyển phải nhập số cont cho ít nhất 1 container');
+        return;
+      }
+    }
     // Invoice-info guard (L15) — required only in "Khách mới" mode (new customer).
     if (searchMode === 'new') {
       const missing = !form.company_full_name?.trim() || !form.invoice_tax_code?.trim() ||

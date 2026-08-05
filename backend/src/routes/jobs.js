@@ -1558,6 +1558,20 @@ router.post('/', requireAuth, async (req, res) => {
       error: importExport === 'import' ? 'Vui lòng nhập Hạn lệnh' : 'Vui lòng nhập Cutoff time',
     });
   }
+  // Hàng nhập + FCL + có vận chuyển (DD) guard — mirrors the frontend check in
+  // CreateJobModal.jsx. Create-only (this route is POST /api/jobs only; PUT
+  // /:id is a separate handler and never runs this). LCL / hàng xuất / no-truck
+  // (tk-only, ops_hp) are exempt.
+  if ((cargo_type || 'fcl') === 'fcl' && importExport === 'import' &&
+      ['truck', 'both'].includes(service_type)) {
+    const hasContNumber = Array.isArray(containers) &&
+      containers.some(c => (c.cont_number || '').trim());
+    if (!hasContNumber) {
+      return res.status(400).json({
+        error: 'Hàng nhập có vận chuyển phải nhập số cont cho ít nhất 1 container',
+      });
+    }
+  }
 
   try {
     // Read assignment mode from DB before starting transaction
