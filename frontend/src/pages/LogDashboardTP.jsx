@@ -113,7 +113,7 @@ function OpsTaskCell({ j, taskType, taskLabel, onReassign, onAddDoiLenh, adding,
 const SVC_LABEL = { tk: 'TK', truck: 'Xe', both: 'TK+Xe', ops_hp: 'OPS HP' };
 const TK_STATUS_LABEL = {
   chua_truyen: 'Chưa truyền', dang_lam: 'Đang làm',
-  thong_quan: 'Thông quan', giai_phong: 'Giải phóng', bao_quan: 'Bảo quan',
+  thong_quan: 'Thông quan', giai_phong: 'Giải phóng', bao_quan: 'Bảo quản',
 };
 const TK_STATUS_COLOR = {
   chua_truyen: '#6b7280', dang_lam: '#d97706',
@@ -204,7 +204,7 @@ const FILTER_CONFIG = {
   tk_status: { filterType: 'select', options: [
     { value: 'chua_truyen', label: 'Chưa truyền' }, { value: 'dang_lam', label: 'Đang làm' },
     { value: 'thong_quan', label: 'Thông quan' }, { value: 'giai_phong', label: 'Giải phóng' },
-    { value: 'bao_quan', label: 'Bảo quan' },
+    { value: 'bao_quan', label: 'Bảo quản' },
   ]},
   cus: { filterType: 'text', accessor: j => j.cus_name || '' },
   // P3: the 3 OPS task columns are status cells (no text filter).

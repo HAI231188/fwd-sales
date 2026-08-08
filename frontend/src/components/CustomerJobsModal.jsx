@@ -11,7 +11,7 @@ const TK_STATUS_LABEL = {
   dang_lam:    'Đang làm',
   thong_quan:  'Thông quan',
   giai_phong:  'Giải phóng',
-  bao_quan:    'Bảo quan',
+  bao_quan:    'Bảo quản',
 };
 const TK_STATUS_COLOR = {
   chua_truyen: '#6b7280',

@@ -23,7 +23,7 @@ const TK_STATUS_OPTIONS = [
   { value: 'dang_lam',    label: 'Đang làm' },
   { value: 'thong_quan',  label: 'Thông quan' },
   { value: 'giai_phong',  label: 'Giải phóng' },
-  { value: 'bao_quan',    label: 'Bảo quan' },
+  { value: 'bao_quan',    label: 'Bảo quản' },
 ];
 const TK_STATUS_COLOR = {
   chua_truyen: '#6b7280', dang_lam: '#d97706',
@@ -283,7 +283,7 @@ const CUS_FILTER_COLS = [
   { key: 'tk_status',        label: 'Trạng thái TK',  filterType: 'select', options: [
     { value: 'chua_truyen', label: 'Chưa truyền' }, { value: 'dang_lam', label: 'Đang làm' },
     { value: 'thong_quan', label: 'Thông quan' }, { value: 'giai_phong', label: 'Giải phóng' },
-    { value: 'bao_quan', label: 'Bảo quan' },
+    { value: 'bao_quan', label: 'Bảo quản' },
   ]},
   { key: 'tq_datetime',      label: 'Ngày giờ TQ' },
   // 2026-05-25: CUS dept-level status columns.
