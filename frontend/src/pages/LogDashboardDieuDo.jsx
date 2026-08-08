@@ -18,20 +18,41 @@ import toast from 'react-hot-toast';
 // inline edits target the FIRST booking via updateTruckBooking (vs Phase 4's
 // updateJobTruck which is gone for good).
 import { getJobStats, getJobs, updateJob, requestJobDelete, createJob,
-         getTruckBookings, updateTruckBooking, deleteTruckBooking } from '../api';
+         getTruckBookings, updateTruckBooking, deleteTruckBooking, updateDdPlanNote } from '../api';
 import {
   TRUCK_BOOKING_STATUS_LABELS, TRUCK_BOOKING_STATUS_SORT_RANK,
   TRUCK_BOOKING_ACTIVE_STATUSES, truckBookingPillStyle, pillStyleByColor,
   // 2026-05-25: ddPillInfo/ddPillStyle extracted to the shared utils so TP can reuse.
   ddPillInfo, ddPillStyle,
 } from '../utils/truckBookingStatus';
-import { fmtDate } from '../utils/dateFmt';
+import { fmtDate, fmtDateTime } from '../utils/dateFmt';
 
 // waitingStatus: returns the list of "Chờ ..." items for the new Chờ column.
 //   - CUS thông quan blocker if job has TK + tk_status not terminal
 //   - OPS đổi lệnh blocker if HP + doi_lenh task incomplete
 // Reflects the owner's spec: DD's row should surface CUS + OPS state without detail.
 const TK_TERMINAL_STATUSES = ['thong_quan', 'giai_phong', 'bao_quan'];
+// Local display-enum copy (L30 exception — per-file, mirrors JobDetailModal's
+// TK_STATUS_LABEL/TK_STATUS_COLOR so the label text matches across screens).
+const TK_STATUS_LABEL = {
+  chua_truyen: 'Chưa truyền', dang_lam: 'Đang làm',
+  thong_quan: 'Thông quan', giai_phong: 'Giải phóng', bao_quan: 'Bảo quản',
+};
+const TK_STATUS_COLOR = {
+  chua_truyen: '#6b7280', dang_lam: '#d97706',
+  thong_quan: '#22c55e', giai_phong: '#3b82f6', bao_quan: '#7c3aed',
+};
+// "Cần chốt kế hoạch" prompt (2026-08-06) — TK reached a post-clearance state
+// (thông quan/giải phóng/bảo quản all count the same) but DD hasn't linked ANY
+// container to a booking yet. get_truck_booking_status() returns 'chua_dat_kh'
+// ONLY when zero containers are booked (b_booked_cont=0, confirmed against the
+// live plpgsql body in schema.sql) — the moment even one container gets a plan
+// the status becomes 'dat_kh_1_phan' or higher, so a single per-job condition
+// on the already-fetched fields (no new proxy, no new count) is exactly right:
+// full multi-container coverage is NOT required to clear the prompt.
+function ddPlanPrompt(j) {
+  return TK_TERMINAL_STATUSES.includes(j.tk_status) && j.truck_booking_status === 'chua_dat_kh';
+}
 function waitingStatus(j) {
   const items = [];
   const hasTk = j.service_type === 'tk' || j.service_type === 'both';
@@ -872,9 +893,9 @@ function BookingManagementSection({ jobs, onOpenJob, onOpenPlanning, onOpenPlan,
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead>
               <tr style={{ background: 'var(--bg)', borderBottom: '2px solid var(--border)' }}>
-                {['Job', 'Khách hàng', 'Loại', 'Trạng thái', 'Cont', 'Booking', 'Hạn lệnh / Cutoff', '']
-                  .map((h, i) => (
-                    <th key={i} style={{ padding: '10px 12px', textAlign: i === 7 ? 'right' : 'left',
+                {['Job', 'Khách hàng', 'Loại', 'Trạng thái', 'TK / Ghi chú KH', 'Cont', 'Booking', 'Hạn lệnh / Cutoff', '']
+                  .map((h, i, arr) => (
+                    <th key={i} style={{ padding: '10px 12px', textAlign: i === arr.length - 1 ? 'right' : 'left',
                       fontWeight: 600, color: 'var(--text-2)', fontSize: 11,
                       whiteSpace: 'nowrap', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
                       {h}
@@ -913,6 +934,11 @@ function BookingRow({ j, isOpen, total, booked, ieBg, ieFg, imp,
     queryFn: () => getTruckBookings(j.id),
     enabled: isOpen, // lazy — only fetch when user expands the row
   });
+  const qc = useQueryClient();
+  const noteMut = useMutation({
+    mutationFn: (note) => updateDdPlanNote(j.id, note),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['jobs'] }),
+  });
 
   const hl = j.han_lenh
     ? (imp
@@ -949,6 +975,26 @@ function BookingRow({ j, isOpen, total, booked, ieBg, ieFg, imp,
               </span>
             );
           })()}
+        </td>
+        <td style={{ ...td, minWidth: 170 }} onClick={e => e.stopPropagation()}>
+          <div style={{ fontSize: 11, whiteSpace: 'nowrap' }}>
+            {j.tk_status
+              ? <span style={{ color: TK_STATUS_COLOR[j.tk_status] || 'var(--text)', fontWeight: 600 }}>
+                  {TK_STATUS_LABEL[j.tk_status] || j.tk_status}
+                </span>
+              : <span style={{ color: 'var(--text-3)' }}>—</span>}
+            {j.tk_datetime && <span style={{ color: 'var(--text-2)', marginLeft: 4 }}>· {fmtDateTime(j.tk_datetime)}</span>}
+          </div>
+          {ddPlanPrompt(j) && (
+            <div style={{ marginTop: 3, display: 'inline-block', background: 'rgba(217,119,6,0.14)',
+              color: '#d97706', padding: '1px 6px', borderRadius: 4, fontSize: 10, fontWeight: 700,
+              whiteSpace: 'nowrap' }}>
+              ⚠ Cần chốt kế hoạch
+            </div>
+          )}
+          <div style={{ marginTop: 3 }}>
+            <InlineInput value={j.dd_plan_note} onSave={v => noteMut.mutate(v)} placeholder="Ghi chú kế hoạch..." />
+          </div>
         </td>
         <td style={{ ...td, fontWeight: 600, color: booked < total ? 'var(--warning)' : 'var(--primary)' }}>
           {booked}/{total}

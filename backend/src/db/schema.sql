@@ -999,6 +999,13 @@ UPDATE jobs
    AND completed_at IS NOT NULL
    AND dd_completed_at IS NULL;
 
+-- DD plan note (2026-08-06) — free-text scratchpad DD writes while working a
+-- customer who hasn't confirmed a delivery schedule yet (the reason, or when
+-- to follow up). Independent of job_tk.notes ("Ghi chú TK", CUS-owned — DD has
+-- no write access to that field). Mirrors the ops_hp_note precedent: a plain
+-- TEXT column on jobs, not a child table (1:1 with the job, never a list).
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS dd_plan_note TEXT;
+
 -- Job-level booking status — Phase 5 CP4.5.1 + DD-split (2026-05-24).
 -- 'hoan_thanh' UNCHANGED — still driven by jobs.completed_at IS NOT NULL
 -- (the whole job completion signal; KT/Sales/CUS/OPS/TP readers rely on this).

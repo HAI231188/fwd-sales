@@ -6,7 +6,7 @@ const { buildBbbgPdf } = require('../services/bbbg-pdf');
 const { checkAndCompleteJob: _checkAndCompleteJob, checkOpsTasksDone } = require('../services/job-completion');
 const { recordHistory } = require('../services/job-history');
 const { CUS_ROLES, AUTO_CUS_ROLES, LOG_ROLES, PLAN_ROLES } = require('../constants/roles');
-const { canViewJob, canEditJob, canEditJobTk, canReassignOwnerOrStatus } = require('../services/job-access');
+const { canViewJob, canEditJob, canEditJobTk, canEditDdPlanNote, canReassignOwnerOrStatus } = require('../services/job-access');
 const { fmtVnDeadline } = require('../utils/vnTime');
 const { reconcileJobSides } = require('../services/job-reconcile');
 const { getWeekRotation } = require('../services/ops-rotation');
@@ -3189,6 +3189,40 @@ router.patch('/:id/tk', requireAuth, async (req, res) => {
     // at status='pending' after CUS marked terminal status. Idempotent — the
     // helper early-returns when status === 'completed' already.
     await checkAndCompleteJob(client, req.params.id, req.user.id);
+
+    await client.query('COMMIT');
+    res.json(rows[0]);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// PATCH /api/jobs/:id/dd-plan-note — DD's "ghi chú kế hoạch" scratchpad
+// (2026-08-06). Assigned DD + TP/lead only (canEditDdPlanNote); read-only for
+// everyone else. Single-field UPDATE + recordHistory, mirroring PATCH /:id/tk's
+// shape but scoped to this one column.
+router.patch('/:id/dd-plan-note', requireAuth, async (req, res) => {
+  const client = await db.pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows: jobRows } = await client.query(`SELECT id, dd_plan_note FROM jobs WHERE id = $1`, [req.params.id]);
+    if (!jobRows[0]) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Không tìm thấy job' }); }
+
+    const { rows: jaRows } = await client.query(`SELECT * FROM job_assignments WHERE job_id = $1`, [req.params.id]);
+    if (!canEditDdPlanNote(req.user, jaRows[0] || null)) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: 'Không có quyền chỉnh sửa ghi chú kế hoạch' });
+    }
+
+    const note = req.body.dd_plan_note === undefined ? null : req.body.dd_plan_note;
+    const { rows } = await client.query(
+      `UPDATE jobs SET dd_plan_note = $1 WHERE id = $2 RETURNING dd_plan_note`,
+      [note, req.params.id]
+    );
+    await recordHistory(client, req.params.id, req.user.id, 'dd_plan_note', jobRows[0].dd_plan_note, note);
 
     await client.query('COMMIT');
     res.json(rows[0]);

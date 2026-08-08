@@ -107,6 +107,8 @@ export const reviewDeadlineRequest = (rid, action, new_deadline) =>
   api.patch(`/jobs/deadline-requests/${rid}/review`, { action, new_deadline });
 export const getDeadlineRequests = () => api.get('/jobs/deadline-requests');
 export const updateJobTk = (jobId, data) => api.patch(`/jobs/${jobId}/tk`, data);
+// DD "ghi chú kế hoạch" scratchpad (2026-08-06) — assigned DD + TP/lead only.
+export const updateDdPlanNote = (jobId, note) => api.patch(`/jobs/${jobId}/dd-plan-note`, { dd_plan_note: note });
 // Phase 4: updateJobTruck removed — use createTruckBooking / updateTruckBooking instead.
 export const completeJobTruck = (jobId) => api.patch(`/jobs/${jobId}/truck/complete`, {});
 // P3 (2026-06-23): "+ đổi lệnh" — add a doi_lenh task to a tk-only HP job,

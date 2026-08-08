@@ -82,10 +82,24 @@ function canReassignOwnerOrStatus(user) {
   return !!user && isTpLead(user.role);
 }
 
+// DD plan-note edit (PATCH /:id/dd-plan-note, 2026-08-06) — assigned DD +
+// TP/lead only. Mirrors canEditJobTk's shape (assigned-dept + TP/lead) but
+// scoped to dieu_do instead of CUS — canEditJob is deliberately NOT reused
+// here since it also grants the assigned sales/CUS user edit rights, which
+// this DD-owned field must not have.
+function canEditDdPlanNote(user, assignment) {
+  if (!user) return false;
+  const { role, id } = user;
+  if (isTpLead(role)) return true;
+  if (role === 'dieu_do') return !!assignment && assignment.dieu_do_id === id;
+  return false;
+}
+
 module.exports = {
   canViewJob,
   canEditJob,
   canEditJobTk,
+  canEditDdPlanNote,
   canReassignOwnerOrStatus,
   isTpLead,
 };

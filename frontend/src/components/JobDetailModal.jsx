@@ -30,11 +30,11 @@ const TK_STATUS_OPTIONS = [
   { value: 'dang_lam',    label: 'Đang làm' },
   { value: 'thong_quan',  label: 'Thông quan' },
   { value: 'giai_phong',  label: 'Giải phóng' },
-  { value: 'bao_quan',    label: 'Bảo quan' },
+  { value: 'bao_quan',    label: 'Bảo quản' },
 ];
 const TK_STATUS_LABEL = {
   chua_truyen: 'Chưa truyền', dang_lam: 'Đang làm',
-  thong_quan: 'Thông quan', giai_phong: 'Giải phóng', bao_quan: 'Bảo quan',
+  thong_quan: 'Thông quan', giai_phong: 'Giải phóng', bao_quan: 'Bảo quản',
 };
 const TK_STATUS_COLOR = {
   chua_truyen: '#6b7280', dang_lam: '#d97706',
