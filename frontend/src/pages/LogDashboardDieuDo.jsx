@@ -42,16 +42,22 @@ const TK_STATUS_COLOR = {
   chua_truyen: '#6b7280', dang_lam: '#d97706',
   thong_quan: '#22c55e', giai_phong: '#3b82f6', bao_quan: '#7c3aed',
 };
-// "Cần chốt kế hoạch" prompt (2026-08-06) — TK reached a post-clearance state
-// (thông quan/giải phóng/bảo quản all count the same) but DD hasn't linked ANY
-// container to a booking yet. get_truck_booking_status() returns 'chua_dat_kh'
-// ONLY when zero containers are booked (b_booked_cont=0, confirmed against the
-// live plpgsql body in schema.sql) — the moment even one container gets a plan
-// the status becomes 'dat_kh_1_phan' or higher, so a single per-job condition
-// on the already-fetched fields (no new proxy, no new count) is exactly right:
-// full multi-container coverage is NOT required to clear the prompt.
+// "Cần chốt kế hoạch" prompt (2026-08-06, widened 2026-08-10) — deliberately
+// its OWN constant, not TK_TERMINAL_STATUSES: that constant means "TK not yet
+// done" for waitingStatus()'s CUS blocker below, where 'dang_lam' must stay
+// NOT-terminal (declaration genuinely still in progress = CUS still owes work).
+// This prompt has a different intent — DD should start lining up the truck plan
+// once a declaration is IN PROGRESS, not only after it clears — so 'dang_lam'
+// belongs here but must never be folded into TK_TERMINAL_STATUSES. Only
+// 'chua_truyen' (nothing filed yet) stays exempt.
+// Second half unchanged: get_truck_booking_status() returns 'chua_dat_kh' ONLY
+// when zero containers are booked (b_booked_cont=0, confirmed against the live
+// plpgsql body in schema.sql) — the moment even one container gets a plan the
+// status becomes 'dat_kh_1_phan' or higher, so full multi-container coverage
+// is NOT required to clear the prompt.
+const TK_PLAN_PROMPT_STATUSES = ['dang_lam', 'thong_quan', 'giai_phong', 'bao_quan'];
 function ddPlanPrompt(j) {
-  return TK_TERMINAL_STATUSES.includes(j.tk_status) && j.truck_booking_status === 'chua_dat_kh';
+  return TK_PLAN_PROMPT_STATUSES.includes(j.tk_status) && j.truck_booking_status === 'chua_dat_kh';
 }
 function waitingStatus(j) {
   const items = [];
