@@ -20,9 +20,22 @@ const CUS_ROLES = ['cus', 'cus1', 'cus2', 'cus3'];
 const AUTO_CUS_ROLES = ['cus1', 'cus2', 'cus3'];
 
 // "Đặt kế hoạch xe" surface roles — PlanDeliveryModal is shared by CUS / DieuDo
-// / TP / Sales; its read endpoints (available-containers, past-delivery-locations)
-// must allow this whole set. `ops` is intentionally excluded (no plan-write role).
-const PLAN_ROLES = ['dieu_do', 'truong_phong_log', 'lead', 'sales',
+// / TP; its read endpoints (available-containers, past-delivery-locations,
+// past-receivers) must allow this whole set. `ops` is intentionally excluded
+// (no plan-write role).
+//
+// `sales` REMOVED 2026-09-05 (hạn lệnh guard): a plan-save can now be REFUSED
+// when the delivery date falls after the job's hạn lệnh, and the only way to
+// clear it is to edit jobs.han_lenh — which canEditJob (services/job-access.js)
+// grants to TP/lead, the assigned CUS, the assigned DD and the owner-sales
+// only. A sales user is not necessarily the owner of the job they were
+// planning, so they could be blocked with no way to unblock themselves.
+// Removal is safe on the evidence: ZERO truck_bookings have EVER been created
+// by a role='sales' user (all-time creator breakdown — dieu_do 390, cus1 75,
+// cus3 16, truong_phong_log 4, cus2 1, sales 0), and no sales-reachable page
+// mounts PlanDeliveryModal (it opens only from LogDashboardCus /
+// LogDashboardDieuDo / LogDashboardTP).
+const PLAN_ROLES = ['dieu_do', 'truong_phong_log', 'lead',
                     'cus', 'cus1', 'cus2', 'cus3'];
 
 // Carrier-side write roles for transport companies + truck-booking CRUD.

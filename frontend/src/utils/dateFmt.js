@@ -110,3 +110,25 @@ export function vnLocalToIso(s) {
   const [, date, hh, mi, ss] = m;
   return `${date}T${hh}:${mi}:${ss || '00'}+07:00`;
 }
+
+// "YYYY-MM-DD" — the Vietnam CALENDAR DATE of a value, for date-only compares
+// (the hạn lệnh pre-flight in PlanDeliveryModal). Zero-padded, so plain string
+// comparison on the result is chronological. Empty/invalid -> null.
+//
+// Two input shapes, deliberately handled differently:
+//   • A naive "YYYY-MM-DD" or "YYYY-MM-DDTHH:mm" (a date/datetime input's own
+//     value) is ALREADY Vietnam wall-clock, so its date part is taken verbatim.
+//     Parsing it as an instant would re-anchor it to the browser's zone.
+//   • Anything else is a stored instant (an ISO string from the API) and is
+//     converted to Vietnam time via vnParts.
+// Mirrors backend services/han-lenh-guard.js `vnDateStr`; the two runtimes stay
+// intentionally separate (see this file's header and utils/vnTime.js).
+export function vnDateKey(val) {
+  if (!val) return null;
+  const str = String(val).trim();
+  if (!str) return null;
+  const naive = str.match(/^(\d{4}-\d{2}-\d{2})(?:[T ]\d{2}:\d{2}(?::\d{2})?)?$/);
+  if (naive) return naive[1];
+  const p = vnParts(str);
+  return p ? `${p.y}-${p.mo}-${p.d}` : null;
+}

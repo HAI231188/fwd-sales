@@ -21,6 +21,8 @@ const db = require('../db');
 const { requireAuth } = require('../middleware/auth');
 const { checkAndCompleteJob } = require('../services/job-completion');
 const { canWrite, PLAN_ROLES } = require('../constants/roles');
+// Hạn lệnh guard — shared by all three planned_datetime writers below (L30).
+const { checkPlansAgainstHanLenh, isSameVnDate } = require('../services/han-lenh-guard');
 
 // Phase 5 Step 2 — "Đặt kế hoạch xe" is open to a broader set of roles than
 // the carrier-side single POST (Quản lý đặt xe). CUS confirms delivery with
@@ -246,6 +248,18 @@ router.post('/', requireAuth, async (req, res) => {
       });
     }
 
+    // Hạn lệnh guard — every create carries a BRAND-NEW delivery date, so it is
+    // always validated (there is no stored value it could be "unchanged" from).
+    // Runs before nextBookingCode/INSERT so a rejection touches no row and burns
+    // no booking-code sequence number.
+    const hanLenhCheck = await checkPlansAgainstHanLenh(client, [
+      { jobId: job_id, plannedDatetime: planned_datetime, containerIds: contIds },
+    ]);
+    if (!hanLenhCheck.ok) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: hanLenhCheck.error, code: hanLenhCheck.code });
+    }
+
     // Generate the booking_code (Phase 5 Step 3). Format "KH-{job_code}-{job_id}-{NN}".
     const bookingCode = await nextBookingCode(client, job_id);
 
@@ -330,6 +344,36 @@ router.patch('/:id', requireAuth, async (req, res) => {
       return res.status(404).json({ error: 'Không tìm thấy booking' });
     }
     const cur = curRows[0];
+
+    // ── Hạn lệnh guard — validate ONLY a NEW or CHANGED delivery date ────────
+    // Two requirements have to coexist here:
+    //   • An existing plan that is ALREADY late must keep saving when the DD
+    //     edits the carrier / số xe / cost. TruckPlanningModal never sends
+    //     planned_datetime at all, so the `undefined` check alone covers it —
+    //     but BookingModal DOES resend the unchanged date, so the second check
+    //     is what actually protects that flow.
+    //   • Moving a date TO a late day is a NEW act and IS blocked, even on an
+    //     old job.
+    // "Unchanged" is compared on VN CALENDAR DATE, never string equality: the
+    // client round-trips the stored instant through toDatetimeLocal ->
+    // vnLocalToIso, so the submitted "2026-09-05T17:00:00+07:00" is textually
+    // unlike the stored "2026-09-05T10:00:00.000Z" while meaning the same
+    // instant. Runs before any `sets` are built, so a rejection writes nothing.
+    if (req.body.planned_datetime !== undefined
+        && !isSameVnDate(req.body.planned_datetime, cur.planned_datetime)) {
+      const { rows: linkRows } = await client.query(
+        `SELECT container_id FROM truck_booking_containers WHERE booking_id = $1`, [id]
+      );
+      const hanLenhCheck = await checkPlansAgainstHanLenh(client, [{
+        jobId: cur.job_id,
+        plannedDatetime: req.body.planned_datetime,
+        containerIds: linkRows.map(r => r.container_id),
+      }]);
+      if (!hanLenhCheck.ok) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: hanLenhCheck.error, code: hanLenhCheck.code });
+      }
+    }
 
     const sets = []; const params = []; let idx = 1;
 
@@ -567,6 +611,25 @@ router.post('/batch', requireAuth, async (req, res) => {
       return res.status(400).json({
         error: `Container ${names} đã thuộc booking khác. Hãy xóa booking cũ trước.`,
       });
+    }
+
+    // Hạn lệnh guard — EVERY row here is a brand-new booking, so every date is
+    // validated. Checked as ONE set before the INSERT loop starts, so a single
+    // late container rejects the WHOLE batch with nothing written and every
+    // offending cont named in one message. Partial saves are the L38 failure
+    // mode: a DD who believes 4 containers saved when only 3 did is worse off
+    // than one who saved none.
+    const hanLenhCheck = await checkPlansAgainstHanLenh(
+      client,
+      norm.map(r => ({
+        jobId: r.job_id,
+        plannedDatetime: r.planned_datetime,
+        containerIds: r.container_id === null ? [] : [r.container_id],
+      }))
+    );
+    if (!hanLenhCheck.ok) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: hanLenhCheck.error, code: hanLenhCheck.code });
     }
 
     // Insert each booking + its single M:N link row. nextBookingCode is called

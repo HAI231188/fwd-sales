@@ -9,7 +9,65 @@ import {
 } from '../api';
 import { useModalZIndex } from '../hooks/useModalZIndex';
 import DateTimeInput24h from './DateTimeInput24h';
-import { vnLocalToIso } from '../utils/dateFmt';
+import { vnLocalToIso, vnDateKey } from '../utils/dateFmt';
+
+// ── Hạn lệnh pre-flight (mirrors backend services/han-lenh-guard.js) ─────────
+// The BACKEND is the real gate — this only lets the DD see the problem in the
+// modal instead of after a round-trip. It runs over EVERY enabled row BEFORE
+// the first request is issued, so a rejected save sends nothing at all: this
+// modal's save fans out to 1 batch + N PATCH + M DELETE calls with no
+// cross-request transaction, so validating mid-flight could leave a PARTIAL
+// save — the L38 failure mode (a DD who believes 4 containers saved when only
+// 3 did is worse off than one who saved none).
+//
+// Scope and comparison are deliberately identical to the backend:
+//   • FCL + hàng nhập only (LCL is a container-less whole-lot leg with no
+//     per-container free time; export's han_lenh is a CUTOFF — L19/L20).
+//   • han_lenh NULL or outside 2020..2030 => unusable => allow. There is a live
+//     row with year 0226; never block on garbage.
+//   • VN CALENDAR DATE, never raw timestamps: an import han_lenh is stored at
+//     07:00 VN (a UTC-midnight artifact), so a raw compare would falsely flag
+//     every same-day delivery after 07:00 (~35% false positives). A delivery at
+//     17:00 on the hạn lệnh day is ON TIME.
+const HAN_LENH_MIN_YEAR = 2020;
+const HAN_LENH_MAX_YEAR = 2030;
+
+function hanLenhKeyIfUsable(job) {
+  if (!job || job.cargo_type !== 'fcl' || job.import_export !== 'import') return null;
+  const key = vnDateKey(job.han_lenh);
+  if (!key) return null;
+  const year = Number(key.slice(0, 4));
+  return (year >= HAN_LENH_MIN_YEAR && year <= HAN_LENH_MAX_YEAR) ? key : null;
+}
+
+function vnKeyToDisplay(key) {
+  const [y, m, d] = key.split('-');
+  return `${d}/${m}/${y}`;
+}
+
+// Returns [] when the save may proceed, else one entry per offending row.
+// `storedPlannedById` maps booking_id -> the planned_datetime currently on the
+// server, so an UNTOUCHED date is never re-validated: an existing already-late
+// plan must still save when only the location/note changed. Compared on VN
+// date rather than raw string equality — the row holds the stored instant until
+// the user edits it, and DateTimeInput24h then emits a "+07:00" value that is
+// textually different while meaning the same day.
+function hanLenhViolations(job, rows, storedPlannedById) {
+  const hanKey = hanLenhKeyIfUsable(job);
+  if (!hanKey) return [];
+  const out = [];
+  for (const r of rows) {
+    if (!r.enabled || !r.planned_datetime) continue;
+    const planKey = vnDateKey(r.planned_datetime);
+    if (!planKey) continue;
+    const storedKey = r.existing && r.booking_id
+      ? vnDateKey(storedPlannedById.get(r.booking_id))
+      : null;
+    if (storedKey && storedKey === planKey) continue;   // date untouched -> skip
+    if (planKey > hanKey) out.push({ row: r, planKey, hanKey });
+  }
+  return out;
+}
 
 // Phase 5 Step 2 — "Đặt kế hoạch xe"
 //
@@ -189,6 +247,31 @@ export default function PlanDeliveryModal({ jobId, jobCode, onClose, onSaved }) 
       setErr('Vui lòng chọn ít nhất 1 container để đặt kế hoạch'); return;
     }
 
+    // Hạn lệnh pre-flight — LAST check before any request goes out. Rejecting
+    // here means ZERO calls are issued, so the save is all-or-nothing from the
+    // DD's point of view even though the save itself fans out to several
+    // independent requests. The backend repeats this check on all three
+    // planned_datetime writers; this is the fast, visible copy.
+    const storedPlannedById = new Map(bookings.map(b => [b.id, b.planned_datetime]));
+    const lateRows = hanLenhViolations(job, rows, storedPlannedById);
+    if (lateRows.length > 0) {
+      const hanTxt = vnKeyToDisplay(lateRows[0].hanKey);
+      const lines = lateRows.map(v => {
+        const who = v.row.cont_number ? `Cont ${v.row.cont_number}` : 'Kế hoạch giao';
+        const days = Math.round(
+          (Date.parse(`${v.planKey}T00:00:00Z`) - Date.parse(`${v.hanKey}T00:00:00Z`)) / 86400000
+        );
+        return `• ${who}: dự kiến giao ${vnKeyToDisplay(v.planKey)} (trễ ${days} ngày)`;
+      });
+      setErr(
+        `Ngày giao dự kiến nằm sau hạn lệnh (${hanTxt}) — cần cập nhật lại hạn lệnh trước khi lưu kế hoạch.\n`
+        + lines.join('\n') + '\n'
+        + `Nếu hạn lệnh đã được gia hạn, vui lòng cập nhật lại Hạn lệnh trên job ${jobCode || ''} rồi lưu lại kế hoạch. `
+        + 'Chưa có dòng nào được lưu.'
+      );
+      return;
+    }
+
     setSaving(true);
     try {
       // Three groups derived from (existing × enabled):
@@ -280,12 +363,18 @@ export default function PlanDeliveryModal({ jobId, jobCode, onClose, onSaved }) 
             </div>
           )}
 
-          {err && (
-            <div style={{ marginTop: 12, padding: 10, background: 'rgba(239,68,68,0.08)',
-              border: '1px solid rgba(239,68,68,0.3)', borderRadius: 6,
-              color: 'var(--danger)', fontSize: 13 }}>{err}</div>
-          )}
         </div>
+
+        {/* Pinned OUTSIDE the scrollable .modal-body, directly above the action
+            button — the L39 CreateJobModal precedent. The hạn lệnh block is a
+            multi-line, save-refusing message; left inside the body it could sit
+            scrolled out of view on a job with many containers. `pre-line` keeps
+            its per-container line breaks. */}
+        {err && (
+          <div style={{ margin: '0 16px 8px', padding: 10, background: 'rgba(239,68,68,0.08)',
+            border: '1px solid rgba(239,68,68,0.3)', borderRadius: 6,
+            color: 'var(--danger)', fontSize: 13, whiteSpace: 'pre-line' }}>{err}</div>
+        )}
 
         <div className="modal-footer">
           <button className="btn btn-ghost btn-sm" onClick={onClose} disabled={saving}>Hủy</button>
