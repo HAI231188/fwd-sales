@@ -258,6 +258,7 @@ railway up --detach                # MUST DO — DO NOT SKIP
 3. Verification is mandatory — uploads can succeed while builds fail (broken `package.json`, missing env var, migration error). Green CLI exit ≠ live.
 4. Never phrase test instructions as "After Railway redeploys…" (implies auto-deploy) — say "After `railway up --detach`…" or deploy yourself and report verified state.
 5. Batched commits → one `railway up --detach` at the end ships all. Never push without a deploy.
+6. **The container build produces a DIFFERENT `assets/index-<hash>.js` than a local `npm run build`** — so verification is "the hash CHANGED from the previous deploy" **PLUS** a grep of the *deployed* bundle for a string unique to this commit (`curl -s <site>/assets/index-<hash>.js | grep "<new string>"`). A changed hash alone does not prove YOUR commit shipped. **Never wait on a hash predicted from a local build** — it will never appear (cost a stale watcher on the 2026-09-08 deploy: local said `DSDw7fTy`, production shipped `2h4AkY5Q`).
 - Doc-only changes still need `railway up` to keep the build-cache hash in sync, but skipping for a pure doc commit is acceptable IF the next code commit's deploy is guaranteed within minutes. **Long-term fix:** restore GitHub auto-deploy in Railway Settings → Source (then steps 5-6 stay mandatory, step 4 becomes the webhook).
 
 ### L19 — One column, two semantic meanings tied to a sibling column's value
@@ -446,6 +447,7 @@ Checking `users.disabled_at` only at login + `requireAuth` blocks access but lea
 **Rule:**
 - **Auto-assignment pool** → `AUTO_CUS_ROLES` (supervisor excluded). Only site: `suggestCus` in `services/ai-assignment.js`.
 - **Everything else** (view/edit checks in `job-access.js`, dashboard/filter/permission branching in `jobs.js`, `queryCusStaffStats`, MANUAL-assign `validateAssignee`) → `CUS_ROLES`, so the supervisor still sees CUS jobs, appears in workload, and is a valid *manual* target. Never re-introduce the `('cus1','cus2','cus3')` literal — import the constant.
+- **Spot-checking a CUS request? Use a WORKER account, not the supervisor.** `GET /api/jobs?tab=pending` filters on `ja.cus_id = userId`, and the supervisor (**user id 2, role `cus`, "MNG CUS"**) holds no assignments — so it correctly returns **HTTP 200 with 0 rows**. That 0 is right behaviour, NOT a failure; pick a `cus1`/`cus2`/`cus3` account with live assignments instead (verified 2026-09-08: id 2 → 0 rows, `cus3` id 5 → 30 rows matching its 30 assignments).
 
 Adding a PERSON to an existing worker role is data-driven; a new CUS *role token* (`cus4`) needs the `users_role_check` CHECK + `roles.js` edits.
 
