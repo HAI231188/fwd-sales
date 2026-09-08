@@ -59,6 +59,53 @@ const TK_PLAN_PROMPT_STATUSES = ['dang_lam', 'thong_quan', 'giai_phong', 'bao_qu
 function ddPlanPrompt(j) {
   return TK_PLAN_PROMPT_STATUSES.includes(j.tk_status) && j.truck_booking_status === 'chua_dat_kh';
 }
+
+// warnChipStyle: the shared inline style for the small ⚠ chips stacked in the
+// "TK / Ghi chú KH" cell. Extracted so every chip in that column is byte-for-byte
+// the same shape and only the colour distinguishes them (L30 exception — this is
+// per-file display styling, not shared logic). bg/fg come from PILL_COLOR_TOKENS
+// values so the chips stay on the same palette as the status pills.
+function warnChipStyle(bg, fg) {
+  return {
+    marginTop: 3, marginRight: 4, display: 'inline-block', background: bg, color: fg,
+    padding: '1px 6px', borderRadius: 4, fontSize: 10, fontWeight: 700,
+    whiteSpace: 'nowrap',
+  };
+}
+
+// ddMailWarn (2026-09-08) — DISPLAY-ONLY warning marker for the "Quản lý đặt xe"
+// table. Returns null (render nothing) unless the job has at least one
+// carrier-bearing mail group AND at least one of those groups has never been
+// mailed. Blocks nothing and changes no permission.
+//
+// A mail GROUP is one (transport_company_id, mail_group_id) pair — the same key
+// statusKey() uses in TruckPlanningModal and the all_keys CTE uses in
+// services/email-status.js. Both counts come straight from the backend
+// (mail_groups_total / mail_groups_unsent in GET /api/jobs); this never
+// recomputes coverage from bookings or containers client-side (L38/L39 — a proxy
+// standing in for the real signal breaks the moment a row exists for a reason the
+// proxy did not anticipate).
+//
+// Two deliberate exclusions:
+//  1. A carrier-less booking is NOT a group — it renders no card and no Send
+//     button in the planning workspace, so marking it would produce a warning DD
+//     has no way to clear. Its "chưa chốt vận tải" state is already reported by
+//     the Trạng thái pill (du_kh_chua_chot_vt / du_kh_chot_vt_1_phan).
+//  2. Ghost / can_huy batches (a sent batch whose bookings all moved away, so DD
+//     owes a HỦY mail) are NOT counted — that is a different button, and one chip
+//     must not mean two different actions. Known gap, recorded in CLAUDE.md.
+function ddMailWarn(j) {
+  const total  = j.mail_groups_total  || 0;
+  const unsent = j.mail_groups_unsent || 0;
+  if (total === 0 || unsent === 0) return null;
+  const sent = Math.max(0, total - unsent);
+  return {
+    // "đủ" only when something HAS been sent — on a job where nothing went out
+    // at all it would wrongly imply a partial send.
+    label: sent === 0 ? 'Chưa gửi mail' : 'Chưa gửi mail đủ',
+    tooltip: `Đã gửi mail ${sent}/${total} nhóm vận tải`,
+  };
+}
 function waitingStatus(j) {
   const items = [];
   const hasTk = j.service_type === 'tk' || j.service_type === 'both';
@@ -992,12 +1039,22 @@ function BookingRow({ j, isOpen, total, booked, ieBg, ieFg, imp,
             {j.tk_datetime && <span style={{ color: 'var(--text-2)', marginLeft: 4 }}>· {fmtDateTime(j.tk_datetime)}</span>}
           </div>
           {ddPlanPrompt(j) && (
-            <div style={{ marginTop: 3, display: 'inline-block', background: 'rgba(217,119,6,0.14)',
-              color: '#d97706', padding: '1px 6px', borderRadius: 4, fontSize: 10, fontWeight: 700,
-              whiteSpace: 'nowrap' }}>
+            <div style={warnChipStyle('rgba(217,119,6,0.14)', '#d97706')}>
               ⚠ Cần chốt kế hoạch
             </div>
           )}
+          {/* Mail-coverage warning. Same chip shape as "Cần chốt kế hoạch" above,
+              teal instead of amber so the two are separable at a glance. Renders
+              nothing at all once every carrier group has been mailed. */}
+          {(() => {
+            const mw = ddMailWarn(j);
+            if (!mw) return null;
+            return (
+              <div style={warnChipStyle('rgba(20,184,166,0.14)', '#0d9488')} title={mw.tooltip}>
+                ⚠ {mw.label}
+              </div>
+            );
+          })()}
           <div style={{ marginTop: 3 }}>
             <InlineInput value={j.dd_plan_note} onSave={v => noteMut.mutate(v)} placeholder="Ghi chú kế hoạch..." />
           </div>

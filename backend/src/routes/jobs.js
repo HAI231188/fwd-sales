@@ -1458,6 +1458,35 @@ router.get('/', requireAuth, async (req, res) => {
           SELECT COUNT(*)::int FROM truck_bookings
            WHERE job_id = j.id AND deleted_at IS NULL AND cost_entered_ticked
         ), 0) AS bookings_with_cost_entered,
+        -- Mail-coverage aggregates (2026-09-08) — feed DD's "Chưa gửi mail"
+        -- warning chip in the "Quản lý đặt xe" table. A mail GROUP is one
+        -- (transport_company_id, mail_group_id) pair — the same key used by
+        -- statusKey() in TruckPlanningModal and the all_keys CTE in
+        -- services/email-status.js. mail_group_id IS NULL = the forming batch
+        -- (never mailed); a successful 'new' send is the ONLY writer that sets
+        -- it non-NULL (services/email-sender.js) and a carrier change resets it
+        -- to NULL, so a re-carriered booking correctly counts as unsent again.
+        -- transport_company_id IS NOT NULL is load-bearing: a carrier-less
+        -- booking forms no group, has no Send button in the planning workspace,
+        -- and must never raise a warning the viewer has no way to clear.
+        -- mail_groups_unsent counts DISTINCT carriers (not pairs) because every
+        -- unmailed booking of one carrier shares mail_group_id = NULL, so a
+        -- carrier has at most one forming batch.
+        COALESCE((
+          SELECT COUNT(*)::int FROM (
+            SELECT DISTINCT tb.transport_company_id, tb.mail_group_id
+              FROM truck_bookings tb
+             WHERE tb.job_id = j.id AND tb.deleted_at IS NULL
+               AND tb.transport_company_id IS NOT NULL
+          ) g
+        ), 0) AS mail_groups_total,
+        COALESCE((
+          SELECT COUNT(DISTINCT tb.transport_company_id)::int
+            FROM truck_bookings tb
+           WHERE tb.job_id = j.id AND tb.deleted_at IS NULL
+             AND tb.transport_company_id IS NOT NULL
+             AND tb.mail_group_id IS NULL
+        ), 0) AS mail_groups_unsent,
         -- Phase 4.1: earliest active booking exposed as first_booking_* so the
         -- DD main grid can inline-edit it without a second fetch. Pattern matches
         -- the bbbg-data LATERAL (earliest by planned_datetime, then id).
