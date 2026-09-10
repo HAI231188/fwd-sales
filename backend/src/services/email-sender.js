@@ -161,6 +161,19 @@ async function sendWithRetry(transporter, mailOptions, maxRetries = 2) {
   throw lastErr;
 }
 
+// Bill of lading for the subject, labelled "HBL "/"MBL " so the carrier can
+// tell which document the number refers to. HBL wins when both are set;
+// otherwise whichever one exists. Blank-after-trim counts as absent (the column
+// pair mixes NULL and ''), so the segment AND its separator vanish and the
+// subject reads byte-identically to before this was added.
+function blNumber(job) {
+  const hbl = String((job && job.hbl_no) || '').trim();
+  const mbl = String((job && job.mbl_no) || '').trim();
+  if (hbl) return `HBL ${hbl}`;
+  if (mbl) return `MBL ${mbl}`;
+  return '';
+}
+
 function renderSubject({ mailType, jobCode, customerName, n, importExport, earliestPlanned, cargoType, job }) {
   const customerShort = firstWord(customerName);
   const ieLabel = importExport === 'import' ? 'Nhập' : 'Xuất';
@@ -172,7 +185,11 @@ function renderSubject({ mailType, jobCode, customerName, n, importExport, earli
   const cargoSeg = cargoType === 'lcl'
     ? `${cargoLabel(job)}${n > 1 ? ` (${n} xe)` : ''}`
     : `${n} cont`;
-  return `${prefix} ${jobCode} - ${customerShort} - ${cargoSeg} / ${ieLabel} / ${dateLabel}`;
+  // Sits between the customer and the cargo count so the job code + customer
+  // stay at the front of a mobile-truncated subject.
+  const bl = blNumber(job);
+  const blSeg = bl ? ` - ${bl}` : '';
+  return `${prefix} ${jobCode} - ${customerShort}${blSeg} - ${cargoSeg} / ${ieLabel} / ${dateLabel}`;
 }
 
 function renderBody({
@@ -398,7 +415,8 @@ async function sendPlanningEmail({
   // without touching this query (the COALESCE here will pick it up).
   const { rows: [job] } = await db.query(
     `SELECT id, job_code, customer_name, han_lenh, import_export,
-            cargo_type, so_kien, kg, cbm, NULL::text AS shipping_line
+            cargo_type, so_kien, kg, cbm, hbl_no, mbl_no,
+            NULL::text AS shipping_line
        FROM jobs WHERE id = $1 AND deleted_at IS NULL`,
     [jobId]
   );
@@ -740,7 +758,8 @@ async function previewPlanningEmail({
   // Job + bookings — identical query to send path.
   const { rows: [job] } = await db.query(
     `SELECT id, job_code, customer_name, han_lenh, import_export,
-            cargo_type, so_kien, kg, cbm, NULL::text AS shipping_line
+            cargo_type, so_kien, kg, cbm, hbl_no, mbl_no,
+            NULL::text AS shipping_line
        FROM jobs WHERE id = $1 AND deleted_at IS NULL`,
     [jobId]
   );
