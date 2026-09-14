@@ -58,9 +58,92 @@ const {
   fmtVnHanLenh: fmtHanLenh,
   fmtVnShortDate: shortDate,
 } = require('../utils/vnTime');
-function firstWord(s) {
-  if (!s) return '';
-  return String(s).trim().split(/\s+/)[0];
+// --- Customer short name for the mail subject ------------------------------
+// Replaces the former firstWord(), which cut at the first space and so rendered
+// "ÂU LẠC" as "ÂU", "HÀ YẾN" as "HÀ", "ĐẠI VĨNH HƯNG (CDK)" as "ĐẠI" — the
+// carrier could not tell which customer the mail was about. At ship time
+// (2026-09-14) 57 of the 92 live customer names were multi-word (252 of 429
+// jobs), and the 92 names collapsed to only 77 distinct labels — "CÔNG" alone
+// stood for six different companies.
+//
+// CUSTOMER_NAME_BUDGET is measured in characters and the cut is always on a
+// word boundary. 20 is the knee of the live data: 2 names (4 jobs) lose tail
+// text at 20, vs 5 at 16, and none only from 28 up — and both cuts at 20
+// ("Wassenburg Medical", "nông sản hữu cơ việt") still identify the customer.
+// The legal-form strip below runs BEFORE the budget check, so no budget value
+// lets "CÔNG TY TNHH …" leak into the label.
+const CUSTOMER_NAME_BUDGET = 20;
+
+// Diacritic-and-case-insensitive key, used for MATCHING boilerplate only — the
+// original text is what gets rendered, so "CôNG TY Cổ PHầN" still matches.
+const deaccent = (s) => s.normalize('NFD').replace(/[̀-ͯ]/g, '')
+  .replace(/đ/g, 'd').replace(/Đ/g, 'D').toUpperCase();
+
+// Company-form words. ALWAYS stripped: they identify nobody, and a name short
+// enough to fit the budget would otherwise render as pure boilerplate.
+const LEGAL_FORM_WORDS = [
+  'CONG TY', 'CTY', 'TAP DOAN', 'CHI NHANH', 'DOANH NGHIEP TU NHAN', 'DNTN',
+  'CO PHAN', 'TNHH', 'MOT THANH VIEN', 'MTV',
+].map(t => t.split(' '));
+
+// Generic sector words. Stripped ONLY when the name is still over budget, since
+// they can legitimately BE the name ("SX VINA" is a real customer and must not
+// become "VINA"). Bare "CP" sits here rather than in LEGAL_FORM_WORDS for the
+// same reason — a customer could genuinely be named "CP VIỆT NAM".
+const SECTOR_WORDS = [
+  'XUAT NHAP KHAU', 'XNK', 'SAN XUAT', 'SX', 'THUONG MAI', 'TM', 'DICH VU', 'DV',
+  'DAU TU', 'CONG NGHE', 'KY THUAT', 'XAY DUNG', 'VAN TAI', 'PHAT TRIEN',
+  'QUOC TE', 'CP', 'VA',
+].map(t => t.split(' '));
+
+// Repeatedly drop leading boilerplate phrases ("CÔNG TY", then "CỔ PHẦN", …).
+// Never strips every word: something must survive to name the customer.
+function stripLeading(words, phrases) {
+  let out = words;
+  for (let again = true; again;) {
+    again = false;
+    for (const phrase of phrases) {
+      if (out.length <= phrase.length) continue;
+      if (out.slice(0, phrase.length).map(deaccent).join(' ') === phrase.join(' ')) {
+        out = out.slice(phrase.length);
+        again = true;
+        break;
+      }
+    }
+  }
+  return out;
+}
+
+// Longest run of whole words that fits the budget. The first word is always
+// kept even when it alone exceeds the budget — never a mid-word slice.
+function fitWholeWords(words, budget) {
+  let out = words[0];
+  for (let i = 1; i < words.length; i++) {
+    const next = `${out} ${words[i]}`;
+    if (next.length > budget) break;
+    out = next;
+  }
+  return out;
+}
+
+// No ellipsis, deliberately: 8 of the 10 shortened live names lose only a
+// LEADING "CÔNG TY TNHH …", so nothing follows the label, and the 2 genuine
+// tail cuts drop only a country suffix ("… Việt Nam", "… nam") — a "…" would
+// flag missing identity that isn't missing.
+function customerShort(s) {
+  // NFC first so the budget counts characters, not code units: a name typed on
+  // a combining-mark keyboard (Unikey "Unicode tổ hợp") would otherwise count
+  // every tone mark separately and be cut early.
+  const clean = String(s || '').normalize('NFC').trim().replace(/\s+/g, ' ');
+  if (!clean) return '';
+  let words = stripLeading(clean.split(' '), LEGAL_FORM_WORDS);
+  if (words.join(' ').length > CUSTOMER_NAME_BUDGET) {
+    words = stripLeading(words, SECTOR_WORDS);
+  }
+  const joined = words.join(' ');
+  return joined.length <= CUSTOMER_NAME_BUDGET
+    ? joined
+    : fitWholeWords(words, CUSTOMER_NAME_BUDGET);
 }
 function fmtCost(c) {
   if (c == null || c === '') return '—';
@@ -175,7 +258,7 @@ function blNumber(job) {
 }
 
 function renderSubject({ mailType, jobCode, customerName, n, importExport, earliestPlanned, cargoType, job }) {
-  const customerShort = firstWord(customerName);
+  const customerLabel = customerShort(customerName);
   const ieLabel = importExport === 'import' ? 'Nhập' : 'Xuất';
   const dateLabel = shortDate(earliestPlanned);
   const prefix = mailType === 'cancel' ? 'HỦY ĐẶT KẾ HOẠCH XE' : 'ĐẶT KẾ HOẠCH XE';
@@ -189,7 +272,7 @@ function renderSubject({ mailType, jobCode, customerName, n, importExport, earli
   // stay at the front of a mobile-truncated subject.
   const bl = blNumber(job);
   const blSeg = bl ? ` - ${bl}` : '';
-  return `${prefix} ${jobCode} - ${customerShort}${blSeg} - ${cargoSeg} / ${ieLabel} / ${dateLabel}`;
+  return `${prefix} ${jobCode} - ${customerLabel}${blSeg} - ${cargoSeg} / ${ieLabel} / ${dateLabel}`;
 }
 
 function renderBody({
