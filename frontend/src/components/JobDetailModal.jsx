@@ -11,6 +11,7 @@ import TransportPicker from './TransportPicker';
 import BookingModal from './BookingModal';
 import BBBGModal from './BBBGModal';
 import DateTimeInput24h from './DateTimeInput24h';
+import OwnerChangeConfirm from './OwnerChangeConfirm';
 import { useModalZIndex } from '../hooks/useModalZIndex';
 import { useAuth } from '../App';
 import { TRUCK_BOOKING_STATUS_LABELS, truckBookingPillStyle } from '../utils/truckBookingStatus';
@@ -556,6 +557,8 @@ export default function JobDetailModal({
     onError: (err) => toast.error(err?.response?.data?.error || err?.error || err?.message || 'Không lưu được số tờ khai'),
   });
   // Phase 4: truckMut removed (legacy section is read-only).
+  // Owner-change confirm: { info: 409 body, payload: the edit to re-send } or null.
+  const [ownerConfirm, setOwnerConfirm] = useState(null);
   const editMut = useMutation({
     mutationFn: data => updateJob(jobId, data),
     onSuccess: () => {
@@ -564,7 +567,11 @@ export default function JobDetailModal({
       setEditMode(false);
       setDraft(null);
     },
-    onError: err => setEditErr(err?.error || err?.message || 'Lỗi khi lưu'),
+    onError: (err, payload) => {
+      // 409: this edit would move the customer to another sales user — confirm first.
+      if (err?.code === 'OWNER_CHANGE_CONFIRM_REQUIRED') { setOwnerConfirm({ info: err, payload }); return; }
+      setEditErr(err?.error || err?.message || 'Lỗi khi lưu');
+    },
   });
   const deleteMut = useMutation({
     mutationFn: () => deleteJob(jobId),
@@ -1438,6 +1445,16 @@ export default function JobDetailModal({
           </div>
         </div>
       </div>
+    )}
+
+    {ownerConfirm && (
+      <OwnerChangeConfirm info={ownerConfirm.info} zIndex={zIndex + 10} saving={editMut.isPending}
+        onCancel={() => setOwnerConfirm(null)}
+        onConfirm={() => {
+          const payload = ownerConfirm.payload;
+          setOwnerConfirm(null);
+          editMut.mutate({ ...payload, confirm_owner_change: true });
+        }} />
     )}
 
     {/* KT5 — Trả về LOG/Sales dialog. Reason textarea required; title varies by target. */}

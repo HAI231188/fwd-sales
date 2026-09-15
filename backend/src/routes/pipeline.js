@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const db = require('../db');
 const { requireAuth } = require('../middleware/auth');
+const { hasAnyJobSql } = require('../services/pipeline-ownership');
 
 // Apply time-based stage transitions for a user (called lazily on GET)
 async function applyAutoTransitions(client, salesId) {
@@ -12,15 +13,11 @@ async function applyAutoTransitions(client, salesId) {
       AND cp.deleted_at IS NULL
       AND cp.stage IN ('new', 'following')
       AND (cp.last_activity_date IS NULL OR cp.last_activity_date < CURRENT_DATE - INTERVAL '7 days')
-      AND NOT EXISTS (
-        -- "Has ever had a shipment" guard: ANY job (completed, pending, or even
-        -- soft-deleted/cancelled) permanently exempts this customer from the
-        -- 7-day-stale dormant demotion. Only genuine zero-job leads go dormant.
-        -- Matches by the same (customer_id OR LOWER(name)) key used everywhere
-        -- else jobs are linked to a pipeline row (L14, customer-search, etc.).
-        SELECT 1 FROM jobs j
-        WHERE j.customer_id = cp.customer_id OR LOWER(j.customer_name) = LOWER(cp.company_name)
-      )
+      -- "Has ever had a shipment" guard: ANY job (completed, pending, or even
+      -- soft-deleted/cancelled) permanently exempts this customer from the
+      -- 7-day-stale dormant demotion. Only genuine zero-job leads go dormant.
+      -- One definition, shared with backfill_pipeline.js (services/pipeline-ownership.js).
+      AND NOT ${hasAnyJobSql('cp')}
   `, [salesId]);
 
   if (dormantCands.length > 0) {

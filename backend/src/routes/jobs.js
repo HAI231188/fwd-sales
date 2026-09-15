@@ -11,6 +11,7 @@ const { fmtVnDeadline } = require('../utils/vnTime');
 const { reconcileJobSides } = require('../services/job-reconcile');
 const { getWeekRotation } = require('../services/ops-rotation');
 const { thongQuanWanted, reconcileThongQuanTask } = require('../services/ops-thongquan');
+const { findOtherOwners, transferCustomerTo, ownerChangeConflict, notifyOwnerTransfer } = require('../services/pipeline-ownership');
 
 // In-memory suggestion cache (60s TTL) — invalidated on manual assignment
 let suggestionCache = { data: null, ts: 0 };
@@ -1631,6 +1632,20 @@ router.post('/', requireAuth, async (req, res) => {
   try {
     await client.query('BEGIN');
 
+    // Saving a job under a sales user who does not own the customer TRANSFERS
+    // the customer, so it must be confirmed — however the name was entered
+    // (search pick or typed). 409 before any write; the client names both
+    // owners and re-sends with confirm_owner_change: true.
+    if (sales_id && customerName && req.body.confirm_owner_change !== true) {
+      const conflict = await ownerChangeConflict(client, {
+        customerName, customerId: customer_id, newSalesId: sales_id,
+      });
+      if (conflict) {
+        await client.query('ROLLBACK');
+        return res.status(409).json(conflict);
+      }
+    }
+
     const { rows } = await client.query(`
       INSERT INTO jobs (
         job_code, customer_id, customer_name, customer_address, customer_tax_code,
@@ -1678,28 +1693,22 @@ router.post('/', requireAuth, async (req, res) => {
       }
     }
 
-    // Pipeline ownership transfer (L14).
-    // When sales_id is provided, the customer (matched by lowered name or customer_id FK)
-    // should belong to ONLY that sales user. Any pipeline rows owned by other sales for
-    // the same customer are wiped — including child `customers` interaction rows (manual
-    // DELETE since the FK is SET NULL not CASCADE). pipeline_history + pipeline_delete_requests
-    // cascade automatically.
+    // Pipeline ownership transfer (L14 — reassign, never destroy; 2026-09-14).
+    // When sales_id is provided the customer belongs to that sales user from now
+    // on: every other owner's pipeline row is REASSIGNED in place
+    // (services/pipeline-ownership.js). Nothing is deleted, so the customer's
+    // customers rows, quotes, interaction thread and pipeline_history keep their
+    // ids. Past jobs keep their own sales_id. Confirmed by the client above.
     let pipelineTransfer = { transferredFromSales: [], wasNewlyInserted: false, customerName };
     if (sales_id && customerName) {
-      const { rows: others } = await client.query(
-        `SELECT cp.id, cp.sales_id, u.name AS sales_name
-           FROM customer_pipeline cp
-           LEFT JOIN users u ON u.id = cp.sales_id
-          WHERE cp.sales_id != $1
-            AND cp.deleted_at IS NULL
-            AND ( LOWER(cp.company_name) = LOWER($2)
-                  OR ($3::int IS NOT NULL AND cp.customer_id = $3::int) )`,
-        [sales_id, customerName, customer_id || null]
-      );
-      for (const r of others) {
-        await client.query(`DELETE FROM customers WHERE pipeline_id = $1`, [r.id]);
-        await client.query(`DELETE FROM customer_pipeline WHERE id = $1`, [r.id]);
-        pipelineTransfer.transferredFromSales.push({ sales_id: r.sales_id, sales_name: r.sales_name });
+      const { moved, kept } = await transferCustomerTo(client, {
+        customerName, customerId: customer_id, newSalesId: sales_id, actorId: req.user.id,
+      });
+      pipelineTransfer.transferredFromSales = moved.map(o => ({ sales_id: o.sales_id, sales_name: o.sales_name }));
+      if (kept.length) {
+        // The new sales already owns a row for this customer, so these could not
+        // be reassigned without deleting one. Left untouched on purpose.
+        console.warn(`[pipeline-transfer] job ${job.id}: kept ${kept.length} other owner row(s) for "${customerName}" (pipeline ${kept.map(k => k.id).join(', ')})`);
       }
       // ON CONFLICT preserves existing invoice fields (DO UPDATE only sets stage/updated_at).
       // New rows get the values from the form; if the form didn't supply them, default ''.
@@ -1952,18 +1961,10 @@ router.post('/', requireAuth, async (req, res) => {
       const actor = (await client.query(`SELECT name FROM users WHERE id = $1`, [req.user.id])).rows[0]?.name || 'Người dùng';
       const newSales = (await client.query(`SELECT name FROM users WHERE id = $1`, [sales_id])).rows[0]?.name || 'Sales';
       if (pipelineTransfer.transferredFromSales.length > 0) {
-        for (const old of pipelineTransfer.transferredFromSales) {
-          await client.query(
-            `INSERT INTO notifications (user_id, type, title, message, job_id)
-             VALUES ($1, 'pipeline_transferred_out', 'Khách bị chuyển khỏi pipeline', $2, $3)`,
-            [old.sales_id, `Khách ${customerName} đã được chuyển khỏi pipeline của bạn bởi ${actor}`, job.id]
-          );
-        }
-        await client.query(
-          `INSERT INTO notifications (user_id, type, title, message, job_id)
-           VALUES ($1, 'pipeline_transferred_in', 'Khách được chuyển vào pipeline', $2, $3)`,
-          [sales_id, `Khách ${customerName} đã được thêm vào pipeline của bạn (stage Đã booking)`, job.id]
-        );
+        await notifyOwnerTransfer(client, {
+          moved: pipelineTransfer.transferredFromSales, newSalesId: sales_id,
+          customerName, actorName: actor, jobId: job.id,
+        });
         const oldNames = pipelineTransfer.transferredFromSales.map(o => o.sales_name).filter(Boolean).join(', ') || '(unknown)';
         await recordHistory(client, job.id, req.user.id, 'pipeline_transferred', oldNames, newSales);
       } else if (pipelineTransfer.wasNewlyInserted) {
@@ -2175,12 +2176,28 @@ router.put('/:id', requireAuth, async (req, res) => {
     // NOTE: POST /api/jobs writes sales_id UNVALIDATED (jobs.js ~1482 + the L14
     // pipeline transfer) — this PUT-side check is stricter on purpose because PUT
     // is now reachable by a wider role set (assigned CUS), not only TP/lead.
+    //
+    // A genuine change to a sales user who does not own the customer also
+    // TRANSFERS the customer (reassigned below, never deleted — same rule as
+    // POST), so it must be confirmed: 409 until the client re-sends with
+    // confirm_owner_change: true. Unrelated edits never move ownership.
+    let ownerChange = null;
     if (_mayOwner && req.body.sales_id !== undefined) {
       const newSalesId = (req.body.sales_id === '' || req.body.sales_id == null) ? null : req.body.sales_id;
       const changed = String(newSalesId ?? '') !== String(cur[0].sales_id ?? '');
       if (changed && newSalesId !== null) {
         const v = await validateAssignee(client, newSalesId, ['sales', 'lead'], 'Sales');
         if (!v.ok) { await client.query('ROLLBACK'); return res.status(400).json({ error: v.error }); }
+        const custName = String(req.body.customer_name ?? cur[0].customer_name ?? '').trim();
+        if (custName) {
+          if (req.body.confirm_owner_change !== true) {
+            const conflict = await ownerChangeConflict(client, {
+              customerName: custName, customerId: cur[0].customer_id, newSalesId,
+            });
+            if (conflict) { await client.query('ROLLBACK'); return res.status(409).json(conflict); }
+          }
+          ownerChange = { newSalesId, customerName: custName };
+        }
       }
     }
 
@@ -2498,6 +2515,28 @@ router.put('/:id', requireAuth, async (req, res) => {
       jobCompleted = await checkAndCompleteJob(client, req.params.id, req.user.id);
     }
 
+    // Confirmed ownership change: reassign (never delete) the other owners' rows
+    // to the new sales, exactly as POST does. This job's sales_id was already
+    // written by the field loop; the customer's other jobs keep theirs.
+    if (ownerChange) {
+      const { moved, kept } = await transferCustomerTo(client, {
+        customerName: ownerChange.customerName, customerId: cur[0].customer_id,
+        newSalesId: ownerChange.newSalesId, actorId: req.user.id,
+      });
+      if (moved.length) {
+        await notifyOwnerTransfer(client, {
+          moved, newSalesId: ownerChange.newSalesId, customerName: ownerChange.customerName,
+          actorName: req.user.name || 'Người dùng', jobId: Number(req.params.id),
+        });
+        const newName = (await client.query(`SELECT name FROM users WHERE id = $1`, [ownerChange.newSalesId])).rows[0]?.name || 'Sales';
+        const oldNames = moved.map(o => o.sales_name).filter(Boolean).join(', ') || '(unknown)';
+        await recordHistory(client, req.params.id, req.user.id, 'pipeline_transferred', oldNames, newName);
+      }
+      if (kept.length) {
+        console.warn(`[pipeline-transfer] job ${req.params.id}: kept ${kept.length} other owner row(s) for "${ownerChange.customerName}" (pipeline ${kept.map(k => k.id).join(', ')})`);
+      }
+    }
+
     // ── Re-assert customer_pipeline stage='booked' (mirrors the POST L14
     // upsert at jobs.js:~1638-1673, which only fires at job CREATION). PUT never
     // touched customer_pipeline before this — editing an existing job is proof
@@ -2515,13 +2554,34 @@ router.put('/:id', requireAuth, async (req, res) => {
       const finalJob = freshRows[0];
       const finalCustomerName = (finalJob.customer_name || '').trim();
       if (finalJob.sales_id && finalCustomerName) {
-        await client.query(
-          `INSERT INTO customer_pipeline (sales_id, company_name, customer_id, stage, last_activity_date)
-           VALUES ($1, $2, $3, 'booked', CURRENT_DATE)
-           ON CONFLICT (sales_id, LOWER(company_name)) WHERE deleted_at IS NULL
-             DO UPDATE SET stage = 'booked', last_activity_date = CURRENT_DATE, updated_at = NOW()`,
-          [finalJob.sales_id, finalCustomerName, finalJob.customer_id || null]
+        // Ownership-aware (2026-09-14): re-assert 'booked' on whoever OWNS the
+        // customer now. A row is created for this job's sales only when nobody
+        // owns the customer yet — editing a past job must not hand the customer
+        // back to the sales user who did that job.
+        const { rows: ownRow } = await client.query(
+          `SELECT id FROM customer_pipeline
+            WHERE sales_id = $1 AND LOWER(company_name) = LOWER($2) AND deleted_at IS NULL`,
+          [finalJob.sales_id, finalCustomerName]
         );
+        const owners = ownRow[0] ? [] : await findOtherOwners(client, {
+          customerName: finalCustomerName, customerId: finalJob.customer_id, salesId: finalJob.sales_id,
+        });
+        if (owners.length) {
+          await client.query(
+            `UPDATE customer_pipeline
+                SET stage = 'booked', last_activity_date = CURRENT_DATE, updated_at = NOW()
+              WHERE id = ANY($1::int[])`,
+            [owners.map(o => o.id)]
+          );
+        } else {
+          await client.query(
+            `INSERT INTO customer_pipeline (sales_id, company_name, customer_id, stage, last_activity_date)
+             VALUES ($1, $2, $3, 'booked', CURRENT_DATE)
+             ON CONFLICT (sales_id, LOWER(company_name)) WHERE deleted_at IS NULL
+               DO UPDATE SET stage = 'booked', last_activity_date = CURRENT_DATE, updated_at = NOW()`,
+            [finalJob.sales_id, finalCustomerName, finalJob.customer_id || null]
+          );
+        }
       }
     }
 

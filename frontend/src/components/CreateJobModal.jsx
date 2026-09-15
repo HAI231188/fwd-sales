@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { getLogStaff, searchJobCustomers } from '../api';
 import { useModalZIndex } from '../hooks/useModalZIndex';
 import DateTimeInput24h from './DateTimeInput24h';
+import OwnerChangeConfirm from './OwnerChangeConfirm';
 
 const CONT_TYPES = ['20DC','40DC','40HC','45HC','20RF','40RF'];
 const OTHER_SVC_KEYS = ['ktcl','kiem_dich','hun_trung','co','khac'];
@@ -57,7 +58,9 @@ export default function CreateJobModal({ onClose, onCreated }) {
   const [containers, setContainers] = useState([]);
   const [form, setForm] = useState(INIT_FORM);
   const [saving, setSaving] = useState(false);
-  const [showTransferConfirm, setShowTransferConfirm] = useState(false);
+  // Server-driven owner-change confirm: the 409 OWNER_CHANGE_CONFIRM_REQUIRED body
+  // ({ customer_name, current_owners, new_owner }) or null.
+  const [ownerConfirm, setOwnerConfirm] = useState(null);
   const [invoiceErr, setInvoiceErr] = useState('');
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
@@ -329,14 +332,9 @@ export default function CreateJobModal({ onClose, onCreated }) {
         return;
       }
     }
-    // Pipeline transfer guard: if user changed sales_id away from the selected customer's
-    // existing sales, require explicit confirmation (destructive — old sales loses data).
-    const willTransfer = !!(selectedCustomer && selectedCustomer.sales_id && form.sales_id &&
-      Number(form.sales_id) !== Number(selectedCustomer.sales_id));
-    if (willTransfer && !confirmedTransfer) {
-      setShowTransferConfirm(true);
-      return;
-    }
+    // Owner change: the server decides. It answers 409 OWNER_CHANGE_CONFIRM_REQUIRED
+    // whenever this save would move the customer to another sales user — picked
+    // from the search or typed by hand — and the catch below shows the confirm.
     setSaving(true);
     try {
       await onCreated({
@@ -366,8 +364,12 @@ export default function CreateJobModal({ onClose, onCreated }) {
         cargo_type: cargoType,
         containers: cargoType === 'fcl' ? containers.filter(c => c.cont_type) : [],
         is_new_customer: searchMode === 'new',
+        confirm_owner_change: confirmedTransfer,
       });
       onClose();
+    } catch (err) {
+      if (err?.code === 'OWNER_CHANGE_CONFIRM_REQUIRED') { setOwnerConfirm(err); return; }
+      setInvoiceErr(err?.error || err?.message || 'Không tạo được job');
     } finally { setSaving(false); }
   }
 
@@ -862,37 +864,10 @@ export default function CreateJobModal({ onClose, onCreated }) {
         </div>
       </div>
 
-      {showTransferConfirm && (
-        <div className="modal-overlay" style={{ zIndex: zIndex + 1 }}
-          onClick={e => { if (e.target === e.currentTarget) setShowTransferConfirm(false); }}>
-          <div className="modal" style={{ maxWidth: 480, width: '95%' }}>
-            <div className="modal-header">
-              <h3 style={{ margin: 0, fontSize: 16 }}>Chuyển khách sang sales khác</h3>
-              <button className="btn btn-ghost btn-sm btn-icon" onClick={() => setShowTransferConfirm(false)}>✕</button>
-            </div>
-            <div className="modal-body" style={{ padding: 16, fontSize: 13, lineHeight: 1.5 }}>
-              <p>
-                Khách hàng <strong>{form.customer_name}</strong> hiện thuộc pipeline của{' '}
-                <strong>{selectedCustomer?.sales_name || 'sales cũ'}</strong>.
-              </p>
-              <p style={{ color: 'var(--danger)', marginTop: 10 }}>
-                Tiếp tục sẽ chuyển khách sang{' '}
-                <strong>{salesStaff.find(s => Number(s.id) === Number(form.sales_id))?.name || 'sales mới'}</strong>{' '}
-                và <strong>xóa toàn bộ lịch sử pipeline</strong> (bao gồm các tương tác đã ghi nhận) của{' '}
-                <strong>{selectedCustomer?.sales_name || 'sales cũ'}</strong>. Hành động này không thể hoàn tác.
-              </p>
-              <p style={{ marginTop: 10 }}>Xác nhận?</p>
-            </div>
-            <div className="modal-footer" style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, padding: 12, borderTop: '1px solid var(--border)' }}>
-              <button className="btn btn-ghost btn-sm" onClick={() => setShowTransferConfirm(false)} disabled={saving}>Hủy</button>
-              <button className="btn btn-danger btn-sm"
-                disabled={saving}
-                onClick={() => { setShowTransferConfirm(false); submit({ confirmedTransfer: true }); }}>
-                {saving ? 'Đang lưu...' : 'Chuyển khách'}
-              </button>
-            </div>
-          </div>
-        </div>
+      {ownerConfirm && (
+        <OwnerChangeConfirm info={ownerConfirm} zIndex={zIndex + 1} saving={saving}
+          onCancel={() => setOwnerConfirm(null)}
+          onConfirm={() => { setOwnerConfirm(null); submit({ confirmedTransfer: true }); }} />
       )}
     </div>
   ), document.body);

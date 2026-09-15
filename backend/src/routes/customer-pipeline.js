@@ -14,11 +14,34 @@
 const router = require('express').Router();
 const db = require('../db');
 const { requireAuth } = require('../middleware/auth');
+const { reassignPipelineRow } = require('../services/pipeline-ownership');
 
 const ADMIN_ROLES = ['truong_phong_log', 'lead'];
 function isAdmin(req) { return ADMIN_ROLES.includes(req.user?.role); }
 
 const EDITABLE_FIELDS = ['company_name', 'company_full_name', 'tax_code', 'invoice_address'];
+
+// Writes whichever EDITABLE_FIELDS the caller sent and bumps updated_at.
+async function updateEditableFields(client, pipelineId, trimmed) {
+  const sets = [];
+  const params = [];
+  let idx = 1;
+  for (const f of EDITABLE_FIELDS) {
+    if (trimmed[f] !== undefined) {
+      sets.push(`${f} = $${idx++}`);
+      params.push(trimmed[f]);
+    }
+  }
+  sets.push('updated_at = NOW()');
+  params.push(pipelineId);
+  const { rows } = await client.query(
+    `UPDATE customer_pipeline SET ${sets.join(', ')}
+      WHERE id = $${idx} AND deleted_at IS NULL
+      RETURNING *`,
+    params
+  );
+  return rows[0] || null;
+}
 
 // ─── GET /api/customer-pipeline ────────────────────────────────────────────────
 // List non-deleted customer_pipeline rows with sales JOIN and a per-customer
@@ -74,10 +97,12 @@ router.get('/', requireAuth, async (req, res) => {
 });
 
 // ─── PATCH /api/customer-pipeline/:id ───────────────────────────────────────────
-// Update editable fields. If sales_id changes, apply the L14 transfer pattern:
-// the existing pipeline row is hard-deleted (with its customers cascade) and a
-// fresh one is upserted under the new sales user. Old + new sales get notifications;
-// the destroyed pipeline's history dies with it (intentional — that's the spec).
+// Update editable fields. If sales_id changes, the customer is REASSIGNED to the
+// new sales user (services/pipeline-ownership.js): the same pipeline row keeps
+// its id, customers rows, quotes, interaction thread and history — nothing is
+// deleted. Old + new sales get notifications. If the new sales already owns a
+// row for the same company the change is refused (409): merging would mean
+// deleting one of the two rows.
 router.patch('/:id', requireAuth, async (req, res) => {
   if (!isAdmin(req)) return res.status(403).json({ error: 'Không có quyền' });
 
@@ -137,42 +162,26 @@ router.patch('/:id', requireAuth, async (req, res) => {
       }
       const newSales = sRows[0];
 
-      // The fields to write to the new pipeline. Prefer the edited values from
-      // the request; fall back to the current pipeline's values for fields the
-      // caller didn't touch.
-      const company_name      = trimmed.company_name      ?? cur.company_name;
-      const company_full_name = trimmed.company_full_name ?? (cur.company_full_name || '');
-      const tax_code          = trimmed.tax_code          ?? (cur.tax_code          || '');
-      const invoice_address   = trimmed.invoice_address   ?? (cur.invoice_address   || '');
-      const customer_id_to_copy = cur.customer_id;
-      const stage_to_copy       = cur.stage;
+      const company_name = trimmed.company_name ?? cur.company_name;
 
-      // Destroy the OLD pipeline first (and its child customers — FK is SET NULL
-      // not CASCADE, so customers rows would otherwise outlive the pipeline).
-      // pipeline_history + pipeline_delete_requests cascade automatically.
-      await client.query(`DELETE FROM customers WHERE pipeline_id = $1`, [pipelineId]);
-      await client.query(`DELETE FROM customer_pipeline WHERE id = $1`, [pipelineId]);
+      // Apply any edited fields to THIS row first, so a rename is in place
+      // before the reassign looks for a clashing row under the new owner.
+      await updateEditableFields(client, pipelineId, trimmed);
 
-      // UPSERT into new sales' pipeline. The ON CONFLICT clause uses the partial
-      // unique index predicate `WHERE deleted_at IS NULL` to match the new index.
-      // RETURNING xmax=0 distinguishes a fresh INSERT from an UPDATE-on-existing.
-      const { rows: ups } = await client.query(
-        `INSERT INTO customer_pipeline
-           (sales_id, company_name, customer_id, stage,
-            company_full_name, invoice_address, tax_code)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
-         ON CONFLICT (sales_id, LOWER(company_name)) WHERE deleted_at IS NULL
-           DO UPDATE SET
-             company_full_name = EXCLUDED.company_full_name,
-             invoice_address   = EXCLUDED.invoice_address,
-             tax_code          = EXCLUDED.tax_code,
-             updated_at        = NOW()
-         RETURNING id, (xmax = 0) AS was_inserted`,
-        [newSalesId, company_name, customer_id_to_copy, stage_to_copy,
-         company_full_name, invoice_address, tax_code]
-      );
-      const newPipelineId  = ups[0].id;
-      const wasNewInserted = ups[0].was_inserted;
+      // Reassign the same row to the new sales user — never delete it. Its
+      // customers rows, quotes, interaction thread and pipeline_history keep
+      // their ids (services/pipeline-ownership.js).
+      const moved = await reassignPipelineRow(client, { pipelineId, newSalesId, actorId: req.user.id });
+      if (!moved.ok) {
+        await client.query('ROLLBACK');
+        if (moved.reason === 'target_has_row') {
+          return res.status(409).json({
+            code: 'OWNER_ALREADY_HAS_CUSTOMER',
+            error: `${newSales.name} đã có khách "${company_name}" trong pipeline — không thể gộp tự động. Hãy xử lý một trong hai bản ghi trước.`,
+          });
+        }
+        return res.status(404).json({ error: 'Không tìm thấy khách hàng' });
+      }
 
       // Notifications. Old sales loses the customer; new sales gains it.
       await client.query(
@@ -184,27 +193,16 @@ router.patch('/:id', requireAuth, async (req, res) => {
       );
       await client.query(
         `INSERT INTO notifications (user_id, type, title, message)
-         VALUES ($1, $2, $3, $4)`,
-        [newSalesId,
-         wasNewInserted ? 'pipeline_transferred_in' : 'pipeline_added',
-         wasNewInserted ? 'Khách mới chuyển vào pipeline' : 'Cập nhật pipeline',
-         `Khách ${company_name} đã được ${req.user.name} chuyển vào pipeline của bạn`]
-      );
-
-      // Stage transition audit on the NEW pipeline (history of the old one was
-      // destroyed with the pipeline). The "from_stage" is whatever the old row
-      // was at when transferred.
-      await client.query(
-        `INSERT INTO pipeline_history (pipeline_id, from_stage, to_stage, changed_by)
-         VALUES ($1, $2, $3, $4)`,
-        [newPipelineId, stage_to_copy, stage_to_copy, req.user.id]
+         VALUES ($1, 'pipeline_transferred_in', 'Khách mới chuyển vào pipeline', $2)`,
+        [newSalesId, `Khách ${company_name} đã được ${req.user.name} chuyển vào pipeline của bạn`]
       );
 
       await client.query('COMMIT');
       return res.json({
         ok: true,
         transferred: true,
-        new_pipeline_id: newPipelineId,
+        // Kept for the response contract (L6); a transfer no longer changes the id.
+        new_pipeline_id: pipelineId,
         from_sales: { id: cur.sales_id, name: cur.sales_name || null },
         to_sales:   { id: newSalesId,   name: newSales.name || null },
       });
@@ -212,26 +210,10 @@ router.patch('/:id', requireAuth, async (req, res) => {
 
     // Simple field update path — no sales change. Only update fields the caller
     // actually sent. If nothing was sent, still bump updated_at for visibility.
-    const sets = [];
-    const params = [];
-    let idx = 1;
-    for (const f of EDITABLE_FIELDS) {
-      if (trimmed[f] !== undefined) {
-        sets.push(`${f} = $${idx++}`);
-        params.push(trimmed[f]);
-      }
-    }
-    sets.push(`updated_at = NOW()`);
-    params.push(pipelineId);
-    const { rows: updated } = await client.query(
-      `UPDATE customer_pipeline SET ${sets.join(', ')}
-        WHERE id = $${idx} AND deleted_at IS NULL
-        RETURNING *`,
-      params
-    );
+    const updated = await updateEditableFields(client, pipelineId, trimmed);
 
     await client.query('COMMIT');
-    res.json({ ok: true, transferred: false, pipeline: updated[0] || null });
+    res.json({ ok: true, transferred: false, pipeline: updated });
   } catch (err) {
     await client.query('ROLLBACK');
     console.error('PATCH /api/customer-pipeline/:id error:', err.message);
@@ -248,8 +230,8 @@ router.patch('/:id', requireAuth, async (req, res) => {
 // row on every deploy for any `customers` row whose (user_id, LOWER(company_name))
 // has no live pipeline. Just soft-deleting the pipeline would let backfill resurrect
 // it on the next deploy. To prevent that, also hard-DELETE the matching `customers`
-// rows in the same transaction. The same hard-delete pattern is used at L14
-// transfer (`customer-pipeline.js:153` and `jobs.js:1450`).
+// rows in the same transaction. (The sales-transfer paths no longer delete
+// anything — they reassign the pipeline row; see services/pipeline-ownership.js.)
 //
 // The DELETE keys on BOTH `pipeline_id = $1` (directly linked rows) AND
 // `(user_id, LOWER(company_name))` (detached rows that backfill would otherwise

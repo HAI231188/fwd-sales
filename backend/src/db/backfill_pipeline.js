@@ -7,13 +7,18 @@
  *   - Step 3 seeds history for entries that have none
  *
  * Stage logic (based on interaction_type of most recent customer row):
- *   'booked'    — any quote for this company+salesperson is booked
+ *   'booked'    — ANY quote in the customer's thread is booked, OR the customer
+ *                 has ANY job. Either fact is permanent: the row is never
+ *                 demoted out of 'booked' by a newer interaction.
+ *   The three stages below are decided by the most recent interaction_type, and
+ *   ONLY for customers that have never had a booked quote and never had a job.
  *   'following' — most recent interaction_type is 'contacted' or 'quoted'
  *   'dormant'   — most recent interaction_type is 'saved' AND no activity for 7+ days
  *   'new'       — most recent interaction_type is 'saved' AND active within 7 days
  */
 require('dotenv').config({ path: require('path').join(__dirname, '../../.env') });
 const db = require('./index');
+const { hasAnyJobSql, hasBookedQuoteSql } = require('../services/pipeline-ownership');
 
 // Shared CTEs used in both UPDATE (step 0) and INSERT (step 1)
 const STAGE_CTES = `
@@ -23,10 +28,18 @@ const STAGE_CTES = `
   -- without TRIM here the backfill would (a) fail to match a cleaned pipeline row by
   -- LOWER() and (b) re-INSERT a whitespace duplicate. Trimming makes the backfill
   -- whitespace-tolerant and idempotent against the cleaned pipeline (2026-06-25).
+  --
+  -- OWNER, not author (2026-09-14): a customers row counts toward the owner of
+  -- the ACTIVE pipeline row it is linked to — COALESCE(lp.sales_id, c.user_id) —
+  -- not necessarily c.user_id. A sales transfer reassigns customer_pipeline.sales_id
+  -- and keeps customers.user_id (who made the contact); grouping by c.user_id
+  -- would make Step 1 re-create a pipeline row for the previous owner on every
+  -- deploy. Unlinked rows, and rows linked to a soft-deleted pipeline, still
+  -- count toward c.user_id exactly as before.
   latest_customer AS (
-    SELECT DISTINCT ON (c.user_id, LOWER(TRIM(c.company_name)))
+    SELECT DISTINCT ON (COALESCE(lp.sales_id, c.user_id), LOWER(TRIM(c.company_name)))
       c.id,
-      c.user_id              AS sales_id,
+      COALESCE(lp.sales_id, c.user_id) AS sales_id,
       TRIM(c.company_name)   AS company_name,
       c.contact_person,
       c.phone,
@@ -35,23 +48,26 @@ const STAGE_CTES = `
       c.interaction_type
     FROM customers c
     JOIN reports r ON r.id = c.report_id AND r.deleted_at IS NULL
-    ORDER BY c.user_id, LOWER(TRIM(c.company_name)), r.report_date DESC, c.created_at DESC
+    LEFT JOIN customer_pipeline lp ON lp.id = c.pipeline_id AND lp.deleted_at IS NULL
+    ORDER BY COALESCE(lp.sales_id, c.user_id), LOWER(TRIM(c.company_name)), r.report_date DESC, c.created_at DESC
   ),
   -- Last report date per salesperson+company
   last_activity AS (
-    SELECT c.user_id AS sales_id, LOWER(TRIM(c.company_name)) AS co_key,
+    SELECT COALESCE(lp.sales_id, c.user_id) AS sales_id, LOWER(TRIM(c.company_name)) AS co_key,
            MAX(r.report_date) AS last_date
     FROM customers c
     JOIN reports r ON r.id = c.report_id AND r.deleted_at IS NULL
-    GROUP BY c.user_id, LOWER(TRIM(c.company_name))
+    LEFT JOIN customer_pipeline lp ON lp.id = c.pipeline_id AND lp.deleted_at IS NULL
+    GROUP BY COALESCE(lp.sales_id, c.user_id), LOWER(TRIM(c.company_name))
   ),
   -- Whether any quote for this company+salesperson is booked
   booking AS (
-    SELECT c.user_id AS sales_id, LOWER(TRIM(c.company_name)) AS co_key,
+    SELECT COALESCE(lp.sales_id, c.user_id) AS sales_id, LOWER(TRIM(c.company_name)) AS co_key,
            BOOL_OR(q.status = 'booked') AS is_booked
     FROM customers c
+    LEFT JOIN customer_pipeline lp ON lp.id = c.pipeline_id AND lp.deleted_at IS NULL
     LEFT JOIN quotes q ON q.customer_id = c.id
-    GROUP BY c.user_id, LOWER(TRIM(c.company_name))
+    GROUP BY COALESCE(lp.sales_id, c.user_id), LOWER(TRIM(c.company_name))
   ),
   -- Computed correct stage for every company+salesperson pair
   correct_stages AS (
@@ -86,23 +102,57 @@ async function backfill() {
     await client.query('BEGIN');
 
     // ── Step 0: Correct stage on existing pipeline entries ──────────────────
+    // Stage is derived PER QUOTE: a customer with ANY booked quote, or ANY job,
+    // is 'booked' and is never demoted out of it. A newer 'contacted'/'quoted'
+    // row describes only THAT contact — it must not pull the customer's own
+    // stage back down. hasAnyJobSql is the same rule as applyAutoTransitions'
+    // dormant guard; hasBookedQuoteSql states the booked-quote half explicitly
+    // here instead of relying on correct_stages' `booking` CTE, which is
+    // reachable only through latest_customer's JOIN on a non-deleted report and
+    // an (owner, name) grouping — so it silently yields NO booked verdict for a
+    // row whose reports are all soft-deleted (2 live rows: PAX VIỆT NAM 1646,
+    // TRUNG ĐỨC 1648). Rows with neither fact keep EXACTLY the old recompute
+    // (correct_stages), and rows correct_stages cannot see keep their stage.
+    // Only live rows are touched, and every change is written to
+    // pipeline_history (this step used to rewrite stage silently).
+    //
+    // Step 1 (INSERT) needs no matching change: correct_stages already puts
+    // `WHEN b.is_booked THEN 'booked'` first, so a brand-new row with a booked
+    // quote is inserted as 'booked'. This guard is about never DEMOTING an
+    // existing row, which only Step 0 can do.
     const { rowCount: corrected } = await client.query(`
-      WITH ${STAGE_CTES}
-      UPDATE customer_pipeline cp
-      SET stage = cs.stage, updated_at = NOW()
-      FROM correct_stages cs
-      WHERE cs.sales_id = cp.sales_id
-        AND LOWER(cs.company_name) = LOWER(TRIM(cp.company_name))
-        AND cp.stage != cs.stage
+      WITH ${STAGE_CTES},
+      target AS (
+        SELECT cp.id, cp.stage AS from_stage,
+               CASE WHEN ${hasAnyJobSql('cp')} OR ${hasBookedQuoteSql('cp')} THEN 'booked'
+                    ELSE COALESCE(cs.stage, cp.stage) END AS to_stage
+          FROM customer_pipeline cp
+          LEFT JOIN correct_stages cs
+            ON cs.sales_id = cp.sales_id
+           AND LOWER(cs.company_name) = LOWER(TRIM(cp.company_name))
+         WHERE cp.deleted_at IS NULL
+      ),
+      changed AS (
+        UPDATE customer_pipeline cp
+           SET stage = t.to_stage, updated_at = NOW()
+          FROM target t
+         WHERE cp.id = t.id AND t.from_stage <> t.to_stage
+        RETURNING cp.id
+      )
+      INSERT INTO pipeline_history (pipeline_id, from_stage, to_stage)
+      SELECT t.id, t.from_stage, t.to_stage
+        FROM target t JOIN changed ch ON ch.id = t.id
     `);
-    console.log(`  ↳ Corrected ${corrected} existing pipeline stages`);
+    console.log(`  ↳ Corrected ${corrected} existing pipeline stages (each logged to pipeline_history)`);
 
     // ── Step 1: Insert entries for companies not yet in pipeline ─────────────
     const { rowCount: inserted } = await client.query(`
       WITH ${STAGE_CTES}
       INSERT INTO customer_pipeline
         (customer_id, sales_id, company_name, contact_person, phone, industry, source, stage, last_activity_date)
-      SELECT customer_id, sales_id, company_name, contact_person, phone, industry, source, stage, last_activity_date
+      SELECT customer_id, sales_id, company_name, contact_person, phone, industry, source,
+             CASE WHEN ${hasAnyJobSql('correct_stages')} THEN 'booked' ELSE stage END,
+             last_activity_date
       FROM correct_stages
       ON CONFLICT (sales_id, LOWER(company_name)) WHERE deleted_at IS NULL DO NOTHING
     `);

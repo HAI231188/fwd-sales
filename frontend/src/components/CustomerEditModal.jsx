@@ -208,16 +208,17 @@ export default function CustomerEditModal({ pipeline, onClose, onSaved }) {
                 Khách <strong>{form.company_name}</strong> hiện thuộc pipeline của{' '}
                 <strong>{pipeline.sales_name || 'sales hiện tại'}</strong>.
               </p>
-              <p style={{ color: 'var(--danger)', marginTop: 10 }}>
+              <p style={{ marginTop: 10 }}>
                 Đổi sales sẽ chuyển khách sang pipeline của{' '}
-                <strong>{salesStaff.find(s => Number(s.id) === Number(form.sales_id))?.name || 'sales mới'}</strong>{' '}
-                và <strong>xóa lịch sử pipeline hiện tại</strong> (bao gồm các tương tác đã ghi nhận). Hành động này không thể hoàn tác.
+                <strong>{salesStaff.find(s => Number(s.id) === Number(form.sales_id))?.name || 'sales mới'}</strong>.
+                Lịch sử tương tác, báo giá và pipeline của khách được giữ nguyên và chuyển theo khách;
+                các job cũ vẫn giữ sales đã làm.
               </p>
               <p style={{ marginTop: 10 }}>Xác nhận?</p>
             </div>
             <div className="modal-footer" style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, padding: 12, borderTop: '1px solid var(--border)' }}>
               <button className="btn btn-ghost btn-sm" onClick={() => setShowTransferConfirm(false)} disabled={saving}>Hủy</button>
-              <button className="btn btn-danger btn-sm"
+              <button className="btn btn-primary btn-sm"
                 disabled={saving}
                 onClick={() => { setShowTransferConfirm(false); submit({ confirmedTransfer: true }); }}>
                 {saving ? 'Đang lưu...' : 'Chuyển khách'}
